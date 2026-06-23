@@ -1,0 +1,13 @@
+{
+  "id": "player",
+  "name": "Music Player",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Spotify + general music embed player for the dashboard.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/spotify",
+  "builtin": true,
+  "frontend": {
+    "nav": { "label": "Music", "icon": "music", "view": "music" }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "Dark",
+  "author": "AgeniusDesk",
+  "version": "1.0",
+  "colors": {
+    "bg-void": "#05060a",
+    "bg-panel": "rgba(10, 14, 24, 0.85)",
+    "bg-panel-solid": "#0a0e18",
+    "bg-input": "rgba(15, 22, 40, 0.7)",
+    "bg-hover": "rgba(56, 189, 248, 0.05)",
+    "bg-sidebar": "#070b14",
+    "border-dim": "rgba(56, 189, 248, 0.08)",
+    "border-mid": "rgba(56, 189, 248, 0.15)",
+    "border-bright": "rgba(56, 189, 248, 0.35)",
+    "text-primary": "#d4e3f5",
+    "text-secondary": "#7ea8cc",
+    "text-dim": "#4a6a88",
+    "accent": "#38bdf8",
+    "accent-glow": "rgba(56, 189, 248, 0.25)",
+    "accent-hover": "#7dd3fc",
+    "success": "#34d399",
+    "success-glow": "rgba(52, 211, 153, 0.2)",
+    "warning": "#f59e0b",
+    "warning-glow": "rgba(245, 158, 11, 0.2)",
+    "error": "#f87171",
+    "error-glow": "rgba(248, 113, 113, 0.15)",
+    "info": "#a78bfa",
+    "info-glow": "rgba(167, 139, 250, 0.15)"
+  },
+  "fonts": {
+    "body": "Chakra Petch",
+    "mono": "IBM Plex Mono"
+  },
+  "effects": {
+    "glassmorphism": true,
+    "animated-background": true,
+    "scanlines": true
+  }
+}

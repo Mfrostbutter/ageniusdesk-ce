@@ -1,0 +1,69 @@
+[project]
+name = "ageniusdesk"
+version = "0.1.0"
+description = "AgeniusDesk — the command center for automation operators. Multi-instance n8n management, real-time error tracking, AI-assisted debugging, Code Lab."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+    {name = "Michael Frostbutter"},
+]
+keywords = ["n8n", "dashboard", "workflow", "automation", "monitoring"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Monitoring",
+]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0",
+    "aiosqlite>=0.20.0",
+    "pydantic-settings>=2.5.0",
+    "websockets>=13.0",
+    "python-multipart>=0.0.9",
+    "cryptography>=42.0.0",
+    "mcp>=1.2.0",
+    "aiodocker>=0.21.0",
+]
+
+[project.optional-dependencies]
+# AI assistant: LLM providers, function calling, MCP client, and optional
+# Qdrant RAG over the knowledge module. The Docker image installs this extra.
+assistant = [
+    "qdrant-client>=1.12.0",
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "fastembed>=0.4.0",
+]
+dev = [
+    "ruff>=0.7.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "respx>=0.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mfrostbutter/ageniusdesk-ce"
+Issues = "https://github.com/Mfrostbutter/ageniusdesk-ce/issues"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+norecursedirs = ["backend", "frontend", "data", "build", "node_modules"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

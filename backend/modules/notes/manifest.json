@@ -1,0 +1,13 @@
+{
+  "id": "notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Local markdown notes with full-text search and backlinks.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/notes",
+  "builtin": true,
+  "frontend": {
+    "nav": { "label": "Notes", "icon": "file-text", "view": "notes" }
+  }
+}

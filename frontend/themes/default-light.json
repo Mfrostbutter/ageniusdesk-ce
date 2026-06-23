@@ -1,0 +1,40 @@
+{
+  "name": "Light",
+  "author": "AgeniusDesk",
+  "version": "1.2",
+  "description": "Clean professional light theme. Inspired by Linear and Vercel — layered whites with cool-gray depth, indigo accent.",
+  "colors": {
+    "bg-void": "#eef0f5",
+    "bg-panel": "rgba(255, 255, 255, 0.97)",
+    "bg-panel-solid": "#ffffff",
+    "bg-input": "#f1f3f8",
+    "bg-hover": "rgba(0, 0, 0, 0.04)",
+    "bg-sidebar": "#e8eaf2",
+    "border-dim": "rgba(0, 0, 0, 0.07)",
+    "border-mid": "rgba(0, 0, 0, 0.13)",
+    "border-bright": "rgba(0, 0, 0, 0.24)",
+    "text-primary": "#0f1117",
+    "text-secondary": "#374151",
+    "text-dim": "#6b7280",
+    "accent": "#5b5ef4",
+    "accent-glow": "rgba(91, 94, 244, 0.12)",
+    "accent-hover": "#4338ca",
+    "success": "#047857",
+    "success-glow": "rgba(4, 120, 87, 0.08)",
+    "warning": "#b45309",
+    "warning-glow": "rgba(180, 83, 9, 0.07)",
+    "error": "#c81e1e",
+    "error-glow": "rgba(200, 30, 30, 0.07)",
+    "info": "#1d4ed8",
+    "info-glow": "rgba(29, 78, 216, 0.08)"
+  },
+  "fonts": {
+    "body": "Inter",
+    "mono": "JetBrains Mono"
+  },
+  "effects": {
+    "glassmorphism": false,
+    "animated-background": false,
+    "scanlines": false
+  }
+}

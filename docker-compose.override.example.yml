@@ -1,0 +1,61 @@
+# docker-compose.override.example.yml
+#
+# Local development hot-reload setup. Compose auto-merges any file named
+# `docker-compose.override.yml` on top of `docker-compose.yml`, so to opt
+# in:
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   docker compose up -d
+#
+# After that, edits to backend/ and frontend/ are picked up live:
+#
+#   - frontend/* — bind-mounted into the container; refresh the browser
+#     to see changes (no rebuild, no restart).
+#   - backend/*  — bind-mounted AND uvicorn runs with --reload, so the
+#     server restarts on save. Watch the dashboard logs to confirm:
+#     `docker compose logs -f dashboard`
+#
+# What still requires a rebuild (`docker compose up -d --build dashboard`):
+#
+#   - Changes to pyproject.toml (new dependencies)
+#   - Changes to the Dockerfile itself
+#   - First-time setup of this override
+#
+# The real `docker-compose.override.yml` is gitignored (.gitignore line ~19)
+# so this file does NOT activate on the production deploy server. The
+# server runs `docker compose up -d --build --force-recreate` against the
+# base compose only, with the source code baked into the image.
+#
+# To temporarily disable the override without deleting it:
+#
+#   docker compose -f docker-compose.yml up -d --build --force-recreate
+#
+# To run with the override active again, just `docker compose up -d`.
+
+services:
+  dashboard:
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+    command:
+      - python
+      - -m
+      - uvicorn
+      - backend.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "3000"
+      - --reload
+      - --reload-dir
+      - /app/backend
+      # Kill long-lived streams (log follow, SSE) after 3s on reload so
+      # the server actually restarts. Without this, an open log-follow
+      # tab can block reload indefinitely.
+      - --timeout-graceful-shutdown
+      - "3"
+    environment:
+      # Polling required on Windows + Docker Desktop (inotify events from
+      # the host don't propagate through WSL2). On Linux/Mac flip to
+      # "false" for faster, lower-CPU detection via native FS events.
+      WATCHFILES_FORCE_POLLING: "true"

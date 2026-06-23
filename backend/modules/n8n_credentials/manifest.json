@@ -1,0 +1,10 @@
+{
+  "id": "n8n_credentials",
+  "name": "n8n Credentials",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Mirror AgeniusDesk secrets into n8n credential stores across instances.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/n8n-credentials",
+  "builtin": true
+}

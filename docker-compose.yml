@@ -1,0 +1,34 @@
+name: ageniusdesk-ce
+
+services:
+  dashboard:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    # Optional: copy .env.example to .env to set provider keys and toggles.
+    # Marked not-required so `docker compose up` works with shell/compose env too.
+    env_file:
+      - path: .env
+        required: false
+    # Lets the dashboard reach services published on the host (e.g. an n8n
+    # container) via host.docker.internal. Docker Desktop maps this
+    # automatically; this line makes it resolve on Linux hosts too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - dashboard-data:/app/data
+      # Docker socket — gives the dashboard access to the host Docker daemon for
+      # the Containers tab (one-click n8n deploys, container lifecycle).
+      #
+      # SECURITY: mounting the Docker socket is equivalent to root on the host.
+      # Anyone who can reach this dashboard's API can control Docker and thereby
+      # the host. Only run with this mounted if the dashboard is NOT exposed
+      # unauthenticated: keep it on a trusted LAN, front it with an auth proxy
+      # (Cloudflare Access, Authelia), or set AGD_REQUIRE_AUTH=true + AGD_ADMIN_TOKEN.
+      # Remove this line to disable container management (the /api/containers
+      # routes return 503).
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  dashboard-data:

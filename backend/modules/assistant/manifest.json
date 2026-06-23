@@ -1,0 +1,18 @@
+{
+  "id": "assistant",
+  "name": "AI Assistant",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "LLM-powered assistant + Code Lab integration. Supports Anthropic, OpenAI, OpenRouter, Ollama.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/assistant",
+  "builtin": true,
+  "secrets_required": [
+    { "key": "ANTHROPIC_KEY", "description": "Anthropic API key", "required": false },
+    { "key": "OPEN_AI_KEY", "description": "OpenAI API key", "required": false },
+    { "key": "OPEN_ROUTER_KEY", "description": "OpenRouter API key", "required": false }
+  ],
+  "frontend": {
+    "nav": { "label": "Assistant", "icon": "robot", "view": "assistant" }
+  }
+}

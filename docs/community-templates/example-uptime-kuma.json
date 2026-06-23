@@ -1,0 +1,51 @@
+{
+  "_comment": "Drop any *.json file into /app/data/templates/ to add a community template.",
+  "_schema": "https://github.com/Mfrostbutter/ageniusdesk-ce/blob/main/docs/community-templates/example-uptime-kuma.json",
+
+  "id": "uptime-kuma",
+  "name": "Uptime Kuma",
+  "description": "Self-hosted uptime monitoring with a clean dashboard and multi-channel alerts.",
+  "image": "louislam/uptime-kuma:1",
+  "icon": "📡",
+  "category": "monitoring",
+  "volume_prefix": "agd-uptime-kuma",
+
+  "fields": [
+    {
+      "id": "instance_name",
+      "label": "Instance name",
+      "type": "text",
+      "default": "uptime-1",
+      "placeholder": "uptime-1",
+      "required": true,
+      "hint": "Used for the container name and data volume."
+    },
+    {
+      "id": "port",
+      "label": "Host port",
+      "type": "number",
+      "default": 3001,
+      "placeholder": "3001",
+      "required": true,
+      "hint": "Port on the host machine."
+    }
+  ],
+
+  "container_config": {
+    "Image": "louislam/uptime-kuma:1",
+    "Labels": {
+      "ageniusdesk.managed": "true",
+      "ageniusdesk.template": "uptime-kuma",
+      "ageniusdesk.instance": "{instance_name}"
+    },
+    "HostConfig": {
+      "PortBindings": {
+        "3001/tcp": [{ "HostPort": "{port}" }]
+      },
+      "Binds": ["{volume_name}:/app/data"],
+      "RestartPolicy": { "Name": "unless-stopped" }
+    }
+  },
+
+  "volumes": ["{volume_name}"]
+}

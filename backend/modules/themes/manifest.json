@@ -1,0 +1,10 @@
+{
+  "id": "themes",
+  "name": "Themes",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Built-in and custom dashboard themes.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/themes",
+  "builtin": true
+}

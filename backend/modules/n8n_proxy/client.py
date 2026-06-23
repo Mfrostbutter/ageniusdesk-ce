@@ -1,0 +1,985 @@
+"""Async n8n REST API client with retry logic and webhook fallback."""
+
+import asyncio
+import logging
+import os
+from typing import Any, Optional
+
+import httpx
+
+from backend.config import get_n8n_api_key, get_n8n_url
+
+logger = logging.getLogger(__name__)
+
+TIMEOUT = 30.0
+MAX_RETRIES = 3
+
+
+def _verify() -> bool:
+    """TLS cert verification flag. Default on; flip off only for self-signed
+    LAN n8n via AGD_TLS_VERIFY=false. Pro-tier testers on public HTTPS n8n must
+    keep this on.
+    """
+    val = os.environ.get("AGD_TLS_VERIFY", "true").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+def _headers() -> dict[str, str]:
+    return {
+        "X-N8N-API-KEY": get_n8n_api_key(),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _base_url() -> str:
+    return get_n8n_url().rstrip("/")
+
+
+async def _get(path: str, params: Optional[dict] = None) -> dict | list:
+    """GET with retry on 429 and graceful 404 handling."""
+    url = _base_url() + path
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+                resp = await client.get(url, headers=_headers(), params=params)
+                if resp.status_code == 429:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                if resp.status_code == 404:
+                    return {}
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error("n8n GET %s failed: HTTP %s", path, e.response.status_code)
+            return {}
+        except httpx.RequestError as e:
+            logger.error("n8n GET %s error: %s", path, e)
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(2**attempt)
+            else:
+                return {}
+    return {}
+
+
+async def _post(path: str, body: Optional[dict] = None) -> dict:
+    """POST to n8n API."""
+    url = _base_url() + path
+    async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        resp = await client.post(url, headers=_headers(), json=body or {})
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _delete(path: str) -> dict:
+    """DELETE to n8n API."""
+    url = _base_url() + path
+    async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        resp = await client.delete(url, headers=_headers())
+        if resp.status_code == 404:
+            return {}
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except Exception:
+            return {}
+
+
+async def delete_execution(execution_id: str) -> dict:
+    """Delete a single execution from n8n by ID."""
+    try:
+        await _delete(f"/api/v1/executions/{execution_id}")
+        return {"success": True}
+    except Exception as e:
+        logger.error("delete_execution %s failed: %s", execution_id, e)
+        return {"success": False, "error": str(e)}
+
+
+async def delete_executions_for_workflow(workflow_id: str) -> dict:
+    """Delete all executions for a workflow by iterating the public API.
+
+    n8n's public REST API (v1) has no bulk-delete endpoint — only the internal
+    UI endpoint at /rest/executions/delete does, and it's not exposed via the
+    API key auth path. Iterate DELETE /executions/{id} instead. Paginated via
+    cursor so workflows with >250 executions also clear.
+    """
+    deleted = 0
+    failed: list[str] = []
+    cursor = ""
+    while True:
+        page = await list_executions(workflow_id=workflow_id, limit=250, cursor=cursor)
+        items = page.get("executions", []) or []
+        if not items:
+            break
+        for ex in items:
+            exec_id = str(ex.get("id", ""))
+            if not exec_id:
+                continue
+            result = await delete_execution(exec_id)
+            if result.get("success"):
+                deleted += 1
+            else:
+                failed.append(exec_id)
+        cursor = page.get("next_cursor") or ""
+        if not cursor:
+            break
+    return {"success": not failed, "deleted": deleted, "failed": failed}
+
+
+def _extract_webhook_path(workflow: dict) -> Optional[str]:
+    """Extract webhook path from a workflow's trigger node."""
+    for node in workflow.get("nodes") or []:
+        if "webhook" in node.get("type", "").lower():
+            path = (node.get("parameters") or {}).get("path")
+            if path:
+                return path
+    return None
+
+
+def _detect_trigger_type(workflow: dict) -> str:
+    """Detect trigger type from workflow nodes."""
+    for node in workflow.get("nodes") or []:
+        t = node.get("type", "")
+        if "scheduleTrigger" in t or "cron" in t.lower():
+            return "schedule"
+        if "webhook" in t.lower():
+            return "webhook"
+        if "manualTrigger" in t:
+            return "manual"
+        if "errorTrigger" in t:
+            return "error"
+    return "unknown"
+
+
+DASHBOARD_TRIGGER_NODE_NAME = "__dashboard_trigger"
+
+
+def _find_dashboard_trigger(workflow: dict) -> Optional[dict]:
+    """Return the dashboard-owned webhook node if it exists."""
+    for node in workflow.get("nodes") or []:
+        if node.get("name") == DASHBOARD_TRIGGER_NODE_NAME:
+            return node
+    return None
+
+
+def _dashboard_trigger_url(workflow: dict) -> Optional[str]:
+    node = _find_dashboard_trigger(workflow)
+    if not node:
+        return None
+    path = (node.get("parameters") or {}).get("path")
+    return f"{_base_url()}/webhook/{path}" if path else None
+
+
+_NON_FUNCTIONAL_NODE_TYPES = ("stickynote",)
+
+
+def _is_functional_node(node: dict) -> bool:
+    """Filter out presentation-only nodes like sticky notes."""
+    t = (node.get("type") or "").lower().replace("-", "")
+    return not any(k in t for k in _NON_FUNCTIONAL_NODE_TYPES)
+
+
+def _find_primary_downstream(workflow: dict) -> Optional[str]:
+    """Find the node that the first existing trigger feeds into.
+
+    Skips sticky notes. Falls back to first functional non-trigger node.
+    """
+    connections = workflow.get("connections") or {}
+    nodes = workflow.get("nodes") or []
+    trigger_names: list[str] = []
+    for node in nodes:
+        if not _is_functional_node(node):
+            continue
+        t = (node.get("type") or "").lower()
+        if any(k in t for k in ("trigger", "cron")) and node.get("name") != DASHBOARD_TRIGGER_NODE_NAME:
+            trigger_names.append(node.get("name", ""))
+    for name in trigger_names:
+        conn = connections.get(name) or {}
+        main = conn.get("main") or []
+        if main and main[0]:
+            target = main[0][0].get("node")
+            # Verify the target node is functional (not a sticky note)
+            target_node = next((n for n in nodes if n.get("name") == target), None)
+            if target_node and _is_functional_node(target_node):
+                return target
+    for node in nodes:
+        if not _is_functional_node(node):
+            continue
+        t = (node.get("type") or "").lower()
+        if not any(k in t for k in ("trigger", "cron")) and node.get("name") != DASHBOARD_TRIGGER_NODE_NAME:
+            return node.get("name")
+    return None
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+
+async def test_connection() -> dict[str, Any]:
+    """Test the n8n connection using the active instance."""
+    result = await _get("/api/v1/workflows", {"limit": 1})
+    if isinstance(result, dict) and "data" in result:
+        return {"connected": True, "message": "Connected to n8n"}
+    return {"connected": False, "message": "Failed to connect to n8n"}
+
+
+async def test_connection_with(url: str, api_key: str) -> dict[str, Any]:
+    """Test a specific n8n connection (used before saving a new instance).
+
+    Returns {"connected": bool, "error_class": str, "message": str}.
+    error_class is one of: "ok", "dns", "auth", "notfound", "timeout", "generic".
+    """
+    from backend.config import decrypt_value
+    url = decrypt_value(url)
+    api_key = decrypt_value(api_key)
+    headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+            resp = await client.get(f"{url.rstrip('/')}/api/v1/workflows", headers=headers, params={"limit": 1})
+            if resp.status_code == 200:
+                return {"connected": True, "error_class": "ok", "message": "Connected to n8n"}
+            if resp.status_code == 401:
+                return {
+                    "connected": False,
+                    "error_class": "auth",
+                    "message": "HTTP 401: n8n rejected the API key. Generate a fresh API key in n8n Settings -> API and try again.",
+                }
+            if resp.status_code == 403:
+                return {
+                    "connected": False,
+                    "error_class": "generic",
+                    "message": "HTTP 403: the URL is reachable but access is blocked. If this n8n URL is behind Cloudflare Access or another auth wall, use the direct internal n8n URL instead of the public browser URL.",
+                }
+            if resp.status_code == 404:
+                return {
+                    "connected": False,
+                    "error_class": "notfound",
+                    "message": "HTTP 404: this does not look like an n8n base URL. Use the root n8n URL, not /api/v1 or another subpath.",
+                }
+            return {"connected": False, "error_class": "generic", "message": f"HTTP {resp.status_code}"}
+    except httpx.ConnectError:
+        return {
+            "connected": False,
+            "error_class": "dns",
+            "message": f"Cannot reach {url.rstrip('/')}: host not found or connection refused. "
+                       "If running inside Docker, use the compose service name or LAN IP, not localhost.",
+        }
+    except httpx.TimeoutException:
+        return {
+            "connected": False,
+            "error_class": "timeout",
+            "message": f"Connection to {url.rstrip('/')} timed out after {TIMEOUT}s. "
+                       "Check that n8n is running and the port is reachable.",
+        }
+    except Exception as e:
+        return {"connected": False, "error_class": "generic", "message": str(e)}
+
+
+async def list_workflows(
+    active_only: bool = False,
+    name_contains: str = "",
+    limit: int = 50,
+    cursor: str = "",
+) -> dict[str, Any]:
+    """List workflows with metadata."""
+    params: dict = {"limit": min(limit, 250)}
+    if active_only:
+        params["active"] = "true"
+    if cursor:
+        params["cursor"] = cursor
+
+    result = await _get("/api/v1/workflows", params)
+    workflows = result.get("data", []) if isinstance(result, dict) else []
+    next_cursor = (result.get("nextCursor") or "") if isinstance(result, dict) else ""
+
+    if name_contains:
+        needle = name_contains.lower()
+        workflows = [w for w in workflows if needle in (w.get("name") or "").lower()]
+
+    items = []
+    for w in workflows:
+        items.append({
+            "id": w.get("id", ""),
+            "name": w.get("name", "Unknown"),
+            "active": w.get("active", False),
+            "is_archived": bool(w.get("isArchived", False)),
+            "trigger_type": _detect_trigger_type(w),
+            "created_at": w.get("createdAt", ""),
+            "updated_at": w.get("updatedAt", ""),
+            "tags": [t.get("name", "") for t in (w.get("tags") or [])],
+        })
+
+    # Sort: active first, then alphabetical by name
+    items.sort(key=lambda w: (not w["active"], w["name"].lower()))
+
+    return {"workflows": items, "next_cursor": next_cursor}
+
+
+async def get_workflow(workflow_id: str) -> dict[str, Any]:
+    """Get full workflow details including nodes and webhook URL."""
+    w = await _get(f"/api/v1/workflows/{workflow_id}")
+    if not w:
+        return {}
+
+    nodes = w.get("nodes") or []
+    webhook_path = _extract_webhook_path(w)
+
+    dashboard_url = _dashboard_trigger_url(w)
+    return {
+        "id": w.get("id", ""),
+        "name": w.get("name", "Unknown"),
+        "active": w.get("active", False),
+        "is_archived": bool(w.get("isArchived", False)),
+        "trigger_type": _detect_trigger_type(w),
+        "created_at": w.get("createdAt", ""),
+        "updated_at": w.get("updatedAt", ""),
+        "node_count": len(nodes),
+        "node_types": list({n.get("type", "").split(".")[-1] for n in nodes}),
+        "webhook_path": webhook_path,
+        "webhook_url": f"{_base_url()}/webhook/{webhook_path}" if webhook_path else None,
+        "dashboard_trigger_enabled": dashboard_url is not None,
+        "dashboard_trigger_url": dashboard_url,
+        "tags": [t.get("name", "") for t in (w.get("tags") or [])],
+    }
+
+
+async def _get_workflow_names() -> dict[str, str]:
+    """Build a workflow_id -> name mapping for enriching execution data."""
+    result = await _get("/api/v1/workflows", {"limit": 250})
+    workflows = result.get("data", []) if isinstance(result, dict) else []
+    return {w.get("id", ""): w.get("name", "Unknown") for w in workflows}
+
+
+async def list_executions(
+    workflow_id: str = "",
+    status: str = "",
+    limit: int = 20,
+    cursor: str = "",
+) -> dict[str, Any]:
+    """List recent executions with status and timing."""
+    params: dict = {"limit": min(limit, 250)}
+    if workflow_id:
+        params["workflowId"] = workflow_id
+    if status:
+        params["status"] = status
+    if cursor:
+        params["cursor"] = cursor
+
+    result = await _get("/api/v1/executions", params)
+    executions = result.get("data", []) if isinstance(result, dict) else []
+    next_cursor = (result.get("nextCursor") or "") if isinstance(result, dict) else ""
+
+    # Enrich with workflow names
+    wf_names = await _get_workflow_names()
+
+    items = []
+    for e in executions:
+        wf_id = e.get("workflowId", "")
+        items.append({
+            "id": e.get("id", ""),
+            "workflow_id": wf_id,
+            "workflow_name": (e.get("workflowData") or {}).get("name") or wf_names.get(wf_id, "Unknown"),
+            "status": e.get("status", "unknown"),
+            "mode": e.get("mode", "unknown"),
+            "started_at": e.get("startedAt", ""),
+            "finished_at": e.get("stoppedAt") or e.get("finishedAt", ""),
+        })
+
+    return {"executions": items, "next_cursor": next_cursor}
+
+
+async def get_execution(execution_id: str) -> dict[str, Any]:
+    """Get execution details including error info and node results."""
+    result = await _get(f"/api/v1/executions/{execution_id}?includeData=true")
+    if not result:
+        return {}
+
+    # n8n v1 API returns the execution object directly (not wrapped in {"data": ...})
+    e = result if isinstance(result, dict) else {}
+
+    data = {
+        "id": e.get("id", execution_id),
+        "workflow_id": e.get("workflowId", ""),
+        "workflow_name": (e.get("workflowData") or {}).get("name", "Unknown"),
+        "status": e.get("status", "unknown"),
+        "mode": e.get("mode", "unknown"),
+        "started_at": e.get("startedAt", ""),
+        "finished_at": e.get("stoppedAt") or e.get("finishedAt", ""),
+    }
+
+    # Extract error if present — execution data lives in e["data"]["resultData"]
+    result_data = (e.get("data") or {}).get("resultData", {})
+    if result_data.get("error"):
+        err = result_data["error"]
+        extra = err.get("extra") or {}
+        data["error"] = {
+            "message": str(err.get("message", err))[:500],
+            "description": str(err.get("description", ""))[:500],
+            "source_node": str(extra.get("sourceNodeName", ""))[:100],
+            "destination_node": str(extra.get("destinationNodeName", ""))[:100],
+        }
+
+    # Node execution summary
+    run_data = result_data.get("runData", {})
+    if run_data:
+        nodes = []
+        for name, runs in run_data.items():
+            node_info = {"name": name, "status": "unknown"}
+            if runs:
+                node_info["status"] = runs[-1].get("executionStatus", "unknown")
+                if runs[-1].get("error"):
+                    node_info["error"] = str(runs[-1]["error"].get("message", ""))[:200]
+            nodes.append(node_info)
+        data["nodes"] = nodes
+
+    return data
+
+
+async def trigger_workflow(workflow_id: str, payload: Optional[dict] = None) -> dict[str, Any]:
+    """Trigger a workflow via its dashboard-owned webhook node."""
+    payload = payload or {}
+    w = await _get(f"/api/v1/workflows/{workflow_id}")
+    if not w:
+        return {"success": False, "error": "Workflow not found"}
+
+    node = _find_dashboard_trigger(w)
+    if not node:
+        return {
+            "success": False,
+            "error": (
+                "This workflow doesn't have a Dashboard Trigger. "
+                "Click 'Enable Dashboard Trigger' to add one."
+            ),
+        }
+
+    webhook_path = (node.get("parameters") or {}).get("path")
+    if not webhook_path:
+        return {"success": False, "error": "Dashboard Trigger node is missing its path."}
+
+    if not w.get("active"):
+        return {
+            "success": False,
+            "error": "Workflow is inactive. Activate it before triggering.",
+        }
+
+    webhook_url = f"{_base_url()}/webhook/{webhook_path}"
+    try:
+        async with httpx.AsyncClient(timeout=60.0, verify=_verify()) as client:
+            resp = await client.post(webhook_url, json=payload)
+            if resp.status_code >= 400:
+                return {
+                    "success": False,
+                    "error": f"Webhook returned HTTP {resp.status_code}: {resp.text[:300]}",
+                }
+            return {
+                "success": True,
+                "method": "dashboard_webhook",
+                "webhook_url": webhook_url,
+                "status_code": resp.status_code,
+                "response": resp.text[:500],
+            }
+    except httpx.TimeoutException:
+        return {
+            "success": True,
+            "method": "dashboard_webhook (async)",
+            "webhook_url": webhook_url,
+            "note": "Webhook posted but n8n response timed out. The workflow is likely still running — check executions in a moment.",
+        }
+    except Exception as e:
+        msg = str(e) or type(e).__name__
+        return {"success": False, "error": f"Trigger failed: {msg}"}
+
+
+async def _put(path: str, body: dict) -> dict:
+    """PUT to n8n API."""
+    url = _base_url() + path
+    async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        resp = await client.put(url, headers=_headers(), json=body or {})
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except Exception:
+            return {}
+
+
+async def inject_dashboard_trigger(workflow_id: str) -> dict[str, Any]:
+    """Add a dashboard-owned webhook trigger node to a workflow."""
+    import uuid
+
+    w = await _get(f"/api/v1/workflows/{workflow_id}")
+    if not w:
+        return {"success": False, "error": "Workflow not found"}
+
+    if _find_dashboard_trigger(w):
+        return {
+            "success": True,
+            "injected": False,
+            "already_present": True,
+            "webhook_url": _dashboard_trigger_url(w),
+        }
+
+    # Refuse injection on workflows that already have a (non-dashboard) webhook trigger.
+    # n8n can't reliably register two webhook triggers for the same workflow, and such
+    # workflows typically expect a specific payload that the dashboard can't provide.
+    for node in w.get("nodes") or []:
+        if node.get("name") == DASHBOARD_TRIGGER_NODE_NAME:
+            continue
+        if "webhook" in (node.get("type") or "").lower():
+            return {
+                "success": False,
+                "error": (
+                    "This workflow already has a webhook trigger. "
+                    "n8n can't register a second webhook for the same workflow, "
+                    "and webhook workflows typically require a specific payload. "
+                    "Call the existing webhook URL directly to test."
+                ),
+            }
+
+    nodes = list(w.get("nodes") or [])
+    downstream = _find_primary_downstream(w)
+
+    existing_paths = {
+        (n.get("parameters") or {}).get("path")
+        for n in nodes
+        if "webhook" in (n.get("type") or "").lower()
+    }
+    webhook_path = f"dashboard/{workflow_id}"
+    if webhook_path in existing_paths:
+        webhook_path = f"dashboard/{workflow_id}/{uuid.uuid4().hex[:8]}"
+
+    max_y = max((n.get("position", [0, 0])[1] for n in nodes), default=0) if nodes else 0
+    new_node = {
+        "id": str(uuid.uuid4()),
+        "name": DASHBOARD_TRIGGER_NODE_NAME,
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [-200, max_y + 200],
+        "webhookId": str(uuid.uuid4()),
+        "parameters": {
+            "httpMethod": "POST",
+            "path": webhook_path,
+            "responseMode": "onReceived",
+            "options": {},
+        },
+    }
+
+    connections = dict(w.get("connections") or {})
+    if downstream:
+        connections[DASHBOARD_TRIGGER_NODE_NAME] = {
+            "main": [[{"node": downstream, "type": "main", "index": 0}]]
+        }
+
+    was_active = bool(w.get("active"))
+    if was_active:
+        try:
+            await _post(f"/api/v1/workflows/{workflow_id}/deactivate")
+        except Exception as e:
+            logger.warning("deactivate before inject failed: %s", e)
+
+    put_body = {
+        "name": w.get("name") or "Workflow",
+        "nodes": nodes + [new_node],
+        "connections": connections,
+        "settings": w.get("settings") or {},
+    }
+    try:
+        await _put(f"/api/v1/workflows/{workflow_id}", put_body)
+    except httpx.HTTPStatusError as e:
+        if was_active:
+            try:
+                await _post(f"/api/v1/workflows/{workflow_id}/activate")
+            except Exception:
+                pass
+        return {
+            "success": False,
+            "error": f"n8n rejected update: HTTP {e.response.status_code} {e.response.text[:300]}",
+        }
+    except Exception as e:
+        if was_active:
+            try:
+                await _post(f"/api/v1/workflows/{workflow_id}/activate")
+            except Exception:
+                pass
+        return {"success": False, "error": f"Failed to update workflow: {e}"}
+
+    if was_active:
+        try:
+            await _post(f"/api/v1/workflows/{workflow_id}/activate")
+        except Exception as e:
+            logger.warning("reactivate after inject failed: %s", e)
+
+    return {
+        "success": True,
+        "injected": True,
+        "webhook_url": f"{_base_url()}/webhook/{webhook_path}",
+        "downstream_node": downstream,
+        "was_active": was_active,
+    }
+
+
+async def get_workflow_raw(workflow_id: str) -> dict[str, Any]:
+    """Fetch the FULL raw workflow object (nodes with all parameters, e.g. a Code
+    node's jsCode). Unlike get_workflow (a summary), this is what you edit + PUT
+    back. Used by the Remediator agent. Returns {} if not found."""
+    return await _get(f"/api/v1/workflows/{workflow_id}") or {}
+
+
+# n8n's PUT /workflows schema rejects unknown keys in `settings`; a raw GET can
+# carry extras (e.g. callerPolicy/timezone variants). Send only the allowed set.
+_ALLOWED_WF_SETTINGS = {
+    "saveExecutionProgress", "saveManualExecutions", "saveDataErrorExecution",
+    "saveDataSuccessExecution", "executionTimeout", "errorWorkflow", "timezone",
+    "executionOrder",
+}
+
+
+async def put_workflow_full(workflow_id: str, raw: dict[str, Any]) -> dict[str, Any]:
+    """PUT a (possibly edited) raw workflow back to n8n. Sends only the writable
+    fields n8n accepts (name/nodes/connections/settings); toggles active around
+    the write and restores it. Returns {success, error?}."""
+    was_active = bool(raw.get("active"))
+    settings = {k: v for k, v in (raw.get("settings") or {}).items() if k in _ALLOWED_WF_SETTINGS}
+    body = {
+        "name": raw.get("name") or "Workflow",
+        "nodes": raw.get("nodes") or [],
+        "connections": raw.get("connections") or {},
+        "settings": settings,
+    }
+    if was_active:
+        try:
+            await _post(f"/api/v1/workflows/{workflow_id}/deactivate")
+        except Exception as e:
+            logger.warning("deactivate before put failed: %s", e)
+    try:
+        await _put(f"/api/v1/workflows/{workflow_id}", body)
+    except httpx.HTTPStatusError as e:
+        if was_active:
+            try:
+                await _post(f"/api/v1/workflows/{workflow_id}/activate")
+            except Exception:
+                pass
+        return {"success": False, "error": f"n8n rejected update: HTTP {e.response.status_code} {e.response.text[:300]}"}
+    except Exception as e:
+        if was_active:
+            try:
+                await _post(f"/api/v1/workflows/{workflow_id}/activate")
+            except Exception:
+                pass
+        return {"success": False, "error": f"Failed to update workflow: {e}"}
+    if was_active:
+        try:
+            await _post(f"/api/v1/workflows/{workflow_id}/activate")
+        except Exception as e:
+            logger.warning("reactivate after put failed: %s", e)
+    return {"success": True, "was_active": was_active}
+
+
+async def remove_dashboard_trigger(workflow_id: str) -> dict[str, Any]:
+    """Remove the dashboard-owned webhook trigger node from a workflow."""
+    w = await _get(f"/api/v1/workflows/{workflow_id}")
+    if not w:
+        return {"success": False, "error": "Workflow not found"}
+
+    if not _find_dashboard_trigger(w):
+        return {"success": True, "removed": False, "not_present": True}
+
+    was_active = bool(w.get("active"))
+    nodes = [
+        n for n in (w.get("nodes") or [])
+        if n.get("name") != DASHBOARD_TRIGGER_NODE_NAME
+    ]
+    connections = dict(w.get("connections") or {})
+    connections.pop(DASHBOARD_TRIGGER_NODE_NAME, None)
+
+    if was_active:
+        try:
+            await _post(f"/api/v1/workflows/{workflow_id}/deactivate")
+        except Exception as e:
+            logger.warning("deactivate before remove failed: %s", e)
+
+    put_body = {
+        "name": w.get("name") or "Workflow",
+        "nodes": nodes,
+        "connections": connections,
+        "settings": w.get("settings") or {},
+    }
+    try:
+        await _put(f"/api/v1/workflows/{workflow_id}", put_body)
+    except httpx.HTTPStatusError as e:
+        if was_active:
+            try:
+                await _post(f"/api/v1/workflows/{workflow_id}/activate")
+            except Exception:
+                pass
+        return {
+            "success": False,
+            "error": f"n8n rejected update: HTTP {e.response.status_code} {e.response.text[:300]}",
+        }
+    except Exception as e:
+        if was_active:
+            try:
+                await _post(f"/api/v1/workflows/{workflow_id}/activate")
+            except Exception:
+                pass
+        return {"success": False, "error": f"Failed to update workflow: {e}"}
+
+    if was_active:
+        try:
+            await _post(f"/api/v1/workflows/{workflow_id}/activate")
+        except Exception as e:
+            logger.warning("reactivate after remove failed: %s", e)
+
+    return {"success": True, "removed": True, "was_active": was_active}
+
+
+async def _ensure_tag(name: str) -> Optional[str]:
+    """Look up or create a tag by name. Returns tag ID, or None on failure."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    try:
+        listing = await _get("/api/v1/tags", {"limit": 250})
+        existing = listing.get("data", []) if isinstance(listing, dict) else []
+        for t in existing:
+            if (t.get("name") or "").lower() == name.lower():
+                return t.get("id")
+        created = await _post("/api/v1/tags", {"name": name})
+        return created.get("id")
+    except httpx.HTTPStatusError as e:
+        logger.warning("tag lookup/create failed for %r: HTTP %s", name, e.response.status_code)
+        return None
+    except Exception as e:
+        logger.warning("tag lookup/create failed for %r: %s", name, e)
+        return None
+
+
+async def _apply_workflow_tags(workflow_id: str, tag_names: list[str]) -> list[str]:
+    """Resolve tag names to IDs (creating as needed) and attach to a workflow.
+
+    Returns the list of tag names that were successfully applied.
+    """
+    tag_ids: list[dict] = []
+    applied: list[str] = []
+    for name in tag_names:
+        tid = await _ensure_tag(name)
+        if tid:
+            tag_ids.append({"id": tid})
+            applied.append(name)
+    if not tag_ids:
+        return applied
+    try:
+        await _put(f"/api/v1/workflows/{workflow_id}/tags", tag_ids)
+    except Exception as e:
+        logger.warning("attach tags to workflow %s failed: %s", workflow_id, e)
+        return []
+    return applied
+
+
+async def import_workflow(
+    workflow_data: dict,
+    name_override: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Import a workflow JSON into n8n via the REST API.
+
+    Optionally overrides the workflow name and attaches tags (created if missing).
+    """
+    # n8n's Public API rejects these fields as read-only on POST /workflows.
+    # `active` and `tags` must be set via separate endpoints after create.
+    readonly_on_create = {
+        "id", "active", "tags", "createdAt", "updatedAt", "versionId",
+        "activeVersionId", "versionCounter", "triggerCount", "shared",
+        "activeVersion", "staticData", "meta", "pinData",
+    }
+    clean = {k: v for k, v in workflow_data.items() if k not in readonly_on_create}
+
+    # n8n requires `settings` on create (at least an empty object)
+    clean.setdefault("settings", {})
+
+    override = (name_override or "").strip()
+    if override:
+        clean["name"] = override
+
+    try:
+        result = await _post("/api/v1/workflows", clean)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:300]
+        return {"success": False, "error": f"HTTP {e.response.status_code}: {body}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    wf_id = result.get("id", "")
+    name = result.get("name", "Unknown")
+
+    applied_tags: list[str] = []
+    tag_warning: Optional[str] = None
+    if wf_id and tags:
+        applied_tags = await _apply_workflow_tags(wf_id, tags)
+        missing = [t for t in tags if t not in applied_tags]
+        if missing:
+            tag_warning = f"Imported, but failed to attach tags: {', '.join(missing)}"
+
+    response: dict[str, Any] = {
+        "success": True,
+        "workflow_id": wf_id,
+        "name": name,
+        "tags_applied": applied_tags,
+    }
+    if tag_warning:
+        response["warning"] = tag_warning
+    return response
+
+
+async def export_workflow(workflow_id: str) -> dict[str, Any]:
+    """Export a single workflow as its full JSON definition."""
+    return await _get(f"/api/v1/workflows/{workflow_id}")
+
+
+async def export_all_workflows(active_only: bool = False) -> list[dict]:
+    """Export all workflows as full JSON definitions."""
+    params: dict = {"limit": 250}
+    if active_only:
+        params["active"] = "true"
+
+    result = await _get("/api/v1/workflows", params)
+    workflows = result.get("data", []) if isinstance(result, dict) else []
+    return workflows
+
+
+# ── n8n User Management ──────────────────────────────────────────────────────
+
+
+async def list_n8n_users() -> list[dict]:
+    """List all users on the active n8n instance."""
+    result = await _get("/api/v1/users")
+    users = result.get("data", []) if isinstance(result, dict) else []
+    return [{
+        "id": u.get("id", ""),
+        "email": u.get("email", ""),
+        "first_name": u.get("firstName", ""),
+        "last_name": u.get("lastName", ""),
+        "role": u.get("role", ""),
+        "pending": u.get("isPending", False),
+        "created_at": u.get("createdAt", ""),
+    } for u in users]
+
+
+async def invite_n8n_user(email: str, role: str = "global:member") -> dict[str, Any]:
+    """Invite a user to the active n8n instance."""
+    try:
+        result = await _post("/api/v1/users", [{"email": email, "role": role}])
+        # n8n returns array of created/invited users
+        if isinstance(result, list) and result:
+            user = result[0].get("user", result[0])
+            return {"success": True, "user_id": user.get("id", ""), "email": email}
+        if isinstance(result, dict) and result.get("data"):
+            data = result["data"]
+            if isinstance(data, list) and data:
+                user = data[0].get("user", data[0])
+                return {"success": True, "user_id": user.get("id", ""), "email": email}
+        return {"success": True, "email": email}
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:300]
+        return {"success": False, "error": f"HTTP {e.response.status_code}: {body}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def delete_n8n_user(user_id: str, transfer_to: str = "") -> dict[str, Any]:
+    """Delete a user from the active n8n instance."""
+    try:
+        url = _base_url() + f"/api/v1/users/{user_id}"
+        params = {}
+        if transfer_to:
+            params["transferId"] = transfer_to
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as c:
+            resp = await c.delete(url, headers=_headers(), params=params)
+            if resp.status_code in (200, 204):
+                return {"success": True}
+            return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def set_workflow_active(workflow_id: str, active: bool) -> dict[str, Any]:
+    """Activate or deactivate a workflow."""
+    action = "activate" if active else "deactivate"
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+            resp = await client.post(
+                f"{_base_url()}/api/v1/workflows/{workflow_id}/{action}",
+                headers=_headers(),
+            )
+            if resp.status_code in (200, 204):
+                return {"success": True, "active": active}
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def delete_workflow(workflow_id: str) -> dict[str, Any]:
+    """Hard-delete a workflow from n8n. Irreversible on the n8n side."""
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as c:
+            resp = await c.delete(
+                f"{_base_url()}/api/v1/workflows/{workflow_id}",
+                headers=_headers(),
+            )
+            if resp.status_code in (200, 204):
+                return {"success": True, "deleted": True}
+            if resp.status_code == 404:
+                return {"success": False, "error": "Workflow not found"}
+            return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def list_archived_workflows() -> list[dict[str, Any]]:
+    """Page through every workflow on the active instance, return only archived ones."""
+    archived: list[dict[str, Any]] = []
+    cursor = ""
+    # n8n's Public API caps page size at 250; loop until nextCursor is empty.
+    # Hard cap on iterations as a paranoia stop in case n8n ever returns a self-referencing cursor.
+    for _ in range(200):
+        params: dict = {"limit": 250}
+        if cursor:
+            params["cursor"] = cursor
+        result = await _get("/api/v1/workflows", params)
+        if not isinstance(result, dict):
+            break
+        for w in result.get("data") or []:
+            if w.get("isArchived"):
+                archived.append({"id": w.get("id", ""), "name": w.get("name", "Unknown")})
+        cursor = result.get("nextCursor") or ""
+        if not cursor:
+            break
+    return archived
+
+
+async def delete_archived_workflows() -> dict[str, Any]:
+    """Find every archived workflow on the active n8n instance and hard-delete it.
+
+    Each delete is its own Public API call; partial failures don't abort the run.
+    """
+    archived = await list_archived_workflows()
+    if not archived:
+        return {"success": True, "deleted": 0, "failed": 0, "errors": [], "items": []}
+
+    deleted: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+    for w in archived:
+        wid = w["id"]
+        if not wid:
+            continue
+        result = await delete_workflow(wid)
+        if result.get("success"):
+            deleted.append(w)
+        else:
+            errors.append({"id": wid, "name": w["name"], "error": str(result.get("error", "unknown"))})
+
+    return {
+        "success": True,
+        "deleted": len(deleted),
+        "failed": len(errors),
+        "errors": errors,
+        "items": deleted,
+    }

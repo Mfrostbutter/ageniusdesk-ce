@@ -1,0 +1,44 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+.env.test
+.env.local
+.env.cutover-bak
+# Ignore all data/ contents but track community templates (product source)
+data/*
+!data/templates/
+data/templates/*
+!data/templates/*.json
+# Track agent meta yamls and hook shipping defaults (non-secret config)
+!data/agents/
+data/agents/*
+!data/agents/*.yaml
+!data/vault-default-services.json
+!data/vault-credential-opt-in.json
+*.db
+.ruff_cache/
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+.DS_Store
+.claude/
+
+# Playwright MCP artifacts (browser snapshots + console logs)
+.playwright-mcp/
+docker-compose.override.yml
+
+# Syncthing
+.stfolder/
+.stversions/
+.stignore
+*.sync-conflict-*
+
+# LangGraph dev server local state
+.langgraph_api/
+
+# Local workflow journals (workflow-capture)
+_worklogs/

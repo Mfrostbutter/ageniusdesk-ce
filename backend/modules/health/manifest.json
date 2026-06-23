@@ -1,0 +1,9 @@
+{
+  "id": "health",
+  "name": "Health",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "description": "Endpoint health polling (placeholder, not yet implemented).",
+  "author": "AgeniusDesk",
+  "builtin": true
+}

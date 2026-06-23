@@ -1,0 +1,16 @@
+# Force LF line endings for all files that run on Linux (Docker).
+# Prevents Windows CRLF from breaking shebangs and bash scripts.
+* text=auto
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+.env.example text eol=lf
+
+# Binaries — no line-ending conversion
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.db binary

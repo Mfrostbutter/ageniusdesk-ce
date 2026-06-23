@@ -1,0 +1,14 @@
+{
+  "id": "dashboard_mcp",
+  "name": "Dashboard MCP",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Exposes AgeniusDesk's own API surface as an MCP server for the Code Lab terminal.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/mcp-dashboard",
+  "python_entry": "server.py",
+  "builtin": true,
+  "secrets_required": [
+    { "key": "DASHBOARD_MCP_TOKEN", "description": "Bearer token for MCP access", "required": false }
+  ]
+}

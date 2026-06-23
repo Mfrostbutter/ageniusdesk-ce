@@ -1,0 +1,10 @@
+{
+  "id": "knowledge",
+  "name": "Knowledge Sources",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "description": "Registry of external knowledge sources (Qdrant collections, search APIs) queryable by agents via MCP.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/knowledge",
+  "builtin": true
+}

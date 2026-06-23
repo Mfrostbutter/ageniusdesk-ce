@@ -1,0 +1,13 @@
+{
+  "id": "docker_mgr",
+  "name": "Containers",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "description": "Docker container management — list, start/stop/restart, tail logs, and group by compose project. Requires /var/run/docker.sock mounted on the dashboard service.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/containers",
+  "builtin": true,
+  "frontend": {
+    "nav": { "label": "Containers", "icon": "box", "view": "containers" }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "n8n_proxy",
+  "name": "n8n Proxy",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Authenticated proxy to n8n REST API for workflows, executions, and instances.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/n8n",
+  "builtin": true,
+  "frontend": {
+    "nav": { "label": "Workflows", "icon": "workflow", "view": "workflows" }
+  }
+}

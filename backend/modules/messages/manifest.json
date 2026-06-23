@@ -1,0 +1,10 @@
+{
+  "id": "messages",
+  "name": "Messages",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Internal message bus for cross-module events.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/messages",
+  "builtin": true
+}

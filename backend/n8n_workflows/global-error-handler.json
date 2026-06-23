@@ -1,0 +1,65 @@
+{
+  "name": "Global Error Handler → AgeniusDesk",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "err-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $input.first().json;\n\nconst execution = err.execution || {};\nconst workflow = execution.workflow || {};\nconst lastNode = execution.lastNodeExecuted || 'unknown';\nconst errMsg = err.execution?.error?.message || err.message || 'Unknown error';\nconst errType = err.execution?.error?.name || 'Error';\n\nreturn [{\n  json: {\n    workflow_id: workflow.id || 'unknown',\n    workflow_name: workflow.name || 'Unknown Workflow',\n    execution_id: String(execution.id || ''),\n    node_name: lastNode,\n    error_message: errMsg,\n    error_type: errType\n  }\n}];"
+      },
+      "id": "err-extract",
+      "name": "Extract Error Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FLOW_DASHBOARD_URL || 'http://localhost:3000' }}/api/errors/webhook",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "err-send",
+      "name": "Send to Flow Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [740, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "content": "## Global Error Handler → AgeniusDesk\n\nCatches errors from ALL workflows and sends them to your AgeniusDesk instance.\n\n**Setup:**\n1. Set the `AGENIUSDESK_URL` environment variable in your n8n instance\n   (e.g., `http://your-dashboard:3000`)\n2. Or edit the HTTP Request node URL directly\n3. Go to n8n Settings → Workflows → Error Workflow → Select this workflow",
+        "height": 220,
+        "width": 520,
+        "color": 4
+      },
+      "id": "err-note",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [260, 60]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[{"node": "Extract Error Details", "type": "main", "index": 0}]]
+    },
+    "Extract Error Details": {
+      "main": [[{"node": "Send to Flow Dashboard", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

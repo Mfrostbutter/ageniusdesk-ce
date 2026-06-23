@@ -1,0 +1,10 @@
+{
+  "id": "public_api",
+  "name": "Public API v1",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Versioned, X-API-Key authenticated REST surface for external integrations.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/v1",
+  "builtin": true
+}
