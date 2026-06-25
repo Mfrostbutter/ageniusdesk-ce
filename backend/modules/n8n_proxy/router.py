@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from backend.auth_gate import require_trusted_request
+from backend.auth_gate import require_role
 from backend.config import (
     add_instance,
     decrypt_value,
@@ -23,7 +23,7 @@ from backend.config import (
 )
 from backend.modules.n8n_proxy import client
 
-router = APIRouter(prefix="/api/n8n", tags=["n8n"], dependencies=[Depends(require_trusted_request)])
+router = APIRouter(prefix="/api/n8n", tags=["n8n"], dependencies=[Depends(require_role("operator"))])
 
 
 # ── Models ───────────────────────────────────────────────────────────────────

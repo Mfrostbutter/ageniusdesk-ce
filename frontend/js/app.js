@@ -3,6 +3,7 @@
  */
 
 import { get, post, connectWS, onEvent } from './api.js';
+import { requireAuth } from './views/login.js';
 import { loadTheme, setActiveTheme, getCurrentTheme } from './themes.js';
 import * as modal from './components/modal.js';
 import * as toast from './components/toast.js';
@@ -510,6 +511,11 @@ window.__n8nUrl = '';
 
 async function init() {
   try {
+    // Auth gate first: blocks here (rendering setup/login) until the browser
+    // holds a session, unless login is disabled or an edge identity is present.
+    const proceed = await requireAuth();
+    if (!proceed) return;
+
     const status = await get('/api/status');
     window.__n8nUrl = (status.n8n_url || '').replace(/\/$/, '');
     window.__appVersion = status.version || '';

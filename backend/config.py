@@ -20,6 +20,8 @@ CONFIG_FILE = DATA_DIR / "config.json"
 DB_FILE = DATA_DIR / "dashboard.db"
 SECRET_KEY_FILE = DATA_DIR / ".secret_key"
 SECRETS_FILE = DATA_DIR / "secrets.json"
+# Local dashboard accounts (username + PBKDF2 password hash + optional TOTP).
+USERS_FILE = DATA_DIR / "users.json"
 # Per-secret instance scopes: {"SECRET_NAME": ["inst_id_1", "inst_id_2"]}.
 # Empty list or missing entry = "all instances" (backwards compatible default).
 # Stored separately from secrets.json so legacy string secrets and compounds
@@ -75,6 +77,18 @@ class Settings(BaseSettings):
     agd_require_auth: bool = False
     agd_admin_token: str = ""
 
+    # Local account login (accounts + sessions + optional TOTP 2FA). On a fresh
+    # install the first browser visit forces creation of an owner account, then
+    # requires login. Edge identity (Cloudflare Access / trusted proxy) still
+    # satisfies the gate without a local account. Set AGD_DISABLE_LOGIN=true to
+    # skip browser login entirely (dev/localhost only); it is logged loudly.
+    agd_disable_login: bool = False
+    agd_session_ttl_days: int = 14        # sliding session lifetime
+    agd_session_absolute_days: int = 30   # hard cap regardless of activity
+    agd_login_max_attempts: int = 8       # failures before lockout
+    agd_login_lockout_minutes: int = 15
+    agd_password_min_length: int = 10     # raised from the legacy 6 in admin CRUD
+
     # Security hardening knobs (all default to prior behavior).
     # CORS allowed origins: "*" (default, any origin) or a comma-separated list
     # of exact origins, e.g. "https://app.example.com,https://admin.example.com".
@@ -100,7 +114,7 @@ def harden_file_permissions() -> None:
     or partial on Windows dev. Called once at startup so secrets, encrypted
     config, and the master key are not world/group readable.
     """
-    for f in (SECRET_KEY_FILE, SECRETS_FILE, CONFIG_FILE, SECRET_SCOPE_FILE):
+    for f in (SECRET_KEY_FILE, SECRETS_FILE, CONFIG_FILE, SECRET_SCOPE_FILE, USERS_FILE, DB_FILE):
         try:
             if f.exists():
                 os.chmod(f, 0o600)

@@ -1,15 +1,13 @@
 """Admin API routes — user management, secrets store, config reset."""
 
-import hashlib
 import json
 import logging
 import os
-import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.auth_gate import require_trusted_request
+from backend.auth_gate import require_role
 from backend.config import (
     DATA_DIR,
     decrypt_value,
@@ -21,7 +19,9 @@ from backend.config import (
     save_config,
     save_secret_scopes,
     save_secrets,
+    settings,
 )
+from backend.modules.auth import service as auth_service
 from backend.modules.admin.secret_templates import (
     TEMPLATES as SECRET_TEMPLATES,
     sanitized_registry as secret_templates_public,
@@ -29,7 +29,7 @@ from backend.modules.admin.secret_templates import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_trusted_request)])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_role("admin"))])
 
 USERS_FILE = DATA_DIR / "users.json"
 
@@ -62,21 +62,11 @@ class CreateSecret(BaseModel):
 
 
 def _load_users() -> list[dict]:
-    if USERS_FILE.exists():
-        return json.loads(USERS_FILE.read_text())
-    return []
+    return auth_service.load_users()
 
 
 def _save_users(users: list[dict]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    USERS_FILE.write_text(json.dumps(users, indent=2))
-
-
-def _hash_password(password: str, salt: str = "") -> tuple[str, str]:
-    if not salt:
-        salt = secrets.token_hex(16)
-    hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
-    return hashed, salt
+    auth_service.save_users(users)
 
 
 @router.get("/users")
@@ -100,15 +90,20 @@ async def create_user(req: CreateUser):
         raise HTTPException(status_code=400, detail="Role must be viewer, operator, or admin")
     if any(u["username"] == req.username for u in users):
         raise HTTPException(status_code=409, detail=f"User '{req.username}' already exists")
-    if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-    hashed, salt = _hash_password(req.password)
+    if len(req.password) < settings.agd_password_min_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {settings.agd_password_min_length} characters",
+        )
+    now = auth_service._iso(auth_service._now())
     users.append({
         "username": req.username,
         "display_name": req.display_name,
         "role": req.role,
-        "password_hash": hashed,
-        "salt": salt,
+        "created_at": now,
+        "password_changed_at": now,
+        **auth_service.hash_password(req.password),
+        "totp": {"enabled": False, "secret_enc": "", "recovery_codes": []},
     })
     _save_users(users)
     return {"success": True, "username": req.username}

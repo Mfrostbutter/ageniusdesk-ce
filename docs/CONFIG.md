@@ -63,7 +63,24 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
 | `AGD_MAX_REQUEST_BYTES` | `26214400` | Max request body size in bytes (25 MiB). Larger requests get `413`. |
 | `AGD_CSP` | (none) | Optional `Content-Security-Policy` header. Opt-in: the editors load from CDNs and the music tab embeds arbitrary origins, so a strict policy can break features. A recommended starting policy is in `.env.example`. |
 
-Baseline response headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Strict-Transport-Security` over HTTPS) are sent automatically. Sensitive data files (`.secret_key`, `secrets.json`, `config.json`, `secret_scope.json`) are `chmod 600` at startup.
+Baseline response headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Strict-Transport-Security` over HTTPS) are sent automatically. Sensitive data files (`.secret_key`, `secrets.json`, `config.json`, `secret_scope.json`, `users.json`, `dashboard.db`) are `chmod 600` at startup.
+
+## Local Account Login
+
+AgeniusDesk ships with built-in account login. On first run the browser forces you to create an owner account (username + password), then requires sign-in on every visit. The owner account is an `admin`. Accounts may optionally enable TOTP two-factor (any authenticator app); recovery codes are issued once at enrollment.
+
+An edge identity (Cloudflare Access / trusted reverse proxy header) still satisfies the gate without a local account, so existing proxy-fronted deployments are unchanged. Automation can authenticate with `AGD_ADMIN_TOKEN` as a bearer token.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGD_DISABLE_LOGIN` | `false` | Turn browser login OFF entirely (no account, no session). Dev/localhost only; logged loudly at startup. Anyone who can reach the port gets full access. |
+| `AGD_SESSION_TTL_DAYS` | `14` | Sliding session lifetime; extended on activity. |
+| `AGD_SESSION_ABSOLUTE_DAYS` | `30` | Hard cap on a session regardless of activity. |
+| `AGD_LOGIN_MAX_ATTEMPTS` | `8` | Failed logins (per username and per IP) before a temporary lockout. |
+| `AGD_LOGIN_LOCKOUT_MINUTES` | `15` | Lockout duration after too many failures. |
+| `AGD_PASSWORD_MIN_LENGTH` | `10` | Minimum password length for new accounts and password changes. |
+
+Passwords are hashed with PBKDF2-HMAC-SHA256 (600k iterations, per-user random salt; legacy hashes are upgraded transparently on next login). Sessions are stored server-side as a SHA-256 of the token, so a database leak cannot be replayed. The session cookie is `HttpOnly`, `SameSite=Strict`, and `Secure` over HTTPS; mutations carry a double-submit CSRF token. Roles are `viewer < operator < admin`; v1 enforcement is coarse per route group (read surfaces require any signed-in user, the n8n and container control surfaces require `operator`, and admin/secrets require `admin`).
 
 ## Secret Resolution
 
@@ -141,7 +158,8 @@ The secret is encrypted at rest using Fernet (AES-128-CBC + HMAC-SHA256) and sto
 
 - `data/.secret_key`; master key for decryption (mode 600, auto-generated if missing)
 - `data/secrets.json`; encrypted secret store
-- `data/dashboard.db`; SQLite database (errors, messages, notes)
+- `data/users.json`; account credentials (PBKDF2 hashes, encrypted TOTP secrets)
+- `data/dashboard.db`; SQLite database (errors, messages, notes, login sessions)
 
 If using PostgreSQL:
 - Backup the PostgreSQL database directly (pg_dump, etc.)

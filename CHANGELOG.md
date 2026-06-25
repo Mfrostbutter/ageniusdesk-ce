@@ -2,6 +2,20 @@
 
 All notable changes to AgeniusDesk Community Edition are documented here.
 
+## [Unreleased]
+
+### Added
+
+**Authentication, accounts, and 2FA**
+- Built-in login with local accounts. First browser visit forces creation of an owner account (admin), then requires sign-in. Edge identity (Cloudflare Access) and the `AGD_ADMIN_TOKEN` bearer still satisfy the gate.
+- Optional TOTP two-factor (any authenticator app), with one-time recovery codes. QR rendered client-side from a vendored, dependency-free generator; the setup key is also shown for manual entry.
+- Server-side sessions stored as a SHA-256 of the token (a DB leak cannot be replayed), `HttpOnly` + `SameSite=Strict` cookie, sliding expiry with an absolute cap, server-side revocation, and a session list in Settings > Account.
+- Double-submit CSRF protection on cookie-authenticated mutations.
+- Coarse role-based access control (`viewer < operator < admin`): admin/secrets require `admin`; the n8n and container control surfaces require `operator`; read surfaces require any signed-in user. Machine webhooks (errors, messages) stay open for n8n ingestion.
+- Password hashing raised to PBKDF2-HMAC-SHA256 at 600k iterations with login-time rehash of legacy hashes; minimum password length raised to 10.
+- New settings: `AGD_DISABLE_LOGIN`, `AGD_SESSION_TTL_DAYS`, `AGD_SESSION_ABSOLUTE_DAYS`, `AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, `AGD_PASSWORD_MIN_LENGTH`.
+- `harden_file_permissions()` now also `chmod 600`s `users.json` and `dashboard.db`.
+
 ## [0.1.0] - 2026-06-23
 
 ### Initial Release

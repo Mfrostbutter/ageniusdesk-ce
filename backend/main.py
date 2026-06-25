@@ -69,11 +69,16 @@ async def lifespan(app: FastAPI):
     # self-host knows privileged routes rely on an edge proxy for auth.
     try:
         from backend.config import settings as _settings
-        if not _settings.agd_require_auth:
+        if _settings.agd_disable_login:
             logger.warning(
-                "AGD_REQUIRE_AUTH is off: privileged API routes (admin, modules, n8n) "
-                "rely on edge auth (e.g. Cloudflare Access). Set AGD_REQUIRE_AUTH=true "
-                "to enforce in-app auth on a naked-port bind."
+                "AGD_DISABLE_LOGIN is set: browser login is OFF. Anyone who can reach "
+                "this port has full access. Use this only on a trusted localhost bind."
+            )
+        elif not _settings.agd_require_auth:
+            logger.info(
+                "Local account login is enforced. First browser visit will prompt to "
+                "create an owner account. Edge identity (Cloudflare Access) still "
+                "satisfies the gate without a local account."
             )
     except Exception:
         pass
@@ -132,6 +137,36 @@ async def security_headers(request, call_next):
     if settings.agd_csp:
         response.headers.setdefault("Content-Security-Policy", settings.agd_csp)
     return response
+
+
+@app.middleware("http")
+async def csrf_protect(request, call_next):
+    """Double-submit CSRF check for cookie-authenticated mutations.
+
+    Enforces only when the request is a cookie-authenticated browser mutation:
+    a non-safe method, an internal `/api/` path (not the X-API-Key public API
+    at `/api/v1/`), and an `agd_session` cookie present. Bearer-token / API-key
+    callers and unauthenticated/edge-only requests are not cookie-CSRF exposed,
+    so they are skipped. On mismatch: 403.
+    """
+    from backend.modules.auth.service import CSRF_COOKIE, CSRF_HEADER, SAFE_METHODS, SESSION_COOKIE
+
+    path = request.url.path
+    if (
+        request.method not in SAFE_METHODS
+        and path.startswith("/api/")
+        and not path.startswith("/api/v1/")
+        and request.cookies.get(SESSION_COOKIE)
+    ):
+        auth = request.headers.get("authorization", "")
+        has_api_key = bool(request.headers.get("x-api-key"))
+        if not auth.lower().startswith("bearer ") and not has_api_key:
+            cookie_tok = request.cookies.get(CSRF_COOKIE, "")
+            header_tok = request.headers.get(CSRF_HEADER, "")
+            if not cookie_tok or cookie_tok != header_tok:
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"detail": "CSRF check failed"}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -194,13 +229,16 @@ async def docker_env():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    # When in-app auth is enforced, require an edge-authenticated identity on the
-    # WS upgrade (Cloudflare Access / trusted proxy header). No-op by default.
-    # Browsers can't set Authorization on a WS handshake, so token-only mode
-    # does not gate /ws; edge auth does.
-    if settings.agd_require_auth:
-        from backend.auth_gate import edge_identity
-        if not edge_identity(ws):
+    # Gate the WS upgrade the same way as the HTTP boundary: a valid local
+    # session cookie OR an edge-authenticated identity. Browsers can't set an
+    # Authorization header on a WS handshake, so token-only mode does not gate
+    # /ws. When login is disabled (open install) the gate is skipped.
+    from backend.auth_gate import edge_identity, login_enforced
+    if login_enforced() or settings.agd_require_auth:
+        from backend.modules.auth.service import SESSION_COOKIE, session_user
+        raw = ws.cookies.get(SESSION_COOKIE)
+        authed = bool(edge_identity(ws)) or bool(await session_user(raw))
+        if not authed:
             await ws.close(code=1008)
             return
     await manager.connect(ws)

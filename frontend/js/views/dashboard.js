@@ -43,10 +43,40 @@ function getDash(id) {
   return dbs.find(d => d.id === id) || dbs[0];
 }
 
-function saveLayout(dashId, layout) {
+// Layout is row-based: dash.rows is an ordered list of rows, each holding 1 or 2
+// widget ids. A solo widget fills its row; two split it 50/50. This makes
+// side-by-side pairing explicit and position-driven instead of depending on
+// auto-flow parity, so a tile can be dropped beside any other tile anywhere.
+const ROW_MAX = 2;
+
+function getRows(dash) {
+  if (Array.isArray(dash.rows)) {
+    const rows = dash.rows
+      .map(r => (Array.isArray(r) ? r : [r]).filter(id => WIDGETS[id]).slice(0, ROW_MAX))
+      .filter(r => r.length);
+    if (rows.length) return rows;
+  }
+  // Migrate a legacy flat layout (+ optional sizes) into rows: pair consecutive halves.
+  const layout = (dash.layout || []).filter(id => WIDGETS[id]);
+  const sizeOf = id => (dash.sizes && dash.sizes[id]) || WIDGETS[id]?.size || 'full';
+  const rows = [];
+  for (let i = 0; i < layout.length; ) {
+    const id = layout[i], nid = layout[i + 1];
+    if (sizeOf(id) === 'half' && nid && sizeOf(nid) === 'half') { rows.push([id, nid]); i += 2; }
+    else { rows.push([id]); i++; }
+  }
+  return rows;
+}
+
+function saveRows(dashId, rows) {
   const dbs = getDashboards();
   const d = dbs.find(d => d.id === dashId);
-  if (d) { d.layout = layout; saveDashboards(dbs); }
+  if (!d) return;
+  const clean = rows.map(r => r.filter(id => WIDGETS[id])).filter(r => r.length);
+  d.rows = clean;
+  d.layout = clean.flat(); // keep flat layout in sync for any legacy reader
+  delete d.sizes;          // width is now implied by row occupancy
+  saveDashboards(dbs);
 }
 
 export function deleteDashboard(id) {
@@ -92,7 +122,7 @@ export async function render(container) {
   `;
 
   const grid = container.querySelector('#widget-grid');
-  renderWidgetGrid(grid, dash.layout, dashId);
+  renderWidgetGrid(grid, dashId);
   initWidgetDnD(grid, dashId);
 
   container.querySelector('#dash-add-widget-btn')?.addEventListener('click', () => {
@@ -116,30 +146,20 @@ export async function render(container) {
 
 // ── Widget grid rendering ────────────────────────────────────────────────────
 
-function renderWidgetGrid(grid, layout, dashId) {
+function renderWidgetGrid(grid, dashId) {
   grid.innerHTML = '';
+  const rows = getRows(getDash(dashId));
 
-  let i = 0;
-  while (i < layout.length) {
-    const id = layout[i];
-    const w = WIDGETS[id];
-    if (!w) { i++; continue; }
-
-    if (w.size === 'half' && layout[i + 1] && WIDGETS[layout[i + 1]]?.size === 'half') {
-      const row = document.createElement('div');
-      row.className = 'grid-2 widget-row';
-      row.appendChild(makeWidgetEl(layout[i], dashId));
-      row.appendChild(makeWidgetEl(layout[i + 1], dashId));
-      grid.appendChild(row);
-      i += 2;
-    } else {
-      grid.appendChild(makeWidgetEl(id, dashId));
-      i++;
-    }
-  }
+  rows.forEach((row, ri) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'widget-row';
+    rowEl.dataset.row = String(ri);
+    row.forEach(id => rowEl.appendChild(makeWidgetEl(id, dashId)));
+    grid.appendChild(rowEl);
+  });
 
   // Mount widget body content after DOM is in place
-  layout.forEach(id => {
+  rows.flat().forEach(id => {
     const w = WIDGETS[id];
     const body = document.getElementById(`widget-body-${id}`);
     if (w && body) w.render(body);
@@ -151,14 +171,14 @@ function makeWidgetEl(id, dashId) {
   const el = document.createElement('div');
   el.className = 'widget';
   el.dataset.widgetId = id;
-  // Default non-draggable. Grip header toggles this on mousedown so tile drag
-  // only initiates from the header. Prevents inner widgets (e.g., timeline
+  // Default non-draggable. The drag handle toggles this on mousedown so tile
+  // drag only initiates from the handle. Prevents inner widgets (e.g., timeline
   // drag-to-pan) from accidentally firing tile reorder on body interactions.
   el.draggable = false;
   el.innerHTML = `
-    <div class="card" style="margin-bottom:20px">
+    <div class="card">
       <div class="card-header widget-grip">
-        <span class="widget-drag-handle" title="Drag to reorder" style="cursor:grab">
+        <span class="widget-drag-handle" title="Drag to move or pair side by side" style="cursor:grab">
           <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="3" cy="12" r="1.2"/><circle cx="7" cy="12" r="1.2"/></svg>
         </span>
         <span class="card-title">${esc(w.title)}</span>
@@ -168,27 +188,18 @@ function makeWidgetEl(id, dashId) {
     </div>
   `;
 
-  const grip = el.querySelector('.widget-grip');
-  grip.addEventListener('mousedown', () => { el.draggable = true; });
+  // Enable native drag only while the handle is held.
+  const handle = el.querySelector('.widget-drag-handle');
+  handle.addEventListener('mousedown', () => { el.draggable = true; });
+  handle.addEventListener('mouseup', () => { el.draggable = false; });
   el.addEventListener('dragend', () => { el.draggable = false; });
-  document.addEventListener('mouseup', () => { el.draggable = false; });
 
   el.querySelector('.widget-remove-btn').addEventListener('click', (e) => {
     e.stopPropagation();
-    const dash = getDash(dashId);
-    const newLayout = dash.layout.filter(l => l !== id);
-    saveLayout(dashId, newLayout);
-    // Splice just this element out instead of full re-render (full re-render
-    // races with async widget body mounts and collapses the grid).
-    const row = el.parentElement;
-    el.remove();
-    if (row?.classList.contains('widget-row')) {
-      const sibling = row.firstElementChild;
-      if (sibling) row.parentElement?.insertBefore(sibling, row);
-      row.remove();
-    }
+    const rows = getRows(getDash(dashId)).map(r => r.filter(x => x !== id)).filter(r => r.length);
+    saveRows(dashId, rows);
     const grid = document.getElementById('widget-grid');
-    if (grid) initWidgetDnD(grid, dashId);
+    if (grid) { renderWidgetGrid(grid, dashId); loadDashboardData(); loadInstances(); }
   });
 
   // Show remove button on hover
@@ -206,58 +217,142 @@ function makeWidgetEl(id, dashId) {
 
 // ── Widget DnD ───────────────────────────────────────────────────────────────
 
+// Clear every drop indicator.
+function clearDropMarks(grid) {
+  grid.querySelectorAll('.dz-left, .dz-right').forEach(el => el.classList.remove('dz-left', 'dz-right'));
+  grid.querySelectorAll('.dz-above, .dz-below').forEach(el => el.classList.remove('dz-above', 'dz-below'));
+}
+
+// Resolve where a dropped tile would land given the pointer position:
+//   { kind:'side',  side:'left'|'right', tileId }  → pair beside that tile
+//   { kind:'row',   where:'above'|'below', tileId } → its own full-width row
+//   { kind:'end' }                                  → append at the bottom
+// Decision is on the NEAREST tile: left/right thirds pair to that side, the
+// middle band makes a new row above/below depending on vertical position.
+function resolveDrop(grid, dragEl, x, y) {
+  const tiles = [...grid.querySelectorAll('.widget[data-widget-id]')].filter(t => t !== dragEl);
+  if (!tiles.length) return { kind: 'end' };
+
+  // Target the tile directly under the pointer. (Nearest-by-center is wrong for
+  // full-width tiles: their right edge can sit closer to a tile in the row below
+  // than to their own center, which would mis-target every side drop.)
+  let t = tiles.find(tile => {
+    const r = tile.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  });
+  // Not over any tile (a gutter or past the last row): fall back to nearest.
+  if (!t) {
+    let best = Infinity;
+    for (const tile of tiles) {
+      const r = tile.getBoundingClientRect();
+      const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+      if (d < best) { best = d; t = tile; }
+    }
+  }
+  const r = t.getBoundingClientRect();
+  const fx = (x - r.left) / r.width;   // 0..1 across the tile
+  const id = t.dataset.widgetId;
+  if (fx <= 0.4) return { kind: 'side', side: 'left', tileId: id };
+  if (fx >= 0.6) return { kind: 'side', side: 'right', tileId: id };
+  const above = (y - r.top) / r.height < 0.5;
+  return { kind: 'row', where: above ? 'above' : 'below', tileId: id };
+}
+
+function paintDrop(grid, dragEl, x, y) {
+  clearDropMarks(grid);
+  const res = resolveDrop(grid, dragEl, x, y);
+  if (res.tileId) {
+    const tile = grid.querySelector(`.widget[data-widget-id="${res.tileId}"]`);
+    if (res.kind === 'side' && tile) {
+      tile.classList.add(res.side === 'left' ? 'dz-left' : 'dz-right');
+    } else if (res.kind === 'row' && tile) {
+      const row = tile.closest('.widget-row');
+      if (row) row.classList.add(res.where === 'above' ? 'dz-above' : 'dz-below');
+    }
+  }
+  return res;
+}
+
+// Mutate the row model for a drop and persist it.
+function applyDrop(dashId, dragId, res) {
+  let rows = getRows(getDash(dashId)).map(r => r.slice());
+  // Pull the dragged tile out of wherever it currently sits.
+  rows = rows.map(r => r.filter(id => id !== dragId)).filter(r => r.length);
+
+  if (res.kind === 'end' || !res.tileId || res.tileId === dragId) {
+    rows.push([dragId]);
+    saveRows(dashId, rows);
+    return;
+  }
+
+  let tr = -1, tc = -1;
+  rows.forEach((r, ri) => { const ci = r.indexOf(res.tileId); if (ci >= 0) { tr = ri; tc = ci; } });
+  if (tr === -1) { rows.push([dragId]); saveRows(dashId, rows); return; }
+
+  if (res.kind === 'side') {
+    const row = rows[tr];
+    if (row.length < ROW_MAX) {
+      row.splice(res.side === 'left' ? tc : tc + 1, 0, dragId);
+    } else {
+      // Row already full: pair the dragged tile with the targeted one and evict
+      // the other occupant to its own new row just below.
+      const other = row[tc === 0 ? 1 : 0];
+      const paired = res.side === 'left' ? [dragId, res.tileId] : [res.tileId, dragId];
+      rows.splice(tr, 1, paired, [other]);
+    }
+  } else {
+    rows.splice(res.where === 'above' ? tr : tr + 1, 0, [dragId]);
+  }
+  saveRows(dashId, rows);
+}
+
 function initWidgetDnD(grid, dashId) {
-  let dragId = null;
+  // Bind listeners once per grid node. renderWidgetGrid only swaps innerHTML, so
+  // the grid element persists across re-renders within a view; re-binding would
+  // stack duplicate handlers and double-apply drops. The grid node is recreated
+  // (fresh, unbound) whenever the whole view re-renders.
+  if (grid.dataset.dndBound === '1') return;
+  grid.dataset.dndBound = '1';
+
+  let dragEl = null;
 
   grid.addEventListener('dragstart', e => {
     const w = e.target.closest('.widget[data-widget-id]');
     if (!w) return;
-    dragId = w.dataset.widgetId;
+    dragEl = w;
     e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', w.dataset.widgetId); } catch {}
     setTimeout(() => w.classList.add('widget--dragging'), 0);
   });
 
   grid.addEventListener('dragend', () => {
-    grid.querySelectorAll('.widget--dragging, .widget--dragover').forEach(el => {
-      el.classList.remove('widget--dragging', 'widget--dragover');
-    });
-    dragId = null;
+    clearDropMarks(grid);
+    grid.querySelectorAll('.widget--dragging').forEach(el => el.classList.remove('widget--dragging'));
+    grid.querySelectorAll('.widget').forEach(el => { el.draggable = false; });
+    dragEl = null;
   });
 
   grid.addEventListener('dragover', e => {
+    if (!dragEl) return;
     e.preventDefault();
-    const target = e.target.closest('.widget[data-widget-id]');
-    grid.querySelectorAll('.widget--dragover').forEach(el => el.classList.remove('widget--dragover'));
-    if (target && target.dataset.widgetId !== dragId) target.classList.add('widget--dragover');
+    e.dataTransfer.dropEffect = 'move';
+    paintDrop(grid, dragEl, e.clientX, e.clientY);
   });
 
   grid.addEventListener('dragleave', e => {
-    const target = e.target.closest('.widget[data-widget-id]');
-    if (target) target.classList.remove('widget--dragover');
+    if (e.target === grid && !grid.contains(e.relatedTarget)) clearDropMarks(grid);
   });
 
   grid.addEventListener('drop', e => {
+    if (!dragEl) return;
     e.preventDefault();
-    grid.querySelectorAll('.widget--dragging, .widget--dragover').forEach(el => {
-      el.classList.remove('widget--dragging', 'widget--dragover');
-    });
+    const dragId = dragEl.dataset.widgetId;
+    const res = resolveDrop(grid, dragEl, e.clientX, e.clientY);
+    clearDropMarks(grid);
+    dragEl = null;
 
-    const target = e.target.closest('.widget[data-widget-id]');
-    if (!target || !dragId || target.dataset.widgetId === dragId) return;
-
-    const dash = getDash(dashId);
-    const layout = [...dash.layout];
-    const fromIdx = layout.indexOf(dragId);
-    const toIdx = layout.indexOf(target.dataset.widgetId);
-    if (fromIdx === -1 || toIdx === -1) { dragId = null; return; }
-
-    layout.splice(fromIdx, 1);
-    layout.splice(toIdx, 0, dragId);
-    dragId = null;
-
-    saveLayout(dashId, layout);
-    renderWidgetGrid(grid, layout, dashId);
-    initWidgetDnD(grid, dashId);
+    applyDrop(dashId, dragId, res);
+    renderWidgetGrid(grid, dashId);
     loadDashboardData();
     loadInstances();
   });
@@ -269,7 +364,7 @@ function openAddWidgetModal(dashId) {
   document.getElementById('add-widget-modal')?.remove();
 
   const dash = getDash(dashId);
-  const current = dash.layout;
+  const current = getRows(dash).flat();
 
   const modal = document.createElement('div');
   modal.id = 'add-widget-modal';
@@ -287,10 +382,10 @@ function openAddWidgetModal(dashId) {
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 12px;background:var(--bg-input);border-radius:var(--radius);border:1px solid var(--border-dim)">
             <input type="checkbox" value="${w.id}" ${current.includes(w.id) ? 'checked' : ''} style="width:14px;height:14px;accent-color:var(--accent);flex-shrink:0">
             <span style="font-size:13px;font-weight:500">${esc(w.title)}</span>
-            <span style="font-size:11px;color:var(--text-dim);margin-left:auto">${w.size}</span>
           </label>
         `).join('')}
       </div>
+      <p style="font-size:11px;color:var(--text-dim);margin:12px 0 0">Drag a widget's grip to a tile's left or right edge to pair them side by side.</p>
       <div style="display:flex;gap:8px;margin-top:16px">
         <button id="add-widget-apply" class="btn btn-primary" style="flex:1">Apply</button>
         <button id="add-widget-cancel" class="btn btn-ghost" style="flex:1">Cancel</button>
@@ -304,12 +399,14 @@ function openAddWidgetModal(dashId) {
   modal.querySelector('#add-widget-cancel').addEventListener('click', () => modal.remove());
   modal.querySelector('#add-widget-apply').addEventListener('click', () => {
     const checked = Array.from(modal.querySelectorAll('#widget-checklist input:checked')).map(cb => cb.value);
-    const retained = current.filter(id => checked.includes(id));
-    const added = checked.filter(id => !current.includes(id));
-    const newLayout = [...retained, ...added];
-    saveLayout(dashId, newLayout);
+    // Keep existing rows minus removed widgets; append newly-checked widgets as
+    // their own full-width rows.
+    let rows = getRows(getDash(dashId)).map(r => r.filter(id => checked.includes(id))).filter(r => r.length);
+    const present = new Set(rows.flat());
+    checked.filter(id => !present.has(id)).forEach(id => rows.push([id]));
+    saveRows(dashId, rows);
     const grid = document.getElementById('widget-grid');
-    if (grid) { renderWidgetGrid(grid, newLayout, dashId); initWidgetDnD(grid, dashId); }
+    if (grid) renderWidgetGrid(grid, dashId);
     loadDashboardData();
     loadInstances();
     modal.remove();

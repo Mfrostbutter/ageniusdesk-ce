@@ -8,6 +8,7 @@ import { setActiveTheme, getCurrentTheme } from '../themes.js';
 import { secretField, invalidateRefsCache } from '../components/secretfield.js';
 import { renderModules } from './settings-modules.js';
 import { openModal } from '../components/modal.js';
+import { renderQR } from '../vendor/qrcode.js';
 
 const COLORS = ['#ff6d5a', '#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6', '#38bdf8', '#fb923c'];
 
@@ -20,6 +21,7 @@ export async function render(container) {
     <!-- Tabs -->
     <div style="display:flex;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border-dim);flex-wrap:wrap">
       <button class="tab-btn active" data-tab="instances" onclick="window.__settingsTab('instances')">Instances</button>
+      <button class="tab-btn" data-tab="account" onclick="window.__settingsTab('account')">Account</button>
       <button class="tab-btn" data-tab="mcp" onclick="window.__settingsTab('mcp')">MCP</button>
       <button class="tab-btn" data-tab="assistant" onclick="window.__settingsTab('assistant')">AI Settings</button>
       <button class="tab-btn" data-tab="secrets" onclick="window.__settingsTab('secrets')">Secrets</button>
@@ -44,6 +46,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   const el = document.getElementById('settings-tab-content');
   if (tab === 'instances') renderInstances(el);
+  else if (tab === 'account') renderAccount(el);
   else if (tab === 'mcp') renderMCP(el);
   else if (tab === 'assistant') renderModelsTab(el);
   else if (tab === 'secrets') renderSecrets(el);
@@ -1243,6 +1246,168 @@ function jsStr(s) {
   return String(s == null ? '' : s)
     .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
     .replace(/</g, '\\x3C').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+// ── Account (password, 2FA, sessions) ────────────────────────────────────────
+
+function _esc(s) { const d = document.createElement('span'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+async function renderAccount(el) {
+  el.innerHTML = `<div class="card"><p class="muted">Loading account…</p></div>`;
+  let me;
+  try {
+    const r = await get('/api/auth/me');
+    me = r.user;
+  } catch (e) {
+    if (e.status === 403 || e.status === 401) {
+      el.innerHTML = `<div class="card"><h3>Account</h3>
+        <p class="muted">Browser login is disabled or this session is managed by your
+        edge proxy, so there is no local account to manage here.</p></div>`;
+      return;
+    }
+    el.innerHTML = `<div class="card"><p class="error-text">Could not load account: ${_esc(e.message)}</p></div>`;
+    return;
+  }
+  if (!me) { el.innerHTML = `<div class="card"><p class="muted">No account.</p></div>`; return; }
+
+  const twofa = me.totp && me.totp.enabled;
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">Account</h3>
+      <p class="muted" style="margin:0">
+        Signed in as <strong>${_esc(me.username)}</strong>
+        <span class="badge">${_esc(me.role)}</span></p>
+      <button class="btn btn-secondary" id="acc-logout" style="margin-top:14px">Sign out</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">Change password</h3>
+      <div class="field"><label>Current password</label>
+        <input type="password" id="pw-cur" autocomplete="current-password"></div>
+      <div class="field"><label>New password</label>
+        <input type="password" id="pw-new" autocomplete="new-password"></div>
+      <div class="field"><label>Confirm new password</label>
+        <input type="password" id="pw-new2" autocomplete="new-password"></div>
+      <button class="btn btn-primary" id="pw-save" style="margin-top:18px">Update password</button>
+      <div id="pw-msg" class="muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">Two-factor authentication</h3>
+      <div id="twofa-body"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Active sessions</h3>
+      <div id="sessions-body"><p class="muted">Loading…</p></div>
+    </div>`;
+
+  el.querySelector('#acc-logout').onclick = async () => {
+    try { await post('/api/auth/logout', {}); location.reload(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  el.querySelector('#pw-save').onclick = async () => {
+    const cur = el.querySelector('#pw-cur').value;
+    const nw = el.querySelector('#pw-new').value;
+    const nw2 = el.querySelector('#pw-new2').value;
+    const msg = el.querySelector('#pw-msg');
+    if (nw !== nw2) { msg.textContent = 'New passwords do not match'; return; }
+    try {
+      await post('/api/auth/password', { current_password: cur, new_password: nw });
+      msg.textContent = 'Password updated. Other sessions were signed out.';
+      el.querySelector('#pw-cur').value = el.querySelector('#pw-new').value = el.querySelector('#pw-new2').value = '';
+    } catch (e) { msg.textContent = e.message; }
+  };
+
+  renderTwoFactor(el.querySelector('#twofa-body'), twofa);
+  renderSessions(el.querySelector('#sessions-body'));
+}
+
+function renderTwoFactor(box, enabled) {
+  if (enabled) {
+    box.innerHTML = `
+      <p class="muted">Two-factor is <strong style="color:var(--success,#34d399)">on</strong>.</p>
+      <div class="field"><label>Password</label><input type="password" id="td-pw"></div>
+      <div class="field"><label>Current 2FA code</label><input id="td-code" inputmode="numeric" placeholder="123456"></div>
+      <button class="btn btn-danger" id="td-disable" style="margin-top:18px">Disable 2FA</button>
+      <div id="td-msg" class="muted" style="margin-top:10px"></div>`;
+    box.querySelector('#td-disable').onclick = async () => {
+      const msg = box.querySelector('#td-msg');
+      try {
+        await post('/api/auth/totp/disable', {
+          password: box.querySelector('#td-pw').value,
+          code: box.querySelector('#td-code').value.trim(),
+        });
+        toast.success('Two-factor disabled');
+        renderTwoFactor(box, false);
+      } catch (e) { msg.textContent = e.message; }
+    };
+    return;
+  }
+  box.innerHTML = `
+    <p class="muted">Add a second factor with any authenticator app
+      (Google Authenticator, Authy, 1Password).</p>
+    <button class="btn btn-primary" id="te-start">Enable 2FA</button>
+    <div id="te-flow" style="margin-top:14px"></div>`;
+  box.querySelector('#te-start').onclick = async () => {
+    const flow = box.querySelector('#te-flow');
+    box.querySelector('#te-start').disabled = true;
+    let data;
+    try { data = await post('/api/auth/totp/enroll', {}); }
+    catch (e) { toast.error(e.message); box.querySelector('#te-start').disabled = false; return; }
+    flow.innerHTML = `
+      <canvas id="te-qr" style="background:#fff;border-radius:8px;padding:8px"></canvas>
+      <p class="muted" style="margin:10px 0 4px">Scan the code, or enter this key manually:</p>
+      <code style="display:inline-block;padding:6px 10px;background:var(--bg-primary);
+        border-radius:6px;letter-spacing:1px;word-break:break-all">${_esc(data.secret)}</code>
+      <div class="field" style="margin-top:14px"><label>Enter the 6-digit code to confirm</label>
+        <input id="te-code" inputmode="numeric" placeholder="123456"></div>
+      <button class="btn btn-primary" id="te-activate" style="margin-top:18px">Confirm</button>
+      <div id="te-msg" class="muted" style="margin-top:10px"></div>`;
+    try { renderQR(flow.querySelector('#te-qr'), data.otpauth_uri, { scale: 5 }); } catch { /* manual key still works */ }
+    flow.querySelector('#te-activate').onclick = async () => {
+      const msg = flow.querySelector('#te-msg');
+      try {
+        const r = await post('/api/auth/totp/activate', { code: flow.querySelector('#te-code').value.trim() });
+        showRecoveryCodes(box, r.recovery_codes);
+      } catch (e) { msg.textContent = e.message; }
+    };
+  };
+}
+
+function showRecoveryCodes(box, codes) {
+  box.innerHTML = `
+    <p style="color:var(--success,#34d399)"><strong>Two-factor is now on.</strong></p>
+    <p class="muted">Save these recovery codes somewhere safe. Each works once if you
+      lose your authenticator. They are shown only now.</p>
+    <pre style="padding:12px;background:var(--bg-primary);border-radius:8px;
+      line-height:1.8">${codes.map(_esc).join('\n')}</pre>
+    <button class="btn btn-secondary" id="rc-done">Done</button>`;
+  box.querySelector('#rc-done').onclick = () => renderTwoFactor(box, true);
+}
+
+async function renderSessions(box) {
+  let sessions;
+  try { sessions = (await get('/api/auth/sessions')).sessions; }
+  catch (e) { box.innerHTML = `<p class="muted">${_esc(e.message)}</p>`; return; }
+  if (!sessions.length) { box.innerHTML = `<p class="muted">No active sessions.</p>`; return; }
+  box.innerHTML = sessions.map(s => `
+    <div style="display:flex;justify-content:space-between;align-items:center;
+      padding:8px 0;border-bottom:1px solid var(--border-dim)">
+      <div>
+        <div>${_esc(s.user_agent.slice(0, 60) || 'Unknown device')}
+          ${s.current ? '<span class="badge">this device</span>' : ''}</div>
+        <div class="muted" style="font-size:12px">${_esc(s.ip)} · last seen ${_esc(s.last_seen)}</div>
+      </div>
+      ${s.current ? '' : `<button class="btn btn-secondary btn-sm" data-revoke="${_esc(s.id)}">Revoke</button>`}
+    </div>`).join('');
+  box.querySelectorAll('[data-revoke]').forEach(btn => {
+    btn.onclick = async () => {
+      try { await del(`/api/auth/sessions/${btn.dataset.revoke}`); renderSessions(box); }
+      catch (e) { toast.error(e.message); }
+    };
+  });
 }
 
 // Fallback so a deep-link into a settings tab works even before app.js wires window.__goSettings.

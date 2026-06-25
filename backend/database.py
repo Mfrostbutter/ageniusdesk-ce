@@ -60,6 +60,24 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute(f"DROP TABLE IF EXISTS {_orphan}")
     await db.commit()
 
+    # auth_sessions — local-account login sessions. Only the sha256 of the
+    # session token is stored, so a DB leak cannot be replayed as a live
+    # session. Created in _migrate (not _init_tables) so it lands on both
+    # fresh and upgraded installs without ordering concerns.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            id_hash     TEXT PRIMARY KEY,
+            username    TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            last_seen   TEXT NOT NULL,
+            user_agent  TEXT,
+            ip          TEXT
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(username)")
+    await db.commit()
+
 
 async def close_db() -> None:
     global _db

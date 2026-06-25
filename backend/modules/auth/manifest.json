@@ -1,0 +1,10 @@
+{
+  "id": "auth",
+  "name": "Auth",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Local accounts, login sessions, and optional TOTP two-factor.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/auth",
+  "builtin": true
+}

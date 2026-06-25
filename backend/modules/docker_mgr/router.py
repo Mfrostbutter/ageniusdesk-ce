@@ -8,10 +8,11 @@ import logging
 import socket
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import get_instances, remove_instance, settings
 
 from . import bundle as bundle_mod
@@ -20,7 +21,7 @@ from . import deployer, templates
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/containers", tags=["containers"])
+router = APIRouter(prefix="/api/containers", tags=["containers"], dependencies=[Depends(require_role("operator"))])
 
 
 def _docker_unavailable() -> HTTPException:

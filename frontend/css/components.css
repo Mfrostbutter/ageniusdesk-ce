@@ -1395,21 +1395,40 @@ tr.clickable {
   color: var(--text-dim);
 }
 
-/* Widget system */
+/* Widget system — row-based layout. The grid is a vertical stack of rows; each
+   row holds one or two tiles. A solo tile fills its row; two tiles split 50/50.
+   Pairing is explicit and position-driven (drag a tile to the left/right edge of
+   another to pair them on one line, drop on the middle for its own row), so it
+   works anywhere on the page regardless of tile order. One 16px gap governs both
+   the vertical (between rows) and horizontal (between paired tiles) rhythm. */
+#widget-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 .widget-row {
-  margin-bottom: 0;
+  display: flex;
+  gap: 16px;
+  align-items: stretch;   /* paired tiles match height */
+  position: relative;
 }
-.widget-row .widget > .card {
-  height: 100%;
+@media (max-width: 768px) {
+  .widget-row { flex-direction: column; }
 }
-/* Grid children default to min-width:auto which lets whitespace-nowrap content
-   (e.g. long error messages) stretch the column past its 1fr track. Pinning
-   min-width:0 + overflow-x:hidden forces the widget to respect the grid
-   template and truncate inside, so a noisy error cannot push the Recent
-   Errors widget past the viewport on the right. */
+/* Tiles share the row evenly. min-width:0 lets the flex item shrink below its
+   content; the inner .card has its own overflow:hidden, so whitespace-nowrap
+   content (e.g. a long error line) can't blow past the track. Overflow is left
+   visible here so the left/right drop bars in the gutter aren't clipped. */
 .widget {
+  flex: 1 1 0;
   min-width: 0;
-  overflow-x: hidden;
+  position: relative;
+}
+/* The card fills the cell; the flex gap (not a card margin) provides spacing so
+   vertical and horizontal gutters always match. */
+.widget > .card {
+  height: 100%;
+  margin: 0;
 }
 .widget-grip {
   cursor: default;
@@ -1431,12 +1450,27 @@ tr.clickable {
   cursor: grabbing;
 }
 .widget--dragging {
-  opacity: 0.45;
+  opacity: 0.4;
 }
-.widget--dragover > .card {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* Drop indicators: a 3px accent bar centered in the 16px gutter showing where a
+   dropped tile will land. Side bars (pair beside a tile) are vertical on a
+   tile's left/right edge; row bars (its own new full-width row) are horizontal
+   above/below the targeted row. */
+.widget.dz-left::before,
+.widget.dz-right::after,
+.widget-row.dz-above::before,
+.widget-row.dz-below::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+  border-radius: 2px;
+  z-index: 5;
+  pointer-events: none;
 }
+.widget.dz-left::before  { left: -9px;  top: 0; bottom: 0; width: 3px; }
+.widget.dz-right::after  { right: -9px; top: 0; bottom: 0; width: 3px; }
+.widget-row.dz-above::before { top: -9px;    left: 0; right: 0; height: 3px; }
+.widget-row.dz-below::after  { bottom: -9px; left: 0; right: 0; height: 3px; }
 
 
 /* ── Knowledge Connectors toggle pill ─────────────────────────────────────── */

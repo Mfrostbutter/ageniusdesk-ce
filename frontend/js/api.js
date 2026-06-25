@@ -6,12 +6,36 @@ const BASE = '';  // Same origin
 
 // ── HTTP ────────────────────────────────────────────────────────────────────
 
+function readCookie(name) {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+let _authRedirecting = false;
+
 export async function api(path, options = {}) {
-  const resp = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  });
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  // Double-submit CSRF: echo the readable agd_csrf cookie on mutations.
+  if (method !== 'GET' && method !== 'HEAD') {
+    const csrf = readCookie('agd_csrf');
+    if (csrf) headers['X-AGD-CSRF'] = csrf;
+  }
+  const resp = await fetch(`${BASE}${path}`, { headers, ...options });
   if (!resp.ok) {
+    // Session EXPIRY mid-use: bounce to the auth gate by reloading. Gated on the
+    // readable agd_csrf cookie, which only exists once a session was issued — so
+    // pre-login boot (where many background calls 401 by design) never reloads,
+    // avoiding a reload loop. Never on the auth endpoints themselves.
+    if (
+      resp.status === 401 &&
+      !path.startsWith('/api/auth/') &&
+      !_authRedirecting &&
+      readCookie('agd_csrf')
+    ) {
+      _authRedirecting = true;
+      location.reload();
+    }
     const body = await resp.json().catch(() => ({}));
     const detail = body.detail;
     const message = (detail && typeof detail === 'object')
