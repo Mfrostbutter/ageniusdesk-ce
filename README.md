@@ -73,7 +73,7 @@ One dashboard for every n8n instance: live stats, an execution timeline, and a r
 - Per-instance health status
 
 **Themes and Music**
-- 2 built-in themes (Dark, Light) plus custom theme support
+- 3 built-in themes (Dark, Light, n8n) plus custom theme support
 - Integrated music player (Spotify, YouTube, SoundCloud, Apple Music, Tidal)
 
 ## Quick Start

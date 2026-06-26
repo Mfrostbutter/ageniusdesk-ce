@@ -10,12 +10,13 @@ A theme is a JSON document with a name and color map. Applying it sets `--<key>`
 
 ### Built-in themes
 
-AgeniusDesk CE ships two built-in themes:
+AgeniusDesk CE ships three built-in themes:
 
 | Theme id | Name |
 |---|---|
 | `dark` | Dark (default) |
 | `default-light` | Light |
+| `n8n` | n8n (dark, styled after the n8n product) |
 
 Built-in themes live in `frontend/themes/`. Custom themes are stored under `data/themes/`. Both are returned together by `GET /api/themes`.
 

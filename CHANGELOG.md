@@ -5,6 +5,7 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 ## [Unreleased]
 
 ### Added
+- New built-in **n8n** dark theme, styled after the n8n product (solid neutral-gray surfaces, orange accent, teal-green success). Brings the built-in theme count to three (Dark, Light, n8n).
 - Instances, Models, and MCP are now first-class sidebar views instead of deep-links into Settings. Clicking them shows a focused, single-purpose page (no Settings tab strip); the same panels still live under the Settings gear as tabs. This also fixes the wrong (Settings) coachmark firing on those pages.
 - Page coachmarks now cover every primary view: a single orienting bubble on Overview, Workflows, Executions/Errors, and Containers, plus dedicated tours for Instances, Models, and MCP. The Code Lab tour now calls out the Prompt Builder.
 - Security hardening: internal `/api/*` routes now have a central auth gate, edge-auth headers are trusted only with `AGD_TRUST_EDGE_AUTH=true`, legacy ingest webhooks can be protected with `AGD_WEBHOOK_TOKEN`, and external dashboard MCP clients can use `DASHBOARD_MCP_TOKEN`.
