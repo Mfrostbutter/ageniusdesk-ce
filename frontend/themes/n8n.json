@@ -1,0 +1,39 @@
+{
+  "name": "n8n",
+  "author": "AgeniusDesk",
+  "version": "1.0",
+  "colors": {
+    "bg-void": "#161618",
+    "bg-panel": "#232427",
+    "bg-panel-solid": "#232427",
+    "bg-input": "#2b2c30",
+    "bg-hover": "rgba(255, 255, 255, 0.05)",
+    "bg-sidebar": "#101012",
+    "border-dim": "rgba(255, 255, 255, 0.08)",
+    "border-mid": "rgba(255, 255, 255, 0.14)",
+    "border-bright": "rgba(255, 109, 59, 0.45)",
+    "text-primary": "#f3f4f5",
+    "text-secondary": "#abadb3",
+    "text-dim": "#6c6e76",
+    "accent": "#ff6d3b",
+    "accent-glow": "rgba(255, 109, 59, 0.22)",
+    "accent-hover": "#ff885f",
+    "success": "#19c37d",
+    "success-glow": "rgba(25, 195, 125, 0.2)",
+    "warning": "#f59e0b",
+    "warning-glow": "rgba(245, 158, 11, 0.2)",
+    "error": "#f56565",
+    "error-glow": "rgba(245, 101, 101, 0.15)",
+    "info": "#6b8afd",
+    "info-glow": "rgba(107, 138, 253, 0.15)"
+  },
+  "fonts": {
+    "body": "Inter",
+    "mono": "IBM Plex Mono"
+  },
+  "effects": {
+    "glassmorphism": false,
+    "animated-background": false,
+    "scanlines": false
+  }
+}
