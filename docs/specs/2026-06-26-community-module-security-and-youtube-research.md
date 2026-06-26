@@ -179,7 +179,8 @@ installed through the flow above.
 - **Manifest capabilities** (drives the scanner test):
   - `network.hosts`: YouTube + the captions API host + the configured LLM provider
     host
-  - `filesystem.write_paths`: the research output dir under `data/`
+  - `filesystem.write_paths`: `workspace/research` (the Harness vault research
+    tree; see 6.1)
   - `subprocess`: false (captions and the optional sidecar are reached over HTTP,
     not spawned)
   - `secrets_required`: the LLM API key (+ captions key if the chosen captions
@@ -188,6 +189,53 @@ installed through the flow above.
   external secrets, and an external compute dependency, which is exactly the
   surface the scanner and consent flow must handle. We build the module and the
   security pipeline against each other.
+
+### 6.1 Intake, classify, and auto-file workflow
+
+The module does not just produce a breakdown; it files it. The research vault is
+the existing Harness notes vault (`data/workspace/`), which already has a
+`research/` folder, so breakdowns become first-class searchable notes (FTS, tags,
+backlinks) instead of loose files.
+
+Flow:
+
+1. **Intake to Inbox.** A submitted video's breakdown is written first to
+   `research/inbox/` (the unsorted drop). Nothing is lost even if classification
+   fails.
+2. **Classify + tag.** The breakdown model returns structured output alongside the
+   summary: a single best-fit `topic` and a list of `tags`. Classification is
+   **constrained to the existing topic folders** (the model is given the current
+   `research/` subfolders as the candidate set), not free-form, to stop the vault
+   fragmenting into dozens of near-duplicate topics.
+3. **Auto-file.** The note is moved from `research/inbox/` to `research/<topic>/`
+   and the tags are written into the note frontmatter. If the model has no
+   confident fit, the note stays in `research/inbox/` for manual filing rather
+   than inventing a topic. (Open question: allow the model to propose a *new*
+   topic above a confidence threshold, or always require manual creation.)
+4. **Write path.** Filing reuses the existing workspace write tools
+   (`write_note` / move / tag) rather than raw filesystem writes, so everything
+   is indexed and the capability surface is a single declared vault path.
+
+Capability impact: `filesystem.write_paths` is `workspace/research` (the vault
+research tree), and the module reads the existing topic folders to build the
+candidate set.
+
+### 6.2 Scaffolded starter taxonomy
+
+On first run the module seeds a small, generic topic set so classification has
+targets out of the box (all under `research/`, operator-editable, just folders):
+
+- `inbox` (unsorted intake; never a classification target)
+- `ai-and-llms`
+- `automation-and-n8n`
+- `business-and-marketing`
+- `engineering-and-devtools`
+- `productivity`
+- `misc` (catch-all when a fit is weak but not zero)
+
+The taxonomy is a starting scaffold, not a fixed schema: the operator adds or
+removes folders and the classifier adapts because it reads the live folder list
+as its candidate set.
 
 ## 7. Data and schema changes
 
@@ -229,8 +277,9 @@ there is a demonstrated need for videos without captions.
    the `module_installs` audit table.
 4. Consent modal + module-manager surfacing (`settings-modules.js`).
 5. Optional signature verification + provenance display.
-6. YouTube research module: port, manifest, captions-only transcription, its own
-   repo.
+6. YouTube research module: port, manifest, captions-only transcription, the
+   intake/classify/auto-file workflow (6.1), and the scaffolded taxonomy (6.2), in
+   its own repo.
 7. Tests + docs.
 
 ## 11. Testing
@@ -243,7 +292,9 @@ there is a demonstrated need for videos without captions.
   confirmation.
 - Capability-diff tests: declared-vs-detected reconciliation.
 - YouTube module: a smoke test of the captions path (the only transcription path
-  in v1) end to end.
+  in v1) end to end; and a classify/file test asserting a breakdown lands in
+  `research/inbox/` then moves to the chosen `research/<topic>/` with tags, and
+  stays in inbox when no confident topic fits.
 - Run with `uv run pytest`; lint touched files with `uvx ruff check`.
 
 ## 12. Open questions
@@ -254,3 +305,5 @@ there is a demonstrated need for videos without captions.
   allow after proportional friction.
 - Whether the capability `network.hosts` allowlist should be enforced at runtime
   later (it is declaration-only in this release).
+- YouTube classifier: may it propose a *new* topic folder above a confidence
+  threshold, or always fall back to `inbox` for manual creation (6.1, step 3)?
