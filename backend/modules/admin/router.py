@@ -1,6 +1,5 @@
 """Admin API routes — user management, secrets store, config reset."""
 
-import json
 import logging
 import os
 

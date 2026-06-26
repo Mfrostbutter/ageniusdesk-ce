@@ -1,18 +1,56 @@
 """LLM providers — OpenRouter, OpenAI, Anthropic, Ollama."""
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from backend.config import decrypt_value, load_config
 
 logger = logging.getLogger(__name__)
+
+
+class UnsafeProbeURL(ValueError):
+    """Raised when an operator-supplied probe URL (Ollama) targets a blocked host."""
+
+
+def assert_safe_probe_url(raw: str) -> str:
+    """Validate an operator-supplied Ollama URL before the server fetches it.
+
+    Ollama legitimately runs on loopback or a LAN/Docker host, so private ranges
+    stay allowed. We block the SSRF targets that are never a real Ollama: the
+    cloud metadata service and link-local space (169.254.0.0/16, fe80::/10),
+    multicast, and reserved/unspecified addresses. Hostnames are resolved so a
+    name pointing at metadata is caught too. Returns the trimmed base URL.
+    """
+    base = (raw or "").strip()
+    if not base:
+        raise UnsafeProbeURL("No URL provided")
+    parsed = urlparse(base if "://" in base else f"http://{base}")
+    if parsed.scheme not in ("http", "https"):
+        raise UnsafeProbeURL("Only http/https URLs are allowed")
+    host = parsed.hostname
+    if not host:
+        raise UnsafeProbeURL("URL has no host")
+    try:
+        addrinfos = socket.getaddrinfo(host, parsed.port or 80, proto=socket.IPPROTO_TCP)
+    except OSError as e:
+        raise UnsafeProbeURL(f"Host could not be resolved: {e}") from e
+    for info in addrinfos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback:
+            continue  # Ollama on localhost is legitimate and not the SSRF risk.
+        if ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            raise UnsafeProbeURL("Target address is not allowed")
+    return base.rstrip("/")
 
 
 def _ollama_default() -> str:
@@ -1013,7 +1051,11 @@ async def _chat_ollama(messages: list[dict], system: str, cfg: dict) -> dict[str
 
 async def list_ollama_models(ollama_url: str = "") -> list[dict]:
     """Fetch available models from an Ollama instance."""
-    base = (ollama_url or _ollama_default()).rstrip("/")
+    try:
+        base = assert_safe_probe_url(ollama_url or _ollama_default())
+    except UnsafeProbeURL as e:
+        logger.warning("Ollama tags fetch blocked: %s", e)
+        return []
     url = f"{base}/api/tags"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -1252,17 +1294,22 @@ async def ping_provider(
     p = (provider or "").lower()
     try:
         if p == "ollama":
-            base = (ollama_url or _ollama_default()).rstrip("/")
+            try:
+                base = assert_safe_probe_url(ollama_url or _ollama_default())
+            except UnsafeProbeURL as e:
+                return {"ok": False, "error": f"Ollama URL not allowed: {e}"}
             try:
                 async with httpx.AsyncClient(timeout=10) as c:
                     r = await c.get(f"{base}/api/tags")
                     if r.status_code == 200:
                         return {"ok": True, "model": model or "llama3"}
-                    return {"ok": False, "error": f"HTTP {r.status_code} at {base}: {r.text[:200]}"}
-            except Exception as e:
+                    # Do not reflect the fetched body — the target is operator-
+                    # supplied, so an echoed response is an SSRF read primitive.
+                    return {"ok": False, "error": f"HTTP {r.status_code} from Ollama at {base}"}
+            except Exception:
                 # Containers can't reach host `localhost`. Point the hint at the
                 # common fixes so the UI can show something actionable.
-                return {"ok": False, "error": f"Could not reach Ollama at {base}: {e}. Set OLLAMA_URL to host.docker.internal:11434 (Mac) or the host LAN IP."}
+                return {"ok": False, "error": f"Could not reach Ollama at {base}. Set OLLAMA_URL to host.docker.internal:11434 (Mac) or the host LAN IP."}
 
         if not api_key:
             return {"ok": False, "error": "API key required"}

@@ -72,6 +72,13 @@ function esc(s) {
   return String(s ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 }
 
+// Attribute-safe escaping (esc leaves quotes intact, unsafe in value="...").
+function attr(s) {
+  return String(s ?? '').replace(/[<>&"']/g, c => (
+    { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 function fmtMarkdown(text) {
   // Minimal markdown: bold + inline code + newlines. Full view has the
   // heavy renderer; dock doesn't need it.
@@ -299,10 +306,10 @@ function wire(container) {
         fbModelSel.innerHTML = models.map(m => {
           const id = typeof m === 'string' ? m : (m.id || '');
           const label = typeof m === 'string' ? m : (m.label || m.id || '');
-          return `<option value="${esc(id)}">${esc(label)}</option>`;
+          return `<option value="${attr(id)}">${esc(label)}</option>`;
         }).join('');
       } catch {
-        fbModelSel.innerHTML = (FALLBACK_MODELS[p] || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+        fbModelSel.innerHTML = (FALLBACK_MODELS[p] || []).map(m => `<option value="${attr(m)}">${esc(m)}</option>`).join('');
       }
     });
   }
@@ -382,7 +389,7 @@ async function loadModels(provider, preferred) {
   modelSel.innerHTML = models.map(m => {
     const id = typeof m === 'string' ? m : (m.id || m.name || '');
     const label = typeof m === 'string' ? m : (m.label || m.id || m.name || '');
-    return `<option value="${esc(id)}">${esc(label)}</option>`;
+    return `<option value="${attr(id)}">${esc(label)}</option>`;
   }).join('');
   if (preferred && models.some(m => (typeof m === 'string' ? m : m.id) === preferred)) {
     modelSel.value = preferred;

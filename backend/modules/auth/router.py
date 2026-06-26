@@ -7,6 +7,7 @@ band, so they are not given a password/2FA surface here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -201,11 +202,23 @@ def _public_base(request: Request) -> str:
 @router.post("/forgot")
 async def forgot_password(body: ForgotBody, request: Request):
     """Begin password recovery. Always 200 — never reveal if an email exists."""
+    ip = service._client_ip(request)
+    # Per-IP rate limit so the endpoint can't be used to flood an inbox or to
+    # mine the response for valid accounts. Blocked callers still get the
+    # uniform 200 so the limiter itself leaks nothing.
+    if service.forgot_blocked(ip):
+        return {"ok": True}
+    service.forgot_record(ip)
+
     user = service.find_user_by_email(body.email)
     if user:
         raw = await service.create_reset_token(user["username"])
         reset_url = f"{_public_base(request)}/?reset={raw}"
-        await mailer.send_password_reset(user.get("email") or body.email.strip(), reset_url)
+        # Fire-and-forget: awaiting the SMTP send only when the account exists
+        # is a timing oracle. The mailer swallows its own errors.
+        asyncio.create_task(
+            mailer.send_password_reset(user.get("email") or body.email.strip(), reset_url)
+        )
     return {"ok": True}
 
 

@@ -1,14 +1,28 @@
 """AI Assistant API routes — chat, config, model listing, knowledge files."""
 
+import os as _os
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import decrypt_value, load_config, save_config
 from backend.modules.assistant import providers
+from backend.modules.assistant.baseline import loader as _baseline_loader
+from backend.modules.assistant.baseline.schema import PutBaselineRequest
 
-router = APIRouter(prefix="/api/assistant", tags=["assistant"])
+# Operator floor on the whole surface: chat spends tokens, /models and
+# /test-creds reach out to operator-supplied URLs (SSRF-adjacent), and /config
+# returns masked keys. Config-mutating routes raise the bar to admin below.
+# require_role is a no-op on an open (AGD_DISABLE_LOGIN) install.
+_ADMIN = Depends(require_role("admin"))
+
+router = APIRouter(
+    prefix="/api/assistant",
+    tags=["assistant"],
+    dependencies=[Depends(require_role("operator"))],
+)
 
 FILES_DIR = Path("data/assistant_files")
 FILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -65,7 +79,9 @@ def _mask_key(raw: str) -> str:
     if raw.startswith("$"):
         return raw
     resolved = decrypt_value(raw)
-    return resolved[:4] + "..." + resolved[-3:] if len(resolved) > 8 else "configured"
+    # Reveal only the last 4 (a recognized "which key is this" identifier) and
+    # never the provider-prefixed head, to minimize the leaked secret material.
+    return "..." + resolved[-4:] if len(resolved) > 8 else "configured"
 
 
 @router.get("/config")
@@ -105,7 +121,7 @@ async def get_config():
     }
 
 
-@router.post("/jobs")
+@router.post("/jobs", dependencies=[_ADMIN])
 async def save_jobs(req: JobsRequest):
     """Save the three per-area agents (Code Lab / Error Triage / General Assistant).
 
@@ -143,7 +159,7 @@ async def save_jobs(req: JobsRequest):
     return {"success": True, "jobs": cleaned}
 
 
-@router.post("/shared")
+@router.post("/shared", dependencies=[_ADMIN])
 async def save_shared(req: SharedConfigRequest):
     """Save shared infra used by every job: local Ollama endpoint + RAG store."""
     config = load_config()
@@ -159,7 +175,7 @@ async def save_shared(req: SharedConfigRequest):
     return {"success": True}
 
 
-@router.post("/config")
+@router.post("/config", dependencies=[_ADMIN])
 async def save_assistant_config(req: ConfigRequest):
     """Save assistant configuration."""
     config = load_config()
@@ -357,23 +373,24 @@ async def test_creds(req: TestCredsRequest):
                     return {"ok": True, "model": req.model or "claude-sonnet-4-20250514"}
                 return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
         if p == "ollama":
-            base = (req.ollama_url or req.api_key or "http://localhost:11434").rstrip("/")
+            try:
+                base = providers.assert_safe_probe_url(
+                    req.ollama_url or req.api_key or "http://localhost:11434"
+                )
+            except providers.UnsafeProbeURL as e:
+                return {"ok": False, "error": f"Ollama URL not allowed: {e}"}
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.get(f"{base}/api/tags")
                 if r.status_code == 200:
                     return {"ok": True, "model": req.model or "llama3"}
-                return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+                # Don't reflect the fetched body: the target is operator-supplied.
+                return {"ok": False, "error": f"HTTP {r.status_code} from Ollama at {base}"}
         return {"ok": False, "error": f"Unknown provider: {p}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 # ── Baseline (C3 Constitution) ────────────────────────────────────────────────
-
-import os as _os
-
-from backend.modules.assistant.baseline import loader as _baseline_loader
-from backend.modules.assistant.baseline.schema import PutBaselineRequest
 
 
 def _assert_constitution_enabled() -> None:
@@ -393,7 +410,7 @@ async def get_baseline():
     return await _baseline_loader.read()
 
 
-@router.put("/baseline")
+@router.put("/baseline", dependencies=[_ADMIN])
 async def put_baseline(req: PutBaselineRequest):
     """Replace the constitution body.
 

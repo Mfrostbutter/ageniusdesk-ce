@@ -174,3 +174,19 @@ def test_forgot_password_does_not_enumerate(anon):
 
     assert known.status_code == unknown.status_code == 200
     assert known.json() == unknown.json() == {"ok": True}
+
+
+def test_forgot_throttle_is_per_ip_and_isolated(monkeypatch):
+    # The /forgot limiter must not lock a victim's login or every IP at once.
+    from backend.modules.auth import service
+
+    monkeypatch.setattr(settings, "agd_login_max_attempts", 3)
+    ip = "203.0.113.42"  # unique so module-global throttle state doesn't collide
+
+    for _ in range(3):
+        assert service.forgot_blocked(ip) is False
+        service.forgot_record(ip)
+    assert service.forgot_blocked(ip) is True
+
+    # Login throttle for a user from the same IP is untouched (separate namespace).
+    assert service.throttle_blocked("victim@example.com", ip) is False

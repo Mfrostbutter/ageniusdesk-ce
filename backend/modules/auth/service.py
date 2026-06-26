@@ -389,6 +389,24 @@ def throttle_reset(username: str, ip: str) -> None:
         _lockouts.pop(k, None)
 
 
+# Password-reset (/forgot) throttle. Keyed ONLY on a namespaced IP so flooding
+# the endpoint can neither lock a victim's login (no u:<email> key) nor lock
+# every IP at once (no shared global key). Reuses the login window/lockout knobs.
+def forgot_blocked(ip: str) -> bool:
+    until = _lockouts.get(f"forgot-ip:{ip}", 0)
+    return bool(until and time.time() < until)
+
+
+def forgot_record(ip: str) -> None:
+    now = time.time()
+    k = f"forgot-ip:{ip}"
+    window = [t for t in _failures.get(k, []) if now - t < settings.agd_login_lockout_minutes * 60]
+    window.append(now)
+    _failures[k] = window
+    if len(window) >= settings.agd_login_max_attempts:
+        _lockouts[k] = now + settings.agd_login_lockout_minutes * 60
+
+
 # ── Pending-2FA tokens (in-memory, single-use, short-lived) ──────────────────
 
 _pending: dict[str, tuple[str, float]] = {}

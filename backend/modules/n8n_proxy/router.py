@@ -74,7 +74,8 @@ async def list_instances():
             key_hint = raw_key  # Show $VAR_NAME reference
         else:
             resolved = decrypt_value(raw_key)
-            key_hint = resolved[:4] + "..." + resolved[-3:] if len(resolved) > 8 else "configured"
+            # Last 4 only — enough to identify the key, no provider-prefixed head.
+            key_hint = "..." + resolved[-4:] if len(resolved) > 8 else "configured"
         # `url` is what the dashboard's backend uses to talk to n8n; it can be a
         # compose-internal hostname (e.g. http://n8n:5678) that a browser cannot
         # resolve. `login_url`, when present, is the browser-reachable URL.

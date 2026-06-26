@@ -173,14 +173,14 @@ async function loadInstances() {
         return `
         <tr id="inst-row-${esc(inst.id)}">
           <td>
-            <span class="instance-dot" style="background:${inst.color || '#ff6d5a'};cursor:pointer" onclick="window.__activateInst('${jsStr(inst.id)}')" title="${inst.active ? 'Active' : 'Click to switch'}"></span>
+            <span class="instance-dot" style="background:${attr(inst.color || '#ff6d5a')};cursor:pointer" onclick="window.__activateInst('${jsStr(inst.id)}')" title="${inst.active ? 'Active' : 'Click to switch'}"></span>
           </td>
           <td style="font-weight:500">
             ${esc(inst.name)}
             ${inst.active ? '<span class="pill pill-success" style="font-size:9px;margin-left:4px">ACTIVE</span>' : ''}
           </td>
           <td style="font-family:var(--font-mono);font-size:12px">${esc(inst.url)}</td>
-          <td style="font-size:12px;color:var(--text-dim)">${inst.key_hint || 'configured'}</td>
+          <td style="font-size:12px;color:var(--text-dim)">${esc(inst.key_hint || 'configured')}</td>
           <td style="white-space:nowrap">
             ${updateCell}
             ${inst.has_login ? `<button class="btn btn-sm btn-ghost" onclick="window.__instLogin('${jsStr(inst.id)}','${jsStr(inst.name)}','${inst.color || ''}')" title="Show n8n sign-in details">Sign in to n8n</button>` : ''}
@@ -422,7 +422,7 @@ window.__instLogin = async (id, name, color) => {
     <div class="modal-content" style="max-width:520px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <h2 style="margin:0;display:flex;align-items:center;gap:8px">
-          <span class="instance-dot" style="background:${color || '#ff6d5a'}"></span>
+          <span class="instance-dot" style="background:${attr(color || '#ff6d5a')}"></span>
           Sign in to ${esc(name)}
         </h2>
         <button class="btn btn-sm btn-ghost" onclick="this.closest('.modal').remove()" style="font-size:18px">&times;</button>
@@ -507,7 +507,7 @@ window.__instCredentials = (id, name, url, color) => {
     <div class="modal-content" style="max-width:520px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <h2 style="margin:0;display:flex;align-items:center;gap:8px">
-          <span class="instance-dot" style="background:${color || '#ff6d5a'}"></span>
+          <span class="instance-dot" style="background:${attr(color || '#ff6d5a')}"></span>
           ${esc(name)} &ndash; Credentials
         </h2>
         <button class="btn btn-sm btn-ghost" onclick="this.closest('.modal').remove()" style="font-size:18px">&times;</button>
@@ -515,11 +515,11 @@ window.__instCredentials = (id, name, url, color) => {
       <form id="cred-form">
         <label>
           Instance Name
-          <input type="text" id="cred-name" value="${esc(name)}">
+          <input type="text" id="cred-name" value="${attr(name)}">
         </label>
         <label>
           n8n URL
-          <input type="url" id="cred-url" value="${esc(url)}">
+          <input type="url" id="cred-url" value="${attr(url)}">
         </label>
         <div style="margin-top:10px;margin-bottom:8px">
           <div id="cred-key-field"></div>
@@ -528,7 +528,7 @@ window.__instCredentials = (id, name, url, color) => {
         <label>
           Color
           <div id="cred-color-picker" style="display:flex;gap:6px;margin-top:6px"></div>
-          <input type="hidden" id="cred-color" value="${color || '#ff6d5a'}">
+          <input type="hidden" id="cred-color" value="${attr(color || '#ff6d5a')}">
         </label>
         <div style="display:flex;gap:8px">
           <button type="submit" class="btn btn-primary">Save</button>
@@ -782,7 +782,7 @@ async function loadMCPList() {
         <tr>
           <td style="font-weight:500">${esc(s.name)}</td>
           <td style="font-family:var(--font-mono);font-size:11px">${esc(s.url)}</td>
-          <td><span class="pill pill-${s.token_hint ? 'success' : 'neutral'}" style="font-size:10px">${s.token_hint || 'none'}</span></td>
+          <td><span class="pill pill-${s.token_hint ? 'success' : 'neutral'}" style="font-size:10px">${esc(s.token_hint || 'none')}</span></td>
           <td style="font-size:11px">${s.instances.length ? s.instances.length + ' assigned' : '<span style="color:var(--text-dim)">all</span>'}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-ghost" onclick="window.__testMCP('${jsStr(s.id)}')">Test</button>
@@ -923,7 +923,7 @@ async function loadSecrets() {
     el.innerHTML = secrets.map(s => `
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-dim)">
         <code style="flex:1;font-size:13px">$${esc(s.name)}</code>
-        <span style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono)">${s.hint || (s.kind === 'compound' ? `${(s.fields || []).length} fields` : '')}</span>
+        <span style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono)">${esc(s.hint || (s.kind === 'compound' ? `${(s.fields || []).length} fields` : ''))}</span>
         <button class="btn btn-sm btn-ghost" onclick="window.__copyRef('${jsStr(s.name)}', this)" title="Copy $${esc(s.name)} to clipboard">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           Copy
@@ -1044,11 +1044,11 @@ async function _fillJobModelSelect(modelSel, provider, preferred, keyRef = '') {
   modelSel.innerHTML = '<option value="">Loading...</option>';
   const ollamaUrl = provider === 'ollama' ? (document.getElementById('ai-ollama-url')?.value || '') : '';
   const models = await fetchAssistantModels(provider, ollamaUrl, keyRef);
-  let html = models.map(m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}</option>`).join('');
+  let html = models.map(m => `<option value="${attr(m.id)}">${esc(m.name || m.id)}</option>`).join('');
   if (!models.length) html = '<option value="">No models</option>';
   // Preserve a saved model that isn't in the live list (e.g. a custom id).
   if (preferred && !models.some(m => m.id === preferred)) {
-    html = `<option value="${esc(preferred)}">${esc(preferred)} (saved)</option>` + html;
+    html = `<option value="${attr(preferred)}">${esc(preferred)} (saved)</option>` + html;
   }
   modelSel.innerHTML = html;
   if (preferred) modelSel.value = preferred;
@@ -1139,11 +1139,11 @@ export async function renderModelsTab(el) {
     const opts = [`<option value=""${!selectedRef ? ' selected' : ''}>Use provider default key</option>`];
     for (const r of secretRefs) {
       const sel = r.ref === selectedRef ? ' selected' : '';
-      opts.push(`<option value="${esc(r.ref)}"${sel}>${esc(r.ref)}${r.hint ? ` — ${esc(r.hint)}` : ''}</option>`);
+      opts.push(`<option value="${attr(r.ref)}"${sel}>${esc(r.ref)}${r.hint ? ` — ${esc(r.hint)}` : ''}</option>`);
     }
     // A saved value that no longer matches any secret still shows, so the user sees it.
     if (selectedRef && !secretRefs.some(r => r.ref === selectedRef)) {
-      opts.push(`<option value="${esc(selectedRef)}" selected>${esc(selectedRef)} (not found)</option>`);
+      opts.push(`<option value="${attr(selectedRef)}" selected>${esc(selectedRef)} (not found)</option>`);
     }
     return opts.join('');
   }
@@ -1369,6 +1369,15 @@ function renderErrorHandler(el) {
 }
 
 function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
+
+// Escape for a double-quoted HTML attribute. esc() leaves " and ' intact, so it
+// is unsafe in attribute context (a quote breaks out of the attribute); use this
+// for value="..." / style="..." interpolations of server- or user-sourced data.
+function attr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.

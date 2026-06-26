@@ -546,7 +546,6 @@ def _build_community_bundle(template_def: dict):
     The returned builder yields a list[bundle_mod.ContainerSpec] suitable for
     deployer.deploy_bundle().
     """
-    template_id = template_def["id"]
 
     def builder(f: dict) -> list[bundle_mod.ContainerSpec]:
         instance_name = f.get("instance_name", "instance").strip().replace(" ", "-").lower()

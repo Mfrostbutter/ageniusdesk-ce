@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from backend.modules.player.music_config import (
     DEFAULT_MUSIC,
     add_to_collection,
-    ensure_trigger_token,
     load_music_config,
     remove_from_collection,
     rotate_trigger_token,

@@ -32,7 +32,6 @@ from backend.config import (
     is_secret_allowed_on_instance,
     load_secrets,
 )
-from .known_types import KNOWN_TYPES
 from .mappings import build_credential_payload, build_types_list_for_ui, fetch_live_schemas
 
 logger = logging.getLogger(__name__)
