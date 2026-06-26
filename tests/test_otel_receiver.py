@@ -150,6 +150,23 @@ def test_ingest_dedupes_on_replay(client, monkeypatch):
     assert len(detail) == 2
 
 
+def test_by_execution_lookup(client, monkeypatch):
+    monkeypatch.setattr(settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(settings, "agd_otel_token", "")
+    _auth(client)
+    client.post(
+        "/api/otel/v1/traces",
+        content=_sample_request().SerializeToString(),
+        headers={"Content-Type": "application/x-protobuf"},
+    )
+    r = client.get("/api/otel/by-execution/7989").json()
+    assert r["trace_id"] == TRACE_HEX
+    assert len(r["spans"]) == 2
+    # Unknown execution resolves to an empty result, not an error.
+    empty = client.get("/api/otel/by-execution/nope-404").json()
+    assert empty["trace_id"] == "" and empty["spans"] == []
+
+
 def test_json_ingest_path(client, monkeypatch):
     monkeypatch.setattr(settings, "agd_otel_enabled", True)
     monkeypatch.setattr(settings, "agd_otel_token", "")

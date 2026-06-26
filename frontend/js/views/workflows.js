@@ -6,6 +6,7 @@ import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
 import * as modal from '../components/modal.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
+import { openTraceModal } from '../components/trace-waterfall.js';
 
 let selectedWorkflow = null;
 let selectedWorkflowMeta = { id: '', name: '' };
@@ -214,10 +215,15 @@ window.__selectWorkflow = async function(id) {
       onRemove: (wfId) => window.__removeDashboardTrigger(wfId),
       onDelete: (wfId) => window.__deleteWorkflow(wfId),
       onAnalyze: (execId, wfName, wfId) => window.__analyzeExec(execId, wfName, wfId),
+      onObserve: (execId, wfName) => window.__observeExec(execId, wfName),
     }));
   } catch (e) {
     el.innerHTML = `<div class="empty-state"><p>Failed to load: ${esc(e.message)}</p></div>`;
   }
+};
+
+window.__observeExec = (execId, workflowName) => {
+  openTraceModal({ execId, title: `Trace · ${workflowName} · exec ${execId}` });
 };
 
 window.__analyzeExec = async function(execId, workflowName, workflowId) {

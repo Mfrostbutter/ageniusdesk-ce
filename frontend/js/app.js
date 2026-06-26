@@ -24,6 +24,7 @@ import * as musicView from './views/music.js';
 import * as secretsView from './views/secrets.js';
 import * as notesView from './views/notes.js';
 import * as insightsView from './views/insights.js';
+import * as observabilityView from './views/observability.js';
 import * as knowledgeView from './views/knowledge.js';
 import * as knowledgeConnectorsView from './views/knowledge-connectors.js';
 import * as knowledgeInstructionsView from './views/knowledge-instructions.js';
@@ -62,6 +63,7 @@ const views = {
   secrets: secretsView,
   notes: notesView,
   insights: insightsView,
+  observe: observabilityView,
   knowledge: knowledgeView,
   'knowledge-connectors': knowledgeConnectorsView,
   'knowledge-instructions': knowledgeInstructionsView,

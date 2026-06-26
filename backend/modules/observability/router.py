@@ -71,3 +71,12 @@ async def list_traces(limit: int = 50, instance_id: str = ""):
 async def trace_detail(trace_id: str):
     """All spans for one trace, ordered for the waterfall."""
     return {"trace_id": trace_id, "spans": await storage.get_trace(trace_id)}
+
+
+@router.get("/by-execution/{execution_id}")
+async def trace_by_execution(execution_id: str):
+    """Resolve an n8n execution id to its trace + spans (for the per-execution popup)."""
+    trace_id = await storage.trace_id_for_execution(execution_id)
+    if not trace_id:
+        return {"execution_id": execution_id, "trace_id": "", "spans": []}
+    return {"execution_id": execution_id, "trace_id": trace_id, "spans": await storage.get_trace(trace_id)}

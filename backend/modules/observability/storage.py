@@ -101,6 +101,17 @@ async def list_traces(instance_id: str, limit: int = 50) -> list[dict]:
     return out
 
 
+async def trace_id_for_execution(execution_id: str) -> str:
+    """Most recent trace id for an n8n execution id, or '' if none captured."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT trace_id FROM otel_spans WHERE execution_id = ? ORDER BY start_ns DESC LIMIT 1",
+        (execution_id,),
+    )
+    row = await cur.fetchone()
+    return row["trace_id"] if row else ""
+
+
 async def get_trace(trace_id: str) -> list[dict]:
     """All spans for one trace, ordered for waterfall rendering."""
     db = await get_db()

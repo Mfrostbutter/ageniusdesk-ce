@@ -14,6 +14,7 @@
  * opts.onRemove    — callback(id) for remove-trigger action (optional)
  * opts.onDelete    — callback(id) for delete workflow action (optional)
  * opts.onAnalyze   — callback(execId, wfName, wfId) for AI analysis (optional)
+ * opts.onObserve   — callback(execId, wfName) to open the execution trace (optional)
  */
 
 function _esc(s) {
@@ -48,7 +49,7 @@ function _triggerClass(t) {
 }
 
 export function WorkflowDetailPanel(wf, executions, opts = {}) {
-  const { n8nUrl = window.__n8nUrl || '', onActivate, onInject, onRemove, onDelete, onAnalyze } = opts;
+  const { n8nUrl = window.__n8nUrl || '', onActivate, onInject, onRemove, onDelete, onAnalyze, onObserve } = opts;
 
   const isArchived = !!wf.is_archived;
   const el = document.createElement('div');
@@ -174,6 +175,9 @@ export function WorkflowDetailPanel(wf, executions, opts = {}) {
           <td>${_esc(e.mode)}</td>
           <td style="font-family:var(--font-mono);font-size:12px">${_formatTime(e.started_at)}</td>
           <td style="white-space:nowrap">
+            ${onObserve
+              ? `<button class="btn btn-sm btn-ghost wdp-observe-btn" data-exec-id="${_esc(e.id)}" style="font-size:10px;padding:2px 8px" title="View this execution's OpenTelemetry trace">&#128202; Observe</button>`
+              : ''}
             ${e.status === 'error' && onAnalyze
               ? `<button class="btn btn-sm btn-ghost wdp-analyze-btn" data-exec-id="${_esc(e.id)}" style="font-size:10px;padding:2px 8px" title="Ask AI to analyze this failure">&#10022; Ask AI</button>`
               : ''}
@@ -197,6 +201,15 @@ export function WorkflowDetailPanel(wf, executions, opts = {}) {
           ev.stopPropagation();
           const execId = btn.dataset.execId;
           onAnalyze(execId, wf.name, wf.id);
+        });
+      });
+    }
+
+    if (onObserve) {
+      wrap.querySelectorAll('.wdp-observe-btn').forEach(btn => {
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          onObserve(btn.dataset.execId, wf.name);
         });
       });
     }
