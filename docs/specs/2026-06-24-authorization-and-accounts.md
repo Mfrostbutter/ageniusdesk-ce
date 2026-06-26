@@ -323,6 +323,30 @@ privileged view or data load happens pre-auth.
 - `frontend/js/api.js`: read `agd_csrf` cookie and attach `X-AGD-CSRF` to non-GET
   requests; on any `401` from a privileged call, redirect to the login screen.
 
+### 7.3 Logout affordance and login branding (walkthrough follow-ups)
+
+Two gaps surfaced walking the running app; both are small frontend additions on
+top of the auth backend above.
+
+**Logout button in the app chrome.** Section 7.2 puts logout inside the Settings
+-> Account section, which is too buried for a routine action. Add a visible
+logout control in the main app chrome: a user affordance in the sidebar footer
+(showing the logged-in `display_name`/username) with a logout action that calls
+`POST /api/auth/logout`, clears local state, and returns to the login screen. The
+Settings -> Account logout stays as-is. When the request authenticated via edge
+identity or admin token (no local session), the control is hidden, since there is
+no session to end.
+
+**Login splash branding.** The owner-setup and login screens (`login.js`) render
+a bare card with no branding. Add the AgeniusDesk logo centered above the login
+form: the brand mark (image) stacked over the `Agenius`/`Desk` text wordmark
+(reusing the existing `.logo` / `.logo-accent` treatment from `index.html`), both
+centered above the card's form. The repo has no image mark today, so this work
+adds one self-contained vector asset (`frontend/assets/logo.svg`, no CDN/network
+fetch) and references it from the auth overlay. Same lockup appears on both the
+owner-setup and login states. Keep it theme-aware (inherits the auth overlay's
+CSS variables).
+
 ## 8. Security checklist
 
 - Password hashing PBKDF2-HMAC-SHA256, 600k iterations, 16-byte random salt,
@@ -374,6 +398,7 @@ New:
   `auth/manifest.json`
 - `frontend/js/views/login.js`
 - `frontend/js/vendor/qrcode.min.js`
+- `frontend/assets/logo.svg` (brand mark for the login splash; per Section 7.3)
 
 Changed:
 - `backend/config.py` (new settings + `harden_file_permissions` adds
@@ -384,7 +409,9 @@ Changed:
   `require_role` attachments across `n8n_proxy`, `errors`, `containers`,
   `assistant`, `admin`, `vault` (per Section 6.6), `frontend/js/app.js` (boot
   gate), `frontend/js/api.js` (CSRF header + 401 handling), Settings view
-  (Account section), `.env.example`, `docs/CONFIG.md`, `CHANGELOG.md`.
+  (Account section), `frontend/js/app.js` + sidebar chrome (logout affordance,
+  per Section 7.3), `frontend/js/views/login.js` (logo lockup, per Section 7.3),
+  `.env.example`, `docs/CONFIG.md`, `CHANGELOG.md`.
 
 ## 12. Resolved decisions
 

@@ -10,8 +10,11 @@ import { get, post } from '../api.js';
 import { mountChecklist } from '../components/password-policy.js';
 
 const STYLE = `
-.agd-auth-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;
-  justify-content:center;background:var(--bg-primary,#0f1115);padding:24px}
+.agd-auth-overlay{position:fixed;inset:0;z-index:10000;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;background:var(--bg-primary,#0f1115);padding:24px}
+.agd-auth-brand{font-size:34px;font-weight:700;letter-spacing:-0.6px;margin:0 0 24px;
+  text-align:center;color:var(--text-primary,#e8eaed);line-height:1}
+.agd-auth-brand .accent{color:var(--accent,#ff6d5a)}
 .agd-auth-card{width:100%;max-width:380px;background:var(--bg-elevated,#1a1d24);
   border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:32px 28px;
   box-shadow:0 12px 48px rgba(0,0,0,.45)}
@@ -39,6 +42,10 @@ const STYLE = `
   background:none;border:none;cursor:pointer;padding:0}
 .agd-auth-back:hover{color:var(--text-primary,#e8eaed)}
 `;
+
+// Brand wordmark shown centered above every auth card. Mirrors the sidebar logo
+// (`Agenius` + accent `Desk`) so it stays consistent across themes.
+const BRAND = '<div class="agd-auth-brand">Agenius<span class="accent">Desk</span></div>';
 
 function injectStyle() {
   if (document.getElementById('agd-auth-style')) return;
@@ -83,6 +90,7 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 function renderSetup(policy) {
   const overlay = el(`
     <div class="agd-auth-overlay">
+      ${BRAND}
       <form class="agd-auth-card" autocomplete="off">
         <h1>Create your owner account</h1>
         <p class="agd-auth-sub">This account secures your AgeniusDesk install.</p>
@@ -131,6 +139,7 @@ function renderSetup(policy) {
 function renderLogin() {
   const overlay = el(`
     <div class="agd-auth-overlay">
+      ${BRAND}
       <form class="agd-auth-card" autocomplete="on">
         <h1>Sign in</h1>
         <p class="agd-auth-sub">Welcome back to AgeniusDesk.</p>
@@ -173,6 +182,7 @@ function renderLogin() {
 function renderTotp(pendingToken) {
   const overlay = el(`
     <div class="agd-auth-overlay">
+      ${BRAND}
       <form class="agd-auth-card" autocomplete="off">
         <h1>Two-factor code</h1>
         <p class="agd-auth-sub">Enter the 6-digit code from your authenticator app.</p>
@@ -206,6 +216,7 @@ function renderTotp(pendingToken) {
 function renderForgot() {
   const overlay = el(`
     <div class="agd-auth-overlay">
+      ${BRAND}
       <form class="agd-auth-card" autocomplete="on">
         <h1>Reset your password</h1>
         <p class="agd-auth-sub">Enter your account email and we'll send a reset link.</p>
@@ -245,6 +256,7 @@ function renderForgot() {
 function renderReset(token, policy) {
   const overlay = el(`
     <div class="agd-auth-overlay">
+      ${BRAND}
       <form class="agd-auth-card" autocomplete="off">
         <h1>Choose a new password</h1>
         <p class="agd-auth-sub">Set a new password for your account.</p>
