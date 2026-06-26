@@ -17,10 +17,8 @@ One dashboard for every n8n instance: live stats, an execution timeline, and a r
 | ![Executions and errors grouped by workflow, node, and type](docs/screenshots/executions-errors.png) | ![Execution analytics: success rate, timeline, top workflows](docs/screenshots/insights.png) |
 | **Code Lab** | **AI Models** |
 | ![Monaco editor with AI code assistant and Send to n8n](docs/screenshots/code-lab.png) | ![Per-area provider and model configuration](docs/screenshots/models.png) |
-
-Deploy and manage Docker services without leaving the dashboard.
-
-![Containers](docs/screenshots/containers.png)
+| **The Harness** | **Containers** |
+| ![Agent knowledge workspace: notes vault, sources, and instructions](docs/screenshots/harness.png) | ![Deploy and manage Docker services from the dashboard](docs/screenshots/containers.png) |
 
 ## What's Included
 
