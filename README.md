@@ -75,7 +75,7 @@ Deploy and manage Docker services without leaving the dashboard.
 - Per-instance health status
 
 **Themes and Music**
-- 4 built-in themes plus custom theme support
+- 2 built-in themes (Dark, Light) plus custom theme support
 - Integrated music player (Spotify, YouTube, SoundCloud, Apple Music, Tidal)
 
 ## Quick Start

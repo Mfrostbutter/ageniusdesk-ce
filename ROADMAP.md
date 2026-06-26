@@ -17,7 +17,7 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 - Encrypted secret store with `$VAR_NAME` references
 - Docker container management with one-click deployment
 - Community template library for common services
-- Themes (Dark, Light, Cyberpunk, Matrix) with custom theme support
+- Themes (Dark, Light) with custom theme support
 - Music player (Spotify, YouTube, SoundCloud, Apple Music, Tidal)
 - Insights dashboard (success rates, error trends, busiest workflows)
 - Docker Compose deployment with setup wizard

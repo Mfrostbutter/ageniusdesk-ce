@@ -115,7 +115,7 @@ The first open-source, MIT-licensed release of AgeniusDesk Community Edition.
 - Workflow busiest / slowest statistics
 
 **Themes & Customization**
-- 4 built-in themes (Dark, Light, Cyberpunk, Matrix)
+- 2 built-in themes (Dark, Light) plus custom theme support
 - Custom theme support via JSON
 - Music player integration (Spotify, YouTube, SoundCloud, Apple Music, Tidal)
 
