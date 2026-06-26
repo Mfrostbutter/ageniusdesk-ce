@@ -42,3 +42,6 @@ docker-compose.override.yml
 
 # Local workflow journals (workflow-capture)
 _worklogs/
+
+# Local-only scratch: continuation prompts, session handoffs, notes (never committed)
+.local/
