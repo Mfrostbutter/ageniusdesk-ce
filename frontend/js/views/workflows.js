@@ -256,6 +256,7 @@ window.__analyzeExec = async function(execId, workflowName, workflowId) {
     const resp = await post('/api/assistant/chat', {
       messages: [{ role: 'user', content: prompt }],
       context: '',
+      surface: 'triage',
     });
 
     const md = (resp.response || 'No response').replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:11px">$1</code>');
