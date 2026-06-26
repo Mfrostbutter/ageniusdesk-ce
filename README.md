@@ -119,6 +119,13 @@ Wire your n8n instance to report failures into the dashboard in real time.
 
 **Community Modules:** Community modules can load and execute Python code from `data/modules/`. Only install modules from trusted sources.
 
+## Documentation
+
+Full documentation lives in [docs/](docs/README.md): a task-oriented **User Guide**
+(getting started, instances, errors, Code Lab, AI assistant, secrets, and more) and
+an **Architecture & Developer Reference** (module system, data model, auth/RBAC,
+frontend, API, security posture).
+
 ## Deployment
 
 For production self-hosting, see [docs/DEPLOY.md](docs/DEPLOY.md) for:
