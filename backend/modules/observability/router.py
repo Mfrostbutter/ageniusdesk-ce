@@ -1,0 +1,73 @@
+"""Observability module: OTLP/HTTP receiver + trace query API.
+
+The ingest endpoint (`POST /api/otel/v1/traces`) is machine-ingest: it is
+exempted from the session gate and token-checked in `main.py` (AGD_OTEL_TOKEN),
+mirroring the legacy webhook pattern. The query endpoints are ordinary
+session-authed `/api/*` routes consumed by the Observability view.
+"""
+
+import logging
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+
+from backend.config import get_active_instance_id, settings
+
+from . import ingest, storage
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/otel", tags=["observability"])
+
+
+@router.post("/v1/traces")
+async def receive_traces(request: Request):
+    """OTLP/HTTP traces receiver. Accepts protobuf (n8n default) or OTLP/JSON."""
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+
+    body = await request.body()
+    ctype = (request.headers.get("content-type") or "").lower()
+    req = ExportTraceServiceRequest()
+    try:
+        if "json" in ctype:
+            from google.protobuf.json_format import Parse
+            Parse(body.decode("utf-8"), req, ignore_unknown_fields=True)
+        else:
+            req.ParseFromString(body)
+    except Exception as e:
+        return JSONResponse({"detail": f"Could not parse OTLP payload: {e}"}, status_code=400)
+
+    try:
+        await ingest.ingest_trace_request(req)
+    except Exception as e:
+        logger.exception("otel ingest failed: %s", e)
+        return JSONResponse({"detail": "ingest failed"}, status_code=500)
+
+    # OTLP success response (empty partialSuccess == fully accepted).
+    return JSONResponse({"partialSuccess": {}}, status_code=200)
+
+
+@router.get("/status")
+async def otel_status():
+    """Receiver state + current span volume, for the Observability view header."""
+    return {
+        "enabled": settings.agd_otel_enabled,
+        "token_set": bool(settings.agd_otel_token),
+        "retention_hours": settings.agd_otel_retention_hours,
+        "max_spans": settings.agd_otel_max_spans,
+        "span_count": await storage.count_spans(),
+    }
+
+
+@router.get("/traces")
+async def list_traces(limit: int = 50, instance_id: str = ""):
+    """Recent traces (one per execution), scoped to an instance (default: active)."""
+    iid = instance_id if instance_id else get_active_instance_id()
+    limit = max(1, min(int(limit), 500))
+    return {"traces": await storage.list_traces(iid, limit), "instance_id": iid}
+
+
+@router.get("/traces/{trace_id}")
+async def trace_detail(trace_id: str):
+    """All spans for one trace, ordered for the waterfall."""
+    return {"trace_id": trace_id, "spans": await storage.get_trace(trace_id)}

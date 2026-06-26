@@ -27,6 +27,10 @@ dependencies = [
     "cryptography>=42.0.0",
     "mcp>=1.2.0",
     "aiodocker>=0.21.0",
+    # OTLP receiver: generated OpenTelemetry protobuf schema (pulls in protobuf).
+    # n8n's native OTel exporter speaks HTTP/Protobuf only, so the embedded
+    # observability receiver must decode ExportTraceServiceRequest.
+    "opentelemetry-proto>=1.25.0",
 ]
 
 [project.optional-dependencies]

@@ -127,6 +127,17 @@ class Settings(BaseSettings):
     # A recommended starting policy is documented in .env.example.
     agd_csp: str = ""
 
+    # OpenTelemetry observability (embedded OTLP/HTTP receiver). n8n exports
+    # workflow + node spans straight to AgeniusDesk; the Observability view
+    # renders them as a trace waterfall. Off by default. The ingest endpoint is
+    # a machine-ingest surface: gate it with AGD_OTEL_TOKEN before exposing the
+    # port publicly (unset = open, trusted-LAN only, same posture as the legacy
+    # webhooks). Retention is bounded both ways — oldest pruned past either cap.
+    agd_otel_enabled: bool = False
+    agd_otel_token: str = ""
+    agd_otel_retention_hours: int = 72       # age-based span pruning
+    agd_otel_max_spans: int = 500000         # hard row cap, oldest pruned first
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

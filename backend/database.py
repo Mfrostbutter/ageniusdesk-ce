@@ -92,6 +92,36 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     await db.execute("CREATE INDEX IF NOT EXISTS idx_auth_resets_user ON auth_resets(username)")
     await db.commit()
 
+    # otel_spans — OpenTelemetry execution spans pushed by n8n's native OTLP
+    # exporter (workflow.execute + nested node.execute). High-volume, so it is
+    # pruned by age and row count on ingest (see modules/observability). Only
+    # created when the receiver is used, but the table is harmless empty.
+    # trace_id/span_id/parent_id are hex strings; *_ns are unix-nano ints;
+    # attributes_json carries span + resource attributes verbatim.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS otel_spans (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            trace_id        TEXT NOT NULL,
+            span_id         TEXT NOT NULL,
+            parent_id       TEXT NOT NULL DEFAULT '',
+            instance_id     TEXT NOT NULL DEFAULT '',
+            workflow_id     TEXT NOT NULL DEFAULT '',
+            workflow_name   TEXT NOT NULL DEFAULT '',
+            execution_id    TEXT NOT NULL DEFAULT '',
+            name            TEXT NOT NULL DEFAULT '',
+            kind            INTEGER NOT NULL DEFAULT 0,
+            start_ns        INTEGER NOT NULL DEFAULT 0,
+            end_ns          INTEGER NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT '',
+            attributes_json TEXT NOT NULL DEFAULT '{}',
+            received_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_otel_spans_trace ON otel_spans(trace_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_otel_spans_instance ON otel_spans(instance_id, start_ns DESC)")
+    await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_otel_spans_unique ON otel_spans(trace_id, span_id)")
+    await db.commit()
+
 
 async def close_db() -> None:
     global _db

@@ -127,6 +127,14 @@ _LEGACY_WEBHOOK_EXACT = frozenset({
     "/api/errors/webhook",
     "/api/messages/webhook",
 })
+# OTLP ingest is machine-ingest (n8n's OTel exporter, not a browser): exempt
+# from the session gate, token-checked by AGD_OTEL_TOKEN, and only live when
+# the receiver is enabled. n8n appends /v1/traces (and /v1/metrics) to the
+# configured base endpoint.
+_OTEL_INGEST_EXACT = frozenset({
+    "/api/otel/v1/traces",
+    "/api/otel/v1/metrics",
+})
 _SELF_AUTHENTICATING_EXACT = frozenset({
     "/api/music/triggers/fire",
 })
@@ -154,6 +162,17 @@ def _dashboard_mcp_token_ok(request) -> bool:
     return bool(token and supplied) and hmac.compare_digest(supplied, token)
 
 
+def _otel_token_ok(request) -> bool:
+    """Validate the OTLP ingest token. Unset token = open (trusted-LAN only),
+    same posture as the legacy webhooks. n8n sends it as an Authorization bearer
+    via N8N_OTEL_EXPORTER_OTLP_HEADERS; an x-agd-otel-token header is also accepted."""
+    token = settings.agd_otel_token
+    if not token:
+        return True
+    supplied = request.headers.get("x-agd-otel-token", "").strip() or _bearer_token(request)
+    return bool(supplied) and hmac.compare_digest(supplied, token)
+
+
 @app.middleware("http")
 async def require_internal_api_auth(request, call_next):
     """Require identity for internal API routes.
@@ -171,6 +190,12 @@ async def require_internal_api_auth(request, call_next):
         if _legacy_webhook_ok(request):
             return await call_next(request)
         return JSONResponse({"detail": "Invalid or missing webhook token"}, status_code=401)
+    if path in _OTEL_INGEST_EXACT:
+        if not settings.agd_otel_enabled:
+            return JSONResponse({"detail": "OTel receiver disabled (set AGD_OTEL_ENABLED=true)"}, status_code=404)
+        if _otel_token_ok(request):
+            return await call_next(request)
+        return JSONResponse({"detail": "Invalid or missing OTel token"}, status_code=401)
     if path in _SELF_AUTHENTICATING_EXACT:
         return await call_next(request)
     if path.startswith(_DASHBOARD_MCP_PREFIX) and _dashboard_mcp_token_ok(request):
@@ -237,7 +262,7 @@ async def csrf_protect(request, call_next):
         "/api/auth/login/totp",
         "/api/auth/forgot",
         "/api/auth/reset",
-    )
+    ) or path in _OTEL_INGEST_EXACT  # machine-ingest, token-authed, not a browser surface
     if (
         request.method not in SAFE_METHODS
         and path.startswith("/api/")
