@@ -11,6 +11,34 @@ function readCookie(name) {
   return m ? decodeURIComponent(m[1]) : '';
 }
 
+// Global double-submit CSRF: every same-origin mutating request needs the
+// `agd_csrf` cookie echoed as a header, or the server 403s it. Patch window.fetch
+// once so raw fetch() callers (workflow delete, container actions, the player,
+// etc.) are covered too — not just calls routed through api() below. Without
+// this, anything bypassing api() breaks under the CSRF middleware.
+(function patchFetchForCsrf() {
+  if (typeof window === 'undefined' || window.__agdFetchPatched) return;
+  const orig = window.fetch.bind(window);
+  window.__agdFetchPatched = true;
+  window.fetch = (input, init = {}) => {
+    try {
+      const isReq = typeof Request !== 'undefined' && input instanceof Request;
+      const method = (init.method || (isReq ? input.method : 'GET') || 'GET').toUpperCase();
+      const url = typeof input === 'string' ? input : (isReq ? input.url : String(input || ''));
+      const sameOrigin = url.startsWith('/') || url.startsWith(location.origin);
+      if (sameOrigin && method !== 'GET' && method !== 'HEAD') {
+        const csrf = readCookie('agd_csrf');
+        if (csrf) {
+          const headers = new Headers((init && init.headers) || (isReq ? input.headers : undefined) || {});
+          if (!headers.has('X-AGD-CSRF')) headers.set('X-AGD-CSRF', csrf);
+          init = { ...init, headers };
+        }
+      }
+    } catch { /* never let the shim break a request */ }
+    return orig(input, init);
+  };
+})();
+
 let _authRedirecting = false;
 
 export async function api(path, options = {}) {

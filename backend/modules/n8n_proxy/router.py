@@ -95,15 +95,21 @@ async def list_instances():
 @router.post("/instances")
 async def create_instance(req: InstanceRequest):
     """Add a new n8n instance and test the connection."""
+    browser_url = req.url.rstrip("/")
+    # When the dashboard runs in Docker, a localhost URL must be reached via
+    # host.docker.internal from inside the container. Store that as the backend
+    # `url`, and keep the original localhost URL as the browser-facing login_url.
+    backend_url = client.dockerize_url(browser_url)
+    login_url = req.login_url.rstrip("/") or (browser_url if backend_url != browser_url else "")
     inst = {
         "id": secrets.token_hex(8),
         "name": req.name,
-        "url": req.url.rstrip("/"),
+        "url": backend_url,
         "api_key": req.api_key,
         "color": req.color,
         "owner_email": req.owner_email,
         "owner_password": req.owner_password,
-        "login_url": req.login_url.rstrip("/"),
+        "login_url": login_url,
     }
 
     # Test connection before saving
@@ -121,14 +127,16 @@ async def create_instance(req: InstanceRequest):
 @router.put("/instances/{instance_id}")
 async def edit_instance(instance_id: str, req: InstanceRequest):
     """Update an existing instance."""
+    browser_url = req.url.rstrip("/")
+    backend_url = client.dockerize_url(browser_url)
     updates = {
         "name": req.name,
-        "url": req.url.rstrip("/"),
+        "url": backend_url,
         "api_key": req.api_key,
         "color": req.color,
         "owner_email": req.owner_email,
         "owner_password": req.owner_password,
-        "login_url": req.login_url.rstrip("/"),
+        "login_url": req.login_url.rstrip("/") or (browser_url if backend_url != browser_url else ""),
     }
     if not update_instance(instance_id, updates):
         raise HTTPException(status_code=404, detail="Instance not found")

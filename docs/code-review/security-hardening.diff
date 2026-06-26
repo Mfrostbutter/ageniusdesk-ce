@@ -1,0 +1,762 @@
+﻿diff --git a/.env.example b/.env.example
+index 1538334..929d0a0 100644
+--- a/.env.example
++++ b/.env.example
+@@ -8,12 +8,17 @@
+ # (back it up: losing it makes stored secrets unrecoverable).
+ # SECRET_KEY=
+ 
+-# Require in-app auth on a naked-port bind. Leave false if you front the app with
+-# an auth proxy (Cloudflare Access, Authelia, etc.). Set true for a bare public bind.
+-# When true, the /ws WebSocket also requires an edge-auth identity header.
++# Local account login is ON by default. AGD_REQUIRE_AUTH is an extra hard gate
++# for token/edge-auth deployments, and keeps auth required even if
++# AGD_DISABLE_LOGIN=true.
+ AGD_REQUIRE_AUTH=false
+-# Admin bearer token accepted on privileged routes when AGD_REQUIRE_AUTH=true.
++# Admin bearer token accepted on internal API routes when set.
+ # AGD_ADMIN_TOKEN=
++# Trust Cloudflare Access / reverse-proxy identity headers. Only enable when the
++# dashboard is reachable exclusively through that trusted proxy.
++# AGD_TRUST_EDGE_AUTH=false
++# Trust X-Forwarded-For for login throttling. Only enable behind a trusted proxy.
++# AGD_TRUST_FORWARDED_FOR=false
+ 
+ # ── Local account login (accounts + sessions + optional 2FA) ──────────────────
+ # On first run the browser forces you to create an owner account, then requires
+@@ -26,8 +31,29 @@ AGD_REQUIRE_AUTH=false
+ # Failed-login lockout: attempts before lockout, and lockout duration (minutes).
+ # AGD_LOGIN_MAX_ATTEMPTS=8
+ # AGD_LOGIN_LOCKOUT_MINUTES=15
+-# Minimum password length for new accounts and password changes.
+-# AGD_PASSWORD_MIN_LENGTH=10
++# Password policy for new accounts, resets, and changes. Default: 12 chars with
++# an uppercase, a lowercase, a number, and a symbol. Relax any class by setting
++# it false (length always applies).
++# AGD_PASSWORD_MIN_LENGTH=12
++# AGD_PASSWORD_REQUIRE_UPPER=true
++# AGD_PASSWORD_REQUIRE_LOWER=true
++# AGD_PASSWORD_REQUIRE_NUMBER=true
++# AGD_PASSWORD_REQUIRE_SYMBOL=true
++# Password-reset link lifetime (minutes).
++# AGD_PASSWORD_RESET_TTL_MINUTES=30
++
++# ── Email (SMTP) — password reset ─────────────────────────────────────────────
++# Used to send the "forgot password" reset link. If AGD_SMTP_HOST is unset, the
++# reset link is written to the container log instead (self-hosted fallback).
++# AGD_SMTP_HOST=smtp.example.com
++# AGD_SMTP_PORT=587
++# AGD_SMTP_USER=apikey-or-username
++# AGD_SMTP_PASSWORD=your-smtp-password
++# AGD_SMTP_FROM=ageniusdesk@example.com   # defaults to AGD_SMTP_USER when blank
++# AGD_SMTP_STARTTLS=true
++# Public base URL used to build links in emails (else falls back to the request
++# origin). Set this for any non-localhost deployment behind a proxy.
++# AGD_PUBLIC_URL=https://app.example.com
+ 
+ # Verify TLS on outbound calls to n8n / MCP servers. Set false only for a
+ # self-signed n8n on a trusted LAN.
+@@ -36,6 +62,11 @@ AGD_TLS_VERIFY=true
+ # ── Optional: security hardening ──────────────────────────────────────────────
+ # Restrict CORS to specific origins (comma-separated). Default "*" allows any.
+ # AGD_CORS_ORIGINS=https://app.example.com
++# Optional token for the legacy /api/errors/webhook and /api/messages/webhook
++# ingest endpoints. New integrations should prefer X-API-Key protected /api/v1.
++# AGD_WEBHOOK_TOKEN=
++# Optional bearer token for /api/mcp-dashboard, for external MCP clients.
++# DASHBOARD_MCP_TOKEN=
+ # Max request body size in bytes (default 25 MiB). Requests over this get 413.
+ # AGD_MAX_REQUEST_BYTES=26214400
+ # Content-Security-Policy header (opt-in; empty = no CSP). The editors load from
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 4e4beaf..1fa7f5d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -5,15 +5,44 @@ All notable changes to AgeniusDesk Community Edition are documented here.
+ ## [Unreleased]
+ 
+ ### Added
++- Instances, Models, and MCP are now first-class sidebar views instead of deep-links into Settings. Clicking them shows a focused, single-purpose page (no Settings tab strip); the same panels still live under the Settings gear as tabs. This also fixes the wrong (Settings) coachmark firing on those pages.
++- Page coachmarks now cover every primary view: a single orienting bubble on Overview, Workflows, Executions/Errors, and Containers, plus dedicated tours for Instances, Models, and MCP. The Code Lab tour now calls out the Prompt Builder.
++- Security hardening: internal `/api/*` routes now have a central auth gate, edge-auth headers are trusted only with `AGD_TRUST_EDGE_AUTH=true`, legacy ingest webhooks can be protected with `AGD_WEBHOOK_TOKEN`, and external dashboard MCP clients can use `DASHBOARD_MCP_TOKEN`.
++
++### Fixed
++- Models: each area (Code Lab / Error Triage / General Assistant) now has an **API key** dropdown listing your stored secrets, so a key saved under any name (e.g. `$OPEN_ROUTER_API_KEY`) can be selected directly. Previously the area only resolved a single hard-coded convention name (`$OPEN_ROUTER_KEY`) with no way to point at a differently-named secret. Leaving it on "Use provider default key" keeps the convention behavior. Key resolution at chat time honors the per-area selection.
++- Models: selecting an API key now **tests the connection and reloads the live model list using that key**, so you see every model the key can reach instead of the short hardcoded fallback (e.g. OpenRouter jumps from ~11 fallback entries to the full live catalog). The `/models` and `/test-creds` endpoints accept a secret ref and resolve it server-side (the plaintext key never returns to the browser); the model cache is keyed per-key so areas with different keys don't evict each other.
++- Models: each of the three areas (Code Lab, Error Triage, General Assistant) has its own **Test & load models** button, so every area/provider can be validated and its live model list pulled independently. The OpenRouter connection test now hits the key-validation endpoint (its model list is public and returned 200 even for bad keys), so an invalid key is correctly reported.
++- Models: each area now has its own **Save** button that persists just that area (partial save), replacing the single floating "Save all areas" bar.
++- Models: testing an area with "Use provider default key" when no key is configured now returns a clear "No API key set" message instead of crashing with `Illegal header value b'Bearer '` (an empty key was being sent as an empty `Bearer` header). The default-key test also resolves the per-provider convention secret.
++- The post-wizard "Connect your n8n" guide no longer collides with a dashboard coachmark: the Overview/dashboard bubble was removed (the dashboard is self-explanatory and is where the get-started card and connect guide already live).
++- Dashboard "command center" tip anchors on the always-present "+ Widget" control instead of the widget grid, which is empty (zero-height) until widgets load async and would otherwise mark the tip seen before it ever showed.
++- CSRF protection regressed any action using a raw `fetch()` that bypassed the API helper (workflow delete / delete-archived, container lifecycle, music player) — they returned "failed" because the CSRF token wasn't attached. A global `fetch` shim now adds the token to every same-origin mutation, covering current and future callers.
++- Error-handler install is idempotent: it reuses an existing "Global Error Handler" workflow instead of importing a duplicate, and the post-connect prompt detects an already-installed handler and just confirms it.
++- Static/theme path handling now resolves paths under the intended frontend or `data/themes` directory before reading or writing, closing traversal edge cases in custom asset handlers.
++
++**Viewport, onboarding polish, and password policy**
++- Site-wide horizontal-overflow guard: nothing produces a horizontal scrollbar. Fixed the coachmark spotlight overshooting the viewport (it now cancels the app's body `zoom` so it maps 1:1 to the screen).
++- Page coachmarks lead with what each area is for. The discovery-heavy workspaces (Code Lab, the Harness, MCP, Models, Secrets) get a short multi-step walkthrough; the self-explanatory list views (Overview, Workflows, Errors, Containers) get a single orienting bubble.
++- Stronger password policy: 12+ characters with an uppercase, lowercase, number, and symbol (each class configurable via `AGD_PASSWORD_REQUIRE_*`). Setup, reset, and change-password show a live requirements checklist; the same rules are enforced server-side.
++- Setup wizard: the "stand up my stack" path no longer skips straight to the end. After the stack deploys it continues through Secrets and AI Assistant, then the dashboard shows a guided "connect your n8n" prompt (open n8n, create the account, mint an API key, register it). The "Sync to n8n" step was removed entirely, and the step indicator now shows only the steps that apply to your chosen path.
++- Docker networking: when the dashboard runs in a container, an n8n URL of `localhost` is transparently reached via `host.docker.internal` (stored as the backend URL while the browser link keeps `localhost`), so connecting a host-published n8n no longer fails with "connection refused." The connect form also pre-fills the URL with the host you reached the dashboard by, so accessing AgeniusDesk via a LAN IP auto-fills that IP.
++
++**Onboarding and page tips**
++- Setup Journey "Get started" card on the Dashboard. Milestone completion is derived live from app state (n8n connected, secrets added, AI configured, 2FA on, harness visited), so it stays honest and resumable instead of tracking a stored step. Auto-hides once core setup is done; dismissible and reopenable from Settings.
++- Page coachmarks: a dependency-free spotlight + bubble walkthrough that runs the first time you open a view, pointing out the key controls (Dashboard, Workflows, Errors, Code Lab, Knowledge, Secrets, Settings, Containers). Tolerates missing anchors, honors `prefers-reduced-motion`, and is keyboard and screen-reader friendly.
++- Settings > Help & Tips: toggle page tips, replay the current page's tour, reset all tips, and reopen the setup checklist or wizard. Persistence is per-browser (localStorage).
+ 
+ **Authentication, accounts, and 2FA**
+-- Built-in login with local accounts. First browser visit forces creation of an owner account (admin), then requires sign-in. Edge identity (Cloudflare Access) and the `AGD_ADMIN_TOKEN` bearer still satisfy the gate.
++- Built-in login with local accounts. First browser visit forces creation of an owner account (admin), then requires sign-in. The owner account is keyed by **email** (the login identity, also used for recovery); the setup screen spells out the password requirement. Edge identity (Cloudflare Access) can satisfy the gate only when `AGD_TRUST_EDGE_AUTH=true`, and the `AGD_ADMIN_TOKEN` bearer can satisfy the gate when configured.
++- Forgot-password flow: a "Forgot password?" link issues a single-use, time-limited reset link to the account email (no account-enumeration in the response). Completing a reset invalidates all other sessions. Delivery uses SMTP (`AGD_SMTP_*`); when SMTP is unconfigured the link is logged so self-hosted installs without a mail server can still recover access.
++- Auth bootstrap endpoints (`/setup`, `/login`, `/forgot`, `/reset`) are exempt from the CSRF gate, fixing a first-run failure where a stale `agd_session` cookie (left after a data-volume wipe, or shared across localhost ports) blocked account creation with "CSRF check failed."
+ - Optional TOTP two-factor (any authenticator app), with one-time recovery codes. QR rendered client-side from a vendored, dependency-free generator; the setup key is also shown for manual entry.
+ - Server-side sessions stored as a SHA-256 of the token (a DB leak cannot be replayed), `HttpOnly` + `SameSite=Strict` cookie, sliding expiry with an absolute cap, server-side revocation, and a session list in Settings > Account.
+ - Double-submit CSRF protection on cookie-authenticated mutations.
+ - Coarse role-based access control (`viewer < operator < admin`): admin/secrets require `admin`; the n8n and container control surfaces require `operator`; read surfaces require any signed-in user. Machine webhooks (errors, messages) stay open for n8n ingestion.
+-- Password hashing raised to PBKDF2-HMAC-SHA256 at 600k iterations with login-time rehash of legacy hashes; minimum password length raised to 10.
+-- New settings: `AGD_DISABLE_LOGIN`, `AGD_SESSION_TTL_DAYS`, `AGD_SESSION_ABSOLUTE_DAYS`, `AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, `AGD_PASSWORD_MIN_LENGTH`.
++- Password hashing raised to PBKDF2-HMAC-SHA256 at 600k iterations with login-time rehash of legacy hashes; minimum password length raised to 12.
++- New settings: `AGD_DISABLE_LOGIN`, `AGD_SESSION_TTL_DAYS`, `AGD_SESSION_ABSOLUTE_DAYS`, `AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, `AGD_PASSWORD_MIN_LENGTH`, `AGD_PASSWORD_REQUIRE_*`, `AGD_PASSWORD_RESET_TTL_MINUTES`, `AGD_TRUST_EDGE_AUTH`, `AGD_TRUST_FORWARDED_FOR`, `AGD_WEBHOOK_TOKEN`.
+ - `harden_file_permissions()` now also `chmod 600`s `users.json` and `dashboard.db`.
+ 
+ ## [0.1.0] - 2026-06-23
+@@ -125,4 +154,3 @@ Stripped to keep the open-source tree generic and free of operator-specific wiri
+   agent-run telemetry); neither had any reader or writer in the Community Edition.
+ - Operator-specific references in module metadata and code comments (private vector
+   collection names, internal workstation/host names).
+-
+diff --git a/README.md b/README.md
+index 9de39e8..0bbe1b7 100644
+--- a/README.md
++++ b/README.md
+@@ -111,11 +111,13 @@ Wire your n8n instance to report failures into the dashboard in real time.
+ 
+ ## Security Notes
+ 
+-**Authentication:** By default, AgeniusDesk has no login. For public deployments, set `AGD_REQUIRE_AUTH=true` in `.env` or front the app with an authentication proxy (nginx basic auth, Cloudflare Access, etc).
++**Authentication:** AgeniusDesk now enforces local account login by default. On first visit, create the owner account and keep `AGD_DISABLE_LOGIN=false` for any shared or public deployment. Edge-auth headers are trusted only when `AGD_TRUST_EDGE_AUTH=true`; enable that only when the app is reachable exclusively through your trusted proxy.
+ 
+ **Secrets:** The encrypted secret store uses Fernet (AES-128-CBC + HMAC-SHA256). The master key is stored at `data/.secret_key` (mode 600). Back up this file alongside your data volume. Losing it makes all encrypted values unrecoverable.
+ 
+-**Community Modules:** The Containers feature can load and execute Python code from `data/modules/` and `data/templates/`. Only install modules from trusted sources.
++**Machine endpoints:** New integrations should use `/api/v1/...` with an AgeniusDesk API key. If you expose the legacy `/api/errors/webhook` or `/api/messages/webhook` endpoints, set `AGD_WEBHOOK_TOKEN`.
++
++**Community Modules:** Community modules can load and execute Python code from `data/modules/`. Only install modules from trusted sources.
+ 
+ ## Deployment
+ 
+diff --git a/backend/auth_gate.py b/backend/auth_gate.py
+index 316f33a..c9cbac5 100644
+--- a/backend/auth_gate.py
++++ b/backend/auth_gate.py
+@@ -34,14 +34,15 @@ logger = logging.getLogger(__name__)
+ # Role ranking for coarse RBAC (viewer < operator < admin).
+ _ROLE_ORDER = {"viewer": 1, "operator": 2, "admin": 3}
+ 
+-# Headers a trusted edge proxy injects to assert an authenticated user. We trust
+-# these only because, in the supported deployment, the app is reachable solely
+-# through the Access-gated tunnel that sets them.
++# Headers a trusted edge proxy injects to assert an authenticated user. These
++# are ignored unless AGD_TRUST_EDGE_AUTH=true.
+ _EDGE_HEADERS = ("cf-access-authenticated-user-email", "x-forwarded-user")
+ 
+ 
+ def edge_identity(request: Request) -> str:
+     """Return the edge-authenticated user id from trusted headers, or ""."""
++    if not settings.agd_trust_edge_auth:
++        return ""
+     for header in _EDGE_HEADERS:
+         value = (request.headers.get(header) or "").strip()
+         if value:
+@@ -140,4 +141,4 @@ def edge_auth_present_anywhere() -> bool:
+     We can't know per-request at startup, so this is intentionally conservative —
+     it only reports whether the operator wired an admin token as a fallback.
+     """
+-    return bool(settings.agd_admin_token)
++    return bool(settings.agd_trust_edge_auth or settings.agd_admin_token)
+diff --git a/backend/config.py b/backend/config.py
+index cb9d219..1459ebb 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -69,13 +69,20 @@ class Settings(BaseSettings):
+     vault_admin_url: Optional[str] = "http://vault:14321"  # admin REST + web UI
+     vault_proxy_url: Optional[str] = "http://vault:14322"  # MITM transparent proxy for subprocess HTTP_PROXY
+ 
+-    # In-app auth gate (F2). Default OFF: the app trusts edge auth (Cloudflare
+-    # Access) as the boundary, so behavior is unchanged. Set AGD_REQUIRE_AUTH=true
+-    # on a naked-port self-host to require, on privileged routes, either a
+-    # recognized edge-auth header (Cf-Access-Authenticated-User-Email /
+-    # X-Forwarded-User) OR the AGD_ADMIN_TOKEN bearer. See backend/auth_gate.py.
++    # In-app auth gate. Local account login is enforced by default unless
++    # AGD_DISABLE_LOGIN=true. AGD_REQUIRE_AUTH is the token/edge-auth hard gate
++    # for automation/proxy-fronted installs. Edge identity headers are trusted
++    # only when AGD_TRUST_EDGE_AUTH=true; never enable that on a directly
++    # reachable port because clients can spoof those headers.
+     agd_require_auth: bool = False
+     agd_admin_token: str = ""
++    agd_trust_edge_auth: bool = False
++    agd_trust_forwarded_for: bool = False
++    # Optional token for the legacy machine-ingest endpoints:
++    # /api/errors/webhook and /api/messages/webhook. When unset, those endpoints
++    # stay open for backward compatibility with existing n8n handlers. Prefer
++    # the X-API-Key protected /api/v1/... webhooks for new integrations.
++    agd_webhook_token: str = ""
+ 
+     # Local account login (accounts + sessions + optional TOTP 2FA). On a fresh
+     # install the first browser visit forces creation of an owner account, then
+@@ -87,7 +94,26 @@ class Settings(BaseSettings):
+     agd_session_absolute_days: int = 30   # hard cap regardless of activity
+     agd_login_max_attempts: int = 8       # failures before lockout
+     agd_login_lockout_minutes: int = 15
+-    agd_password_min_length: int = 10     # raised from the legacy 6 in admin CRUD
++    # Password policy (composition). Enforced on setup, reset, and change.
++    agd_password_min_length: int = 12
++    agd_password_require_upper: bool = True
++    agd_password_require_lower: bool = True
++    agd_password_require_number: bool = True
++    agd_password_require_symbol: bool = True
++    agd_password_reset_ttl_minutes: int = 30  # password-reset link lifetime
++
++    # SMTP for transactional email (password reset). When host is unset, the
++    # reset link is written to the server log instead of being emailed, so a
++    # self-hosted operator without SMTP can still recover access.
++    agd_smtp_host: str = ""
++    agd_smtp_port: int = 587
++    agd_smtp_user: str = ""
++    agd_smtp_password: str = ""
++    agd_smtp_from: str = ""               # defaults to smtp_user when blank
++    agd_smtp_starttls: bool = True
++    # Public base URL used to build links in emails (e.g. https://app.example.com).
++    # Falls back to agd_public_host, then the request origin.
++    agd_public_url: str = ""
+ 
+     # Security hardening knobs (all default to prior behavior).
+     # CORS allowed origins: "*" (default, any origin) or a comma-separated list
+diff --git a/backend/main.py b/backend/main.py
+index 11f3ff2..862b5ca 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1,13 +1,16 @@
+ """AgeniusDesk — FastAPI application."""
+ 
++import hmac
+ import logging
++import os
++import re
+ import time
+ from contextlib import asynccontextmanager
+ from pathlib import Path
+ 
+ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+ from fastapi.middleware.cors import CORSMiddleware
+-from fastapi.responses import HTMLResponse
++from fastapi.responses import HTMLResponse, JSONResponse
+ from fastapi.staticfiles import StaticFiles
+ 
+ from backend.config import (
+@@ -42,8 +45,8 @@ async def lifespan(app: FastAPI):
+     except Exception as e:
+         logger.exception("migrate_inline_to_secrets failed: %s", e)
+     try:
+-        from backend.config_overlay import apply_overlay_to_settings, load_config_overlay
+         from backend.config import settings as _settings
++        from backend.config_overlay import apply_overlay_to_settings, load_config_overlay
+         apply_overlay_to_settings(_settings, load_config_overlay())
+     except Exception as e:
+         logger.exception("config_overlay apply failed: %s", e)
+@@ -109,6 +112,79 @@ app.add_middleware(
+ )
+ 
+ 
++_PUBLIC_API_EXACT = frozenset({
++    "/api/status",
++    "/api/health/docker-env",
++    "/api/auth/status",
++    "/api/auth/setup",
++    "/api/auth/login",
++    "/api/auth/login/totp",
++    "/api/auth/forgot",
++    "/api/auth/reset",
++})
++_PUBLIC_API_PREFIXES = ("/api/v1/",)
++_LEGACY_WEBHOOK_EXACT = frozenset({
++    "/api/errors/webhook",
++    "/api/messages/webhook",
++})
++_SELF_AUTHENTICATING_EXACT = frozenset({
++    "/api/music/triggers/fire",
++})
++_DASHBOARD_MCP_PREFIX = "/api/mcp-dashboard"
++
++
++def _bearer_token(request) -> str:
++    auth = request.headers.get("authorization") or ""
++    if auth[:7].lower() == "bearer ":
++        return auth[7:].strip()
++    return ""
++
++
++def _legacy_webhook_ok(request) -> bool:
++    token = settings.agd_webhook_token
++    if not token:
++        return True
++    supplied = request.headers.get("x-agd-webhook-token", "").strip() or _bearer_token(request)
++    return bool(supplied) and hmac.compare_digest(supplied, token)
++
++
++def _dashboard_mcp_token_ok(request) -> bool:
++    token = os.environ.get("DASHBOARD_MCP_TOKEN", "")
++    supplied = _bearer_token(request)
++    return bool(token and supplied) and hmac.compare_digest(supplied, token)
++
++
++@app.middleware("http")
++async def require_internal_api_auth(request, call_next):
++    """Require identity for internal API routes.
++
++    Individual routers still enforce role checks, but this gives the app one
++    easy-to-audit default: `/api/*` is private unless explicitly listed here or
++    protected by its own machine token/API-key scheme.
++    """
++    path = request.url.path
++    if not path.startswith("/api/"):
++        return await call_next(request)
++    if path in _PUBLIC_API_EXACT or any(path.startswith(p) for p in _PUBLIC_API_PREFIXES):
++        return await call_next(request)
++    if path in _LEGACY_WEBHOOK_EXACT:
++        if _legacy_webhook_ok(request):
++            return await call_next(request)
++        return JSONResponse({"detail": "Invalid or missing webhook token"}, status_code=401)
++    if path in _SELF_AUTHENTICATING_EXACT:
++        return await call_next(request)
++    if path.startswith(_DASHBOARD_MCP_PREFIX) and _dashboard_mcp_token_ok(request):
++        return await call_next(request)
++
++    from backend.auth_gate import current_user, login_enforced
++
++    if not login_enforced() and not settings.agd_require_auth:
++        return await call_next(request)
++    if await current_user(request) is not None:
++        return await call_next(request)
++    return JSONResponse({"detail": "Authentication required"}, status_code=401)
++
++
+ @app.middleware("http")
+ async def limit_request_size(request, call_next):
+     """Reject oversized bodies by Content-Length before reading them."""
+@@ -116,7 +192,6 @@ async def limit_request_size(request, call_next):
+     if cl is not None:
+         try:
+             if int(cl) > settings.agd_max_request_bytes:
+-                from fastapi.responses import JSONResponse
+                 return JSONResponse({"detail": "Request body too large"}, status_code=413)
+         except ValueError:
+             pass
+@@ -152,10 +227,22 @@ async def csrf_protect(request, call_next):
+     from backend.modules.auth.service import CSRF_COOKIE, CSRF_HEADER, SAFE_METHODS, SESSION_COOKIE
+ 
+     path = request.url.path
++    # Auth bootstrap endpoints establish (or recover) the session, so they cannot
++    # be double-submit-CSRF gated: there is no valid session token yet, and a
++    # stale/foreign agd_session cookie (e.g. left over after a data-volume wipe,
++    # or bleeding across ports on localhost) must not block first-run setup.
++    csrf_exempt = path in (
++        "/api/auth/setup",
++        "/api/auth/login",
++        "/api/auth/login/totp",
++        "/api/auth/forgot",
++        "/api/auth/reset",
++    )
+     if (
+         request.method not in SAFE_METHODS
+         and path.startswith("/api/")
+         and not path.startswith("/api/v1/")
++        and not csrf_exempt
+         and request.cookies.get(SESSION_COOKIE)
+     ):
+         auth = request.headers.get("authorization", "")
+@@ -288,8 +375,6 @@ except Exception as e:
+ 
+ # ── Static files (frontend) — must be LAST ───────────────────────────────────
+ 
+-import re
+-
+ BUILD_ID = str(int(time.time()))
+ _IMPORT_RE = re.compile(r"""(from|import)\s+(['"])(\.\.?/[^'"?]+\.js)(['"])""")
+ 
+@@ -315,10 +400,15 @@ async def index():
+ async def serve_js(full_path: str):
+     """Serve JS modules with versioned imports so Safari can't reuse stale modules."""
+     from fastapi.responses import Response
+-    js_path = FRONTEND_DIR / "js" / full_path
+-    if not js_path.is_file():
++    js_root = (FRONTEND_DIR / "js").resolve()
++    try:
++        js_path = (js_root / full_path).resolve()
++        js_path.relative_to(js_root)
++    except ValueError:
++        return Response(status_code=404)
++    if not js_path.is_file() or js_path.suffix.lower() != ".js":
+         return Response(status_code=404)
+-    content = _bust_imports(js_path.read_text())
++    content = _bust_imports(js_path.read_text(encoding="utf-8"))
+     return Response(
+         content=content,
+         media_type="application/javascript",
+diff --git a/backend/modules/auth/service.py b/backend/modules/auth/service.py
+index aa53e77..8110551 100644
+--- a/backend/modules/auth/service.py
++++ b/backend/modules/auth/service.py
+@@ -19,8 +19,8 @@ from fastapi import Request, Response
+ 
+ from backend import totp
+ from backend.config import (
+-    USERS_FILE,
+     DATA_DIR,
++    USERS_FILE,
+     decrypt_value,
+     encrypt_value,
+     settings,
+@@ -86,6 +86,17 @@ def find_user(username: str) -> dict | None:
+     return None
+ 
+ 
++def find_user_by_email(email: str) -> dict | None:
++    """Case-insensitive email lookup (used by password recovery)."""
++    target = (email or "").strip().lower()
++    if not target:
++        return None
++    for u in load_users():
++        if (u.get("email") or "").strip().lower() == target:
++            return u
++    return None
++
++
+ def accounts_exist() -> bool:
+     return bool(load_users())
+ 
+@@ -95,6 +106,7 @@ def public_user(user: dict) -> dict:
+     totp_block = user.get("totp") or {}
+     return {
+         "username": user["username"],
++        "email": user.get("email", ""),
+         "display_name": user.get("display_name", ""),
+         "role": user.get("role", "viewer"),
+         "totp": {"enabled": bool(totp_block.get("enabled"))},
+@@ -136,11 +148,12 @@ def set_password(username: str, new_password: str) -> bool:
+     return False
+ 
+ 
+-def create_owner(username: str, password: str, display_name: str = "") -> dict:
++def create_owner(username: str, password: str, display_name: str = "", email: str = "") -> dict:
+     users = load_users()
+     now = _iso(_now())
+     user = {
+         "username": username,
++        "email": (email or "").strip(),
+         "display_name": display_name or username,
+         "role": "admin",
+         "created_at": now,
+@@ -162,7 +175,7 @@ def _hash_token(raw: str) -> str:
+ 
+ def _client_ip(request: Request) -> str:
+     fwd = request.headers.get("x-forwarded-for", "")
+-    if fwd:
++    if settings.agd_trust_forwarded_for and fwd:
+         return fwd.split(",")[0].strip()
+     return request.client.host if request.client else ""
+ 
+@@ -262,6 +275,43 @@ async def list_sessions(username: str, current_raw: str | None) -> list[dict]:
+     ]
+ 
+ 
++# ── Password-reset tokens (DB-backed, single-use, short-lived) ───────────────
++
++
++async def create_reset_token(username: str) -> str:
++    """Issue a single active reset token for a user (supersedes any prior one)."""
++    raw = secrets.token_urlsafe(32)
++    now = _now()
++    expires = now + timedelta(minutes=settings.agd_password_reset_ttl_minutes)
++    db = await get_db()
++    await db.execute("DELETE FROM auth_resets WHERE username = ?", (username,))
++    await db.execute(
++        "INSERT INTO auth_resets (token_hash, username, created_at, expires_at) VALUES (?, ?, ?, ?)",
++        (_hash_token(raw), username, _iso(now), _iso(expires)),
++    )
++    await db.commit()
++    return raw
++
++
++async def consume_reset_token(raw: str | None) -> str | None:
++    """Validate and burn a reset token. Returns the username, or None if invalid."""
++    if not raw:
++        return None
++    db = await get_db()
++    cur = await db.execute(
++        "SELECT username, expires_at FROM auth_resets WHERE token_hash = ?", (_hash_token(raw),)
++    )
++    row = await cur.fetchone()
++    if not row:
++        return None
++    # Single-use: delete on first touch regardless of expiry outcome.
++    await db.execute("DELETE FROM auth_resets WHERE token_hash = ?", (_hash_token(raw),))
++    await db.commit()
++    if _now() >= _parse(row["expires_at"]):
++        return None
++    return row["username"]
++
++
+ async def revoke_session_by_id(username: str, id_prefix: str) -> bool:
+     db = await get_db()
+     cur = await db.execute(
+diff --git a/backend/modules/dashboard_mcp/__init__.py b/backend/modules/dashboard_mcp/__init__.py
+index daaec79..366131e 100644
+--- a/backend/modules/dashboard_mcp/__init__.py
++++ b/backend/modules/dashboard_mcp/__init__.py
+@@ -1,17 +1,17 @@
+-"""Dashboard-as-MCP — expose AgeniusDesk's own API surface to Claude Code.
++"""Dashboard-as-MCP: expose AgeniusDesk's own API surface to Claude Code.
+ 
+ Mounts a FastMCP streamable-HTTP server at /api/mcp-dashboard that wraps
+-read/observe operations on workflows, executions, errors, instances,
+-secrets metadata, and messages. Gives `claude` running in the terminal
+-sidecar first-class access to the same data the dashboard UI shows.
++read/observe operations on workflows, executions, errors, instances, secrets
++metadata, and messages. It gives `claude` running in the terminal sidecar
++first-class access to the same data the dashboard UI shows.
+ 
+-Auth: bearer token in the `Authorization: Bearer ...` header. Token is
+-read from the DASHBOARD_MCP_TOKEN env var (shared via .env with the
+-terminal sidecar). Missing token = endpoint is open — intended for
+-local dev only. Set the env var before exposing publicly.
++Auth: browser sessions can reach it through the dashboard's internal API gate.
++External clients should send `Authorization: Bearer ...` with the token read
++from the DASHBOARD_MCP_TOKEN env var. Set the env var before exposing this
++endpoint to non-browser clients.
+ 
+-The server registers itself as a known MCP in AgeniusDesk's own config
+-on first run so the terminal sync picks it up automatically.
++The server registers itself as a known MCP in AgeniusDesk's own config on first
++run so the terminal sync picks it up automatically.
+ """
+ 
+ from .server import router  # noqa: F401
+diff --git a/backend/modules/themes/router.py b/backend/modules/themes/router.py
+index a49db65..d091631 100644
+--- a/backend/modules/themes/router.py
++++ b/backend/modules/themes/router.py
+@@ -1,6 +1,7 @@
+ """Theme API routes — list, get, save, and set active theme."""
+ 
+ import json
++import re
+ from pathlib import Path
+ 
+ from fastapi import APIRouter, HTTPException
+@@ -13,6 +14,7 @@ router = APIRouter(prefix="/api/themes", tags=["themes"])
+ # Built-in themes ship with the frontend; custom themes go in data/themes/
+ BUILTIN_THEMES_DIR = Path(__file__).parent.parent.parent.parent / "frontend" / "themes"
+ CUSTOM_THEMES_DIR = Path("data/themes")
++THEME_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+ 
+ 
+ class ThemeData(BaseModel):
+@@ -31,6 +33,33 @@ def _load_theme_file(path: Path) -> dict | None:
+         return None
+ 
+ 
++def _theme_id_from_name(name: str) -> str:
++    theme_id = re.sub(r"[^A-Za-z0-9_-]+", "-", (name or "").strip().lower()).strip("-")
++    if not theme_id:
++        raise HTTPException(status_code=400, detail="Theme name must contain letters or numbers")
++    return theme_id[:64]
++
++
++def _safe_theme_path(directory: Path, theme_id: str) -> Path:
++    if not THEME_ID_RE.fullmatch(theme_id or ""):
++        raise HTTPException(status_code=400, detail="Invalid theme id")
++    base = directory.resolve()
++    target = (base / f"{theme_id}.json").resolve()
++    try:
++        target.relative_to(base)
++    except ValueError:
++        raise HTTPException(status_code=400, detail="Invalid theme path")
++    return target
++
++
++def _find_theme_path(theme_id: str) -> Path | None:
++    for d in (BUILTIN_THEMES_DIR, CUSTOM_THEMES_DIR):
++        path = _safe_theme_path(d, theme_id)
++        if path.exists():
++            return path
++    return None
++
++
+ @router.get("")
+ async def list_themes():
+     """List all available themes (built-in + custom)."""
+@@ -56,12 +85,11 @@ async def list_themes():
+ @router.get("/{theme_id}")
+ async def get_theme(theme_id: str):
+     """Get a specific theme by ID."""
+-    for d in (BUILTIN_THEMES_DIR, CUSTOM_THEMES_DIR):
+-        path = d / f"{theme_id}.json"
+-        if path.exists():
+-            theme = _load_theme_file(path)
+-            if theme:
+-                return theme
++    path = _find_theme_path(theme_id)
++    if path:
++        theme = _load_theme_file(path)
++        if theme:
++            return theme
+     raise HTTPException(status_code=404, detail="Theme not found")
+ 
+ 
+@@ -69,8 +97,8 @@ async def get_theme(theme_id: str):
+ async def save_theme(theme: ThemeData):
+     """Save a custom theme."""
+     CUSTOM_THEMES_DIR.mkdir(parents=True, exist_ok=True)
+-    theme_id = theme.name.lower().replace(" ", "-")
+-    path = CUSTOM_THEMES_DIR / f"{theme_id}.json"
++    theme_id = _theme_id_from_name(theme.name)
++    path = _safe_theme_path(CUSTOM_THEMES_DIR, theme_id)
+     path.write_text(json.dumps(theme.model_dump(), indent=2))
+     return {"id": theme_id, "name": theme.name}
+ 
+@@ -78,6 +106,8 @@ async def save_theme(theme: ThemeData):
+ @router.post("/active/{theme_id}")
+ async def set_active_theme(theme_id: str):
+     """Set the active theme."""
++    if _find_theme_path(theme_id) is None:
++        raise HTTPException(status_code=404, detail="Theme not found")
+     config = load_config()
+     config["theme"] = theme_id
+     save_config(config)
+diff --git a/docs/CONFIG.md b/docs/CONFIG.md
+index d0ebbc1..debfc45 100644
+--- a/docs/CONFIG.md
++++ b/docs/CONFIG.md
+@@ -8,7 +8,7 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
+ |----------|---------|-------------|
+ | `PORT` | `3000` | Port the dashboard listens on |
+ | `SECRET_KEY` | Auto-generated | Master key for encrypting secrets. If not set, generated and persisted to `data/.secret_key` (mode 600) on first run. Losing this file makes all encrypted values unrecoverable. Back it up. |
+-| `AGD_REQUIRE_AUTH` | `false` | Enable built-in dashboard authentication (local user accounts). Set to `true` for public deployments, or front with an auth proxy (nginx, Cloudflare Access). |
++| `AGD_REQUIRE_AUTH` | `false` | Extra hard gate for token/edge-auth deployments. Local account login is enforced by default unless `AGD_DISABLE_LOGIN=true`; set this to keep auth required even when browser login is disabled. |
+ | `AGD_TLS_VERIFY` | `true` | Verify TLS certificates on outbound HTTP calls to n8n instances. Set to `false` only for self-signed certificates on private LANs. |
+ 
+ ## Database
+@@ -57,8 +57,12 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
+ 
+ | Variable | Default | Description |
+ |----------|---------|-------------|
+-| `AGD_REQUIRE_AUTH` | `false` | Enforce in-app auth on privileged routes and the `/ws` WebSocket. Leave `false` when an auth proxy fronts the app; set `true` for a bare public bind. Requires `AGD_ADMIN_TOKEN` and/or a trusted edge-auth header. |
+-| `AGD_ADMIN_TOKEN` | (none) | Bearer token accepted on privileged routes when `AGD_REQUIRE_AUTH=true`. Compared in constant time. |
++| `AGD_REQUIRE_AUTH` | `false` | Keep internal API auth required even if `AGD_DISABLE_LOGIN=true`; useful for token/edge-auth automation deployments. |
++| `AGD_ADMIN_TOKEN` | (none) | Bearer token accepted on internal API routes when set. Compared in constant time. |
++| `AGD_TRUST_EDGE_AUTH` | `false` | Trust Cloudflare Access / reverse-proxy identity headers (`Cf-Access-Authenticated-User-Email`, `X-Forwarded-User`). Enable only when the dashboard is reachable exclusively through that trusted proxy. |
++| `AGD_TRUST_FORWARDED_FOR` | `false` | Use `X-Forwarded-For` for login throttling. Enable only behind a trusted proxy. |
++| `AGD_WEBHOOK_TOKEN` | (none) | Optional bearer or `X-AGD-Webhook-Token` token for legacy `/api/errors/webhook` and `/api/messages/webhook` ingestion. When unset, those legacy endpoints remain open for backward compatibility; new integrations should use the X-API-Key protected `/api/v1/...` webhooks. |
++| `DASHBOARD_MCP_TOKEN` | (none) | Optional bearer token for external clients calling `/api/mcp-dashboard`. Without it, browser sessions can still use the endpoint; unauthenticated external access is blocked by the internal API gate. |
+ | `AGD_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins. Restrict to your dashboard origin(s) for a browser-facing deployment. |
+ | `AGD_MAX_REQUEST_BYTES` | `26214400` | Max request body size in bytes (25 MiB). Larger requests get `413`. |
+ | `AGD_CSP` | (none) | Optional `Content-Security-Policy` header. Opt-in: the editors load from CDNs and the music tab embeds arbitrary origins, so a strict policy can break features. A recommended starting policy is in `.env.example`. |
+@@ -67,18 +71,41 @@ Baseline response headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referre
+ 
+ ## Local Account Login
+ 
+-AgeniusDesk ships with built-in account login. On first run the browser forces you to create an owner account (username + password), then requires sign-in on every visit. The owner account is an `admin`. Accounts may optionally enable TOTP two-factor (any authenticator app); recovery codes are issued once at enrollment.
++AgeniusDesk ships with built-in account login. On first run the browser forces you to create an owner account (email + password), then requires sign-in on every visit. The email is the login identity and is also used for password recovery. The owner account is an `admin`. Accounts may optionally enable TOTP two-factor (any authenticator app); recovery codes are issued once at enrollment.
+ 
+-An edge identity (Cloudflare Access / trusted reverse proxy header) still satisfies the gate without a local account, so existing proxy-fronted deployments are unchanged. Automation can authenticate with `AGD_ADMIN_TOKEN` as a bearer token.
++An edge identity (Cloudflare Access / trusted reverse proxy header) can satisfy the gate without a local account only when `AGD_TRUST_EDGE_AUTH=true`. Do not enable that on a directly reachable port; clients can spoof those headers. Automation can authenticate with `AGD_ADMIN_TOKEN` as a bearer token.
++
++**Forgot password:** the sign-in screen has a "Forgot password?" link. It issues a single-use, time-limited reset link to the account email. Delivery requires SMTP (below); if SMTP is not configured the link is written to the container log so a self-hosted operator can still recover access. Completing a reset signs out all other sessions.
+ 
+ | Variable | Default | Description |
+ |----------|---------|-------------|
+ | `AGD_DISABLE_LOGIN` | `false` | Turn browser login OFF entirely (no account, no session). Dev/localhost only; logged loudly at startup. Anyone who can reach the port gets full access. |
+ | `AGD_SESSION_TTL_DAYS` | `14` | Sliding session lifetime; extended on activity. |
+ | `AGD_SESSION_ABSOLUTE_DAYS` | `30` | Hard cap on a session regardless of activity. |
+-| `AGD_LOGIN_MAX_ATTEMPTS` | `8` | Failed logins (per username and per IP) before a temporary lockout. |
++| `AGD_LOGIN_MAX_ATTEMPTS` | `8` | Failed logins (per email and per IP) before a temporary lockout. |
+ | `AGD_LOGIN_LOCKOUT_MINUTES` | `15` | Lockout duration after too many failures. |
+-| `AGD_PASSWORD_MIN_LENGTH` | `10` | Minimum password length for new accounts and password changes. |
++| `AGD_PASSWORD_MIN_LENGTH` | `12` | Minimum password length for new accounts, resets, and changes. |
++| `AGD_PASSWORD_REQUIRE_UPPER` | `true` | Require an uppercase letter. |
++| `AGD_PASSWORD_REQUIRE_LOWER` | `true` | Require a lowercase letter. |
++| `AGD_PASSWORD_REQUIRE_NUMBER` | `true` | Require a digit. |
++| `AGD_PASSWORD_REQUIRE_SYMBOL` | `true` | Require a non-alphanumeric symbol. |
++| `AGD_PASSWORD_RESET_TTL_MINUTES` | `30` | Lifetime of a password-reset link. |
++
++The setup, reset, and change-password screens show a live checklist of these rules; the same policy is enforced server-side.
++
++### Email (SMTP) for password reset
++
++Configure SMTP to deliver password-reset links. When `AGD_SMTP_HOST` is blank, AgeniusDesk logs the reset link instead of emailing it (a deliberate fallback for self-hosted installs without a mail server).
++
++| Variable | Default | Description |
++|----------|---------|-------------|
++| `AGD_SMTP_HOST` | (none) | SMTP server hostname. Unset = log reset links instead of sending. |
++| `AGD_SMTP_PORT` | `587` | SMTP port. |
++| `AGD_SMTP_USER` | (none) | SMTP username (or API-key user). |
++| `AGD_SMTP_PASSWORD` | (none) | SMTP password. |
++| `AGD_SMTP_FROM` | `AGD_SMTP_USER` | From address on outgoing mail. |
++| `AGD_SMTP_STARTTLS` | `true` | Issue STARTTLS before authenticating. |
++| `AGD_PUBLIC_URL` | (request origin) | Public base URL for links in emails, e.g. `https://app.example.com`. Set this behind a proxy. |
+ 
+ Passwords are hashed with PBKDF2-HMAC-SHA256 (600k iterations, per-user random salt; legacy hashes are upgraded transparently on next login). Sessions are stored server-side as a SHA-256 of the token, so a database leak cannot be replayed. The session cookie is `HttpOnly`, `SameSite=Strict`, and `Secure` over HTTPS; mutations carry a double-submit CSRF token. Roles are `viewer < operator < admin`; v1 enforcement is coarse per route group (read surfaces require any signed-in user, the n8n and container control surfaces require `operator`, and admin/secrets require `admin`).
+ 
+diff --git a/docs/DEPLOY.md b/docs/DEPLOY.md
+index 48d59de..f15979c 100644
+--- a/docs/DEPLOY.md
++++ b/docs/DEPLOY.md
+@@ -51,7 +51,8 @@ See [docs/CONFIG.md](CONFIG.md) for all environment variables.
+ ```bash
+ # .env file
+ PORT=3000
+-AGD_REQUIRE_AUTH=true              # Enable login (recommended for public deployments)
++AGD_DISABLE_LOGIN=false            # Default: browser login enabled
++AGD_REQUIRE_AUTH=false             # Leave false unless you rely on token/edge auth
+ AGD_TLS_VERIFY=true                # Verify HTTPS certificates (set false only for self-signed certs on private LANs)
+ 
+ # AI Assistant (pick one)
+@@ -99,21 +100,27 @@ ageniusdesk.example.com {
+ 
+ ## Authentication
+ 
+-By default, AgeniusDesk has no built-in login. For public deployments:
++By default, AgeniusDesk enforces local account login. On first visit, create the owner account and keep `AGD_DISABLE_LOGIN=false` for any deployment reachable by other people.
+ 
+ **Option 1: Built-in login** (simple)
+ 
+ ```bash
+-AGD_REQUIRE_AUTH=true
++AGD_DISABLE_LOGIN=false
+ ```
+ 
+-This enables local user accounts. Users log in with a username and password (hashed with PBKDF2).
++Users log in with an email and password (hashed with PBKDF2). Optional TOTP two-factor is available in Settings > Account.
+ 
+ **Option 2: Reverse proxy auth** (advanced)
+ 
+-Let your reverse proxy handle authentication (nginx basic auth, Cloudflare Access, KeyCloak, etc.) and ensure it sets trusted headers. AGD respects `X-Remote-User` from a proxy.
++Let your reverse proxy handle authentication (Cloudflare Access, Authelia, Keycloak, etc.), ensure the app is not reachable except through that proxy, then opt into trusted proxy identity headers:
+ 
+-For development (private LAN), leave `AGD_REQUIRE_AUTH=false`.
++```bash
++AGD_TRUST_EDGE_AUTH=true
++```
++
++For external machine integrations, prefer `/api/v1/...` endpoints with an AgeniusDesk API key. If you use the legacy `/api/errors/webhook` or `/api/messages/webhook` ingest endpoints on a public URL, set `AGD_WEBHOOK_TOKEN` and send it as `Authorization: Bearer ...` or `X-AGD-Webhook-Token`.
++
++For development on localhost only, you may set `AGD_DISABLE_LOGIN=true`, but anyone who can reach the port gets full access.
+ 
+ ## Backup and Recovery
+ 
+@@ -233,4 +240,3 @@ Migrations run automatically on startup.
+ - Check [docs/CONFIG.md](CONFIG.md) for configuration options
+ - Open a GitHub issue at https://github.com/Mfrostbutter/ageniusdesk-ce/issues
+ - Review logs: `docker compose logs dashboard` or `tail -f debug.log`
+-

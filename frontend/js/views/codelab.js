@@ -38,7 +38,7 @@ export async function render(container) {
                 <option value="python">Python</option>
               </select>
             </span>
-            <button class="btn btn-sm" onclick="window.__openPromptBuilder()" title="Build a structured agent system prompt" style="font-size:11px">Prompt Builder</button>
+            <button id="codelab-prompt-builder" class="btn btn-sm" onclick="window.__openPromptBuilder()" title="Build a structured agent system prompt" style="font-size:11px">Prompt Builder</button>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
             <button class="btn btn-sm" onclick="window.__codeFormat()" title="Format code">Format</button>

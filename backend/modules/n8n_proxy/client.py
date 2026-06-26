@@ -15,6 +15,38 @@ TIMEOUT = 30.0
 MAX_RETRIES = 3
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _in_docker() -> bool:
+    return os.path.exists("/.dockerenv")
+
+
+def dockerize_url(url: str) -> str:
+    """Rewrite a localhost n8n URL to host.docker.internal when this dashboard
+    runs inside Docker.
+
+    From inside a container `localhost` is the container itself, not the host
+    where n8n is published, so a user who points the dashboard at
+    `http://localhost:5678` gets a connection-refused. Docker Desktop (and Linux
+    via the compose `extra_hosts: host.docker.internal:host-gateway`) routes that
+    name back to the host, so this makes localhost "just work" for the backend
+    while the browser keeps using the original URL (stored as login_url).
+    Returns the URL unchanged when not containerized or not a localhost URL.
+    """
+    if not url or not _in_docker():
+        return url
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(url)
+        if (parts.hostname or "").lower() in _LOCAL_HOSTS:
+            netloc = "host.docker.internal" + (f":{parts.port}" if parts.port else "")
+            return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    except Exception:
+        pass
+    return url
+
+
 def _verify() -> bool:
     """TLS cert verification flag. Default on; flip off only for self-signed
     LAN n8n via AGD_TLS_VERIFY=false. Pro-tier testers on public HTTPS n8n must

@@ -1,13 +1,16 @@
 """AgeniusDesk — FastAPI application."""
 
+import hmac
 import logging
+import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import (
@@ -42,8 +45,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("migrate_inline_to_secrets failed: %s", e)
     try:
-        from backend.config_overlay import apply_overlay_to_settings, load_config_overlay
         from backend.config import settings as _settings
+        from backend.config_overlay import apply_overlay_to_settings, load_config_overlay
         apply_overlay_to_settings(_settings, load_config_overlay())
     except Exception as e:
         logger.exception("config_overlay apply failed: %s", e)
@@ -109,6 +112,79 @@ app.add_middleware(
 )
 
 
+_PUBLIC_API_EXACT = frozenset({
+    "/api/status",
+    "/api/health/docker-env",
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/login",
+    "/api/auth/login/totp",
+    "/api/auth/forgot",
+    "/api/auth/reset",
+})
+_PUBLIC_API_PREFIXES = ("/api/v1/",)
+_LEGACY_WEBHOOK_EXACT = frozenset({
+    "/api/errors/webhook",
+    "/api/messages/webhook",
+})
+_SELF_AUTHENTICATING_EXACT = frozenset({
+    "/api/music/triggers/fire",
+})
+_DASHBOARD_MCP_PREFIX = "/api/mcp-dashboard"
+
+
+def _bearer_token(request) -> str:
+    auth = request.headers.get("authorization") or ""
+    if auth[:7].lower() == "bearer ":
+        return auth[7:].strip()
+    return ""
+
+
+def _legacy_webhook_ok(request) -> bool:
+    token = settings.agd_webhook_token
+    if not token:
+        return True
+    supplied = request.headers.get("x-agd-webhook-token", "").strip() or _bearer_token(request)
+    return bool(supplied) and hmac.compare_digest(supplied, token)
+
+
+def _dashboard_mcp_token_ok(request) -> bool:
+    token = os.environ.get("DASHBOARD_MCP_TOKEN", "")
+    supplied = _bearer_token(request)
+    return bool(token and supplied) and hmac.compare_digest(supplied, token)
+
+
+@app.middleware("http")
+async def require_internal_api_auth(request, call_next):
+    """Require identity for internal API routes.
+
+    Individual routers still enforce role checks, but this gives the app one
+    easy-to-audit default: `/api/*` is private unless explicitly listed here or
+    protected by its own machine token/API-key scheme.
+    """
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    if path in _PUBLIC_API_EXACT or any(path.startswith(p) for p in _PUBLIC_API_PREFIXES):
+        return await call_next(request)
+    if path in _LEGACY_WEBHOOK_EXACT:
+        if _legacy_webhook_ok(request):
+            return await call_next(request)
+        return JSONResponse({"detail": "Invalid or missing webhook token"}, status_code=401)
+    if path in _SELF_AUTHENTICATING_EXACT:
+        return await call_next(request)
+    if path.startswith(_DASHBOARD_MCP_PREFIX) and _dashboard_mcp_token_ok(request):
+        return await call_next(request)
+
+    from backend.auth_gate import current_user, login_enforced
+
+    if not login_enforced() and not settings.agd_require_auth:
+        return await call_next(request)
+    if await current_user(request) is not None:
+        return await call_next(request)
+    return JSONResponse({"detail": "Authentication required"}, status_code=401)
+
+
 @app.middleware("http")
 async def limit_request_size(request, call_next):
     """Reject oversized bodies by Content-Length before reading them."""
@@ -116,7 +192,6 @@ async def limit_request_size(request, call_next):
     if cl is not None:
         try:
             if int(cl) > settings.agd_max_request_bytes:
-                from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": "Request body too large"}, status_code=413)
         except ValueError:
             pass
@@ -152,10 +227,22 @@ async def csrf_protect(request, call_next):
     from backend.modules.auth.service import CSRF_COOKIE, CSRF_HEADER, SAFE_METHODS, SESSION_COOKIE
 
     path = request.url.path
+    # Auth bootstrap endpoints establish (or recover) the session, so they cannot
+    # be double-submit-CSRF gated: there is no valid session token yet, and a
+    # stale/foreign agd_session cookie (e.g. left over after a data-volume wipe,
+    # or bleeding across ports on localhost) must not block first-run setup.
+    csrf_exempt = path in (
+        "/api/auth/setup",
+        "/api/auth/login",
+        "/api/auth/login/totp",
+        "/api/auth/forgot",
+        "/api/auth/reset",
+    )
     if (
         request.method not in SAFE_METHODS
         and path.startswith("/api/")
         and not path.startswith("/api/v1/")
+        and not csrf_exempt
         and request.cookies.get(SESSION_COOKIE)
     ):
         auth = request.headers.get("authorization", "")
@@ -288,8 +375,6 @@ except Exception as e:
 
 # ── Static files (frontend) — must be LAST ───────────────────────────────────
 
-import re
-
 BUILD_ID = str(int(time.time()))
 _IMPORT_RE = re.compile(r"""(from|import)\s+(['"])(\.\.?/[^'"?]+\.js)(['"])""")
 
@@ -315,10 +400,15 @@ async def index():
 async def serve_js(full_path: str):
     """Serve JS modules with versioned imports so Safari can't reuse stale modules."""
     from fastapi.responses import Response
-    js_path = FRONTEND_DIR / "js" / full_path
-    if not js_path.is_file():
+    js_root = (FRONTEND_DIR / "js").resolve()
+    try:
+        js_path = (js_root / full_path).resolve()
+        js_path.relative_to(js_root)
+    except ValueError:
         return Response(status_code=404)
-    content = _bust_imports(js_path.read_text())
+    if not js_path.is_file() or js_path.suffix.lower() != ".js":
+        return Response(status_code=404)
+    content = _bust_imports(js_path.read_text(encoding="utf-8"))
     return Response(
         content=content,
         media_type="application/javascript",

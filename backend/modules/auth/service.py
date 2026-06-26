@@ -19,8 +19,8 @@ from fastapi import Request, Response
 
 from backend import totp
 from backend.config import (
-    USERS_FILE,
     DATA_DIR,
+    USERS_FILE,
     decrypt_value,
     encrypt_value,
     settings,
@@ -86,6 +86,17 @@ def find_user(username: str) -> dict | None:
     return None
 
 
+def find_user_by_email(email: str) -> dict | None:
+    """Case-insensitive email lookup (used by password recovery)."""
+    target = (email or "").strip().lower()
+    if not target:
+        return None
+    for u in load_users():
+        if (u.get("email") or "").strip().lower() == target:
+            return u
+    return None
+
+
 def accounts_exist() -> bool:
     return bool(load_users())
 
@@ -95,6 +106,7 @@ def public_user(user: dict) -> dict:
     totp_block = user.get("totp") or {}
     return {
         "username": user["username"],
+        "email": user.get("email", ""),
         "display_name": user.get("display_name", ""),
         "role": user.get("role", "viewer"),
         "totp": {"enabled": bool(totp_block.get("enabled"))},
@@ -136,11 +148,12 @@ def set_password(username: str, new_password: str) -> bool:
     return False
 
 
-def create_owner(username: str, password: str, display_name: str = "") -> dict:
+def create_owner(username: str, password: str, display_name: str = "", email: str = "") -> dict:
     users = load_users()
     now = _iso(_now())
     user = {
         "username": username,
+        "email": (email or "").strip(),
         "display_name": display_name or username,
         "role": "admin",
         "created_at": now,
@@ -162,7 +175,7 @@ def _hash_token(raw: str) -> str:
 
 def _client_ip(request: Request) -> str:
     fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
+    if settings.agd_trust_forwarded_for and fwd:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else ""
 
@@ -260,6 +273,43 @@ async def list_sessions(username: str, current_raw: str | None) -> list[dict]:
         }
         for r in rows
     ]
+
+
+# ── Password-reset tokens (DB-backed, single-use, short-lived) ───────────────
+
+
+async def create_reset_token(username: str) -> str:
+    """Issue a single active reset token for a user (supersedes any prior one)."""
+    raw = secrets.token_urlsafe(32)
+    now = _now()
+    expires = now + timedelta(minutes=settings.agd_password_reset_ttl_minutes)
+    db = await get_db()
+    await db.execute("DELETE FROM auth_resets WHERE username = ?", (username,))
+    await db.execute(
+        "INSERT INTO auth_resets (token_hash, username, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (_hash_token(raw), username, _iso(now), _iso(expires)),
+    )
+    await db.commit()
+    return raw
+
+
+async def consume_reset_token(raw: str | None) -> str | None:
+    """Validate and burn a reset token. Returns the username, or None if invalid."""
+    if not raw:
+        return None
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT username, expires_at FROM auth_resets WHERE token_hash = ?", (_hash_token(raw),)
+    )
+    row = await cur.fetchone()
+    if not row:
+        return None
+    # Single-use: delete on first touch regardless of expiry outcome.
+    await db.execute("DELETE FROM auth_resets WHERE token_hash = ?", (_hash_token(raw),))
+    await db.commit()
+    if _now() >= _parse(row["expires_at"]):
+        return None
+    return row["username"]
 
 
 async def revoke_session_by_id(username: str, id_prefix: str) -> bool:

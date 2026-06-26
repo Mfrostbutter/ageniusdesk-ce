@@ -111,11 +111,13 @@ Wire your n8n instance to report failures into the dashboard in real time.
 
 ## Security Notes
 
-**Authentication:** By default, AgeniusDesk has no login. For public deployments, set `AGD_REQUIRE_AUTH=true` in `.env` or front the app with an authentication proxy (nginx basic auth, Cloudflare Access, etc).
+**Authentication:** AgeniusDesk now enforces local account login by default. On first visit, create the owner account and keep `AGD_DISABLE_LOGIN=false` for any shared or public deployment. Edge-auth headers are trusted only when `AGD_TRUST_EDGE_AUTH=true`; enable that only when the app is reachable exclusively through your trusted proxy.
 
 **Secrets:** The encrypted secret store uses Fernet (AES-128-CBC + HMAC-SHA256). The master key is stored at `data/.secret_key` (mode 600). Back up this file alongside your data volume. Losing it makes all encrypted values unrecoverable.
 
-**Community Modules:** The Containers feature can load and execute Python code from `data/modules/` and `data/templates/`. Only install modules from trusted sources.
+**Machine endpoints:** New integrations should use `/api/v1/...` with an AgeniusDesk API key. If you expose the legacy `/api/errors/webhook` or `/api/messages/webhook` endpoints, set `AGD_WEBHOOK_TOKEN`.
+
+**Community Modules:** Community modules can load and execute Python code from `data/modules/`. Only install modules from trusted sources.
 
 ## Deployment
 

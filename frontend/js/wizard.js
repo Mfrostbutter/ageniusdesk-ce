@@ -16,6 +16,8 @@ import { get, post } from './api.js';
 import * as modal from './components/modal.js';
 import * as toast from './components/toast.js';
 import { secretField, invalidateRefsCache } from './components/secretfield.js';
+import * as connectN8nGuide from './components/connect-n8n-guide.js';
+import * as errorHandlerPrompt from './components/error-handler-prompt.js';
 
 const STEPS = [
   { id: 'welcome',  label: 'Welcome'       },
@@ -23,15 +25,17 @@ const STEPS = [
   { id: 'secrets',  label: 'Secrets'       },
   { id: 'n8n',      label: 'Connect n8n'   },
   { id: 'ai',       label: 'AI Assistant'  },
-  { id: 'mirror',   label: 'Sync to n8n'   },
   { id: 'done',     label: 'Done'          },
 ];
 
-// Step ids that only apply to the "have-n8n" / "walk-through" / "cloud" paths.
-// The "stand-up-stack" path skips these because the stack deploy stands up
-// n8n + any other selected services in one shot, with no manual API-key
-// shuffling in the middle.
-const STACK_PATH_SKIPS = new Set(['secrets', 'n8n', 'ai', 'mirror']);
+// The "stand-up-stack" path skips the in-wizard "Connect n8n" step: a
+// freshly-deployed n8n has no owner account or API key yet, so it can't be
+// connected mid-wizard. Instead, after the wizard the dashboard pops a guided
+// "connect your n8n" flow (see components/connect-n8n-guide.js) that walks
+// through n8n's own setup and registers the instance. Secrets and AI Assistant
+// DO still apply, so the stack path continues through those:
+//   Welcome -> Stand Up Stack -> Secrets -> AI Assistant -> Done.
+const STACK_PATH_SKIPS = new Set(['n8n']);
 
 // And the stack step itself only applies to the stack path.
 function _stepAppliesToPath(stepId, path) {
@@ -133,7 +137,6 @@ function wireFooter() {
     if (id === 'ai') state.data.ai = null;
     if (id === 'secrets') state.data.secrets = [];
     if (id === 'n8n') state.data.n8n = null;
-    if (id === 'mirror') state.data.mirror = null;
     if (id === 'stack') {
       // Skipping stand-up-stack means: deploy nothing, fall through to the
       // legacy n8n/AI/mirror path. Flip the user's path so subsequent steps
@@ -190,17 +193,27 @@ async function advance() {
     state.step = _nextApplicableStep(state.step);
     return render();
   }
-  if (id === 'mirror') {
-    // The Mirror button on this step does the POST directly — advance just
-    // moves on. User can also skip this step entirely via the Skip button.
-    state.step = _nextApplicableStep(state.step);
-    return render();
-  }
   if (id === 'done') {
     try { await post('/api/admin/setup-complete', {}); } catch {}
+    // The stand-up-stack path deploys n8n but can't register it in-wizard (no
+    // API key until n8n's own first-run setup). Hand the deployed URL to the
+    // post-dashboard guide so we can walk the user through connecting it.
+    const deployedN8n = (state.data.path === 'stand-up-stack' && state.data.n8n && state.data.n8n.url)
+      ? state.data.n8n.url : '';
+    // Non-stack paths register n8n in-wizard; offer error reporting straight away.
+    const registeredN8n = (state.data.path !== 'stand-up-stack' && state.data.n8n && state.data.n8n.url)
+      ? state.data.n8n.url : '';
     close();
     if (window.__refreshInstances) window.__refreshInstances();
     if (window.__nav) window.__nav('dashboard');
+    if (deployedN8n) {
+      // Stack path: connect n8n first; the connect guide chains the error-handler prompt.
+      setTimeout(() => connectN8nGuide.open(deployedN8n, { force: true }), 400);
+    } else if (registeredN8n) {
+      let host = '';
+      try { host = new URL(registeredN8n).hostname; } catch { /* ignore */ }
+      setTimeout(() => errorHandlerPrompt.open({ n8nHost: host, force: true }), 400);
+    }
   }
 }
 
@@ -214,8 +227,13 @@ function render() {
 
 function renderStepIndicator() {
   const el = document.getElementById('wizard-steps');
-  el.innerHTML = STEPS.map((s, i) => {
-    const cls = i < state.step ? 'done' : i === state.step ? 'active' : '';
+  // Show only the steps that apply to the chosen path, so skipped steps never
+  // appear as completed and the strip stays narrow enough to fit the modal.
+  const applicable = STEPS.filter(s => _stepAppliesToPath(s.id, state.data.path));
+  const currentId = STEPS[state.step].id;
+  const curIdx = applicable.findIndex(s => s.id === currentId);
+  el.innerHTML = applicable.map((s, i) => {
+    const cls = i < curIdx ? 'done' : i === curIdx ? 'active' : '';
     return `<div class="wizard-step ${cls}"><span class="wizard-step-num"><span class="wizard-step-num-text">${i + 1}</span></span><span class="wizard-step-label">${s.label}</span></div>`;
   }).join('<div class="wizard-step-sep"></div>');
 }
@@ -226,7 +244,7 @@ function renderFooter() {
   const skip = document.getElementById('wizard-skip');
   const next = document.getElementById('wizard-next');
   back.style.visibility = state.step === 0 ? 'hidden' : 'visible';
-  const skippable = new Set(['ai', 'secrets', 'n8n', 'mirror', 'stack']);
+  const skippable = new Set(['ai', 'secrets', 'n8n', 'stack']);
   skip.style.display = skippable.has(id) ? '' : 'none';
   if (id === 'stack') {
     skip.textContent = state.data.stack.deploying ? 'Skip' : 'Skip and connect existing n8n';
@@ -247,7 +265,6 @@ function renderBody() {
   else if (id === 'secrets') el.innerHTML = renderSecrets();
   else if (id === 'n8n') el.innerHTML = renderN8n();
   else if (id === 'ai') el.innerHTML = renderAI();
-  else if (id === 'mirror') el.innerHTML = renderMirror();
   else if (id === 'done') el.innerHTML = renderDone();
   bindBody(id);
 }
@@ -912,6 +929,13 @@ function renderDone() {
   const ai = state.data.ai;
   const n8n = state.data.n8n;
   const secrets = state.data.secrets.filter(s => s.name && s.value);
+  const stackDeployed = state.data.path === 'stand-up-stack' && n8n && n8n.url;
+  const n8nLine = stackDeployed
+    ? `running at ${esc(n8n.url)} <span style="color:var(--text-dim)">— we'll connect it next</span>`
+    : (n8n ? `${esc(n8n.name)} (${esc(n8n.url)})` : '<span style="color:var(--text-dim)">not configured yet</span>');
+  const nextUp = stackDeployed
+    ? `Next up: we'll walk you through connecting your new n8n — open it, create your account, make an API key, and register it here.`
+    : `Next up: the Workflows tab lists everything on your n8n instance. Errors tab shows recent failures. Code Lab is where you can write and test n8n Code nodes with AI help.`;
   return `
     <h2>You're all set</h2>
     <p class="wizard-subtitle">
@@ -919,11 +943,11 @@ function renderDone() {
     </p>
     <ul class="wizard-summary">
       <li><strong>Secrets:</strong> ${secrets.length ? secrets.map(s => '$' + esc(s.name)).join(', ') : '<span style="color:var(--text-dim)">none</span>'}</li>
-      <li><strong>n8n:</strong> ${n8n ? `${esc(n8n.name)} (${esc(n8n.url)})` : '<span style="color:var(--text-dim)">not configured yet</span>'}</li>
+      <li><strong>n8n:</strong> ${n8nLine}</li>
       <li><strong>AI Assistant:</strong> ${ai ? `${ai.provider}${ai.model ? ` / ${esc(ai.model)}` : ''}` : '<span style="color:var(--text-dim)">not configured (skipped)</span>'}</li>
     </ul>
     <p style="margin-top:20px;font-size:13px;color:var(--text-secondary)">
-      Next up: the Workflows tab lists everything on your n8n instance. Errors tab shows recent failures. Code Lab is where you can write and test n8n Code nodes with AI help.
+      ${nextUp}
     </p>
   `;
 }
@@ -1097,10 +1121,6 @@ function bindBody(id) {
       const testBtn = document.getElementById('wizard-ai-test');
       if (testBtn) testBtn.addEventListener('click', () => testAI());
     }
-    return;
-  }
-  if (id === 'mirror') {
-    bindMirror();
     return;
   }
 }
@@ -1313,225 +1333,6 @@ async function saveSecrets() {
     }
   }
   if (toSave.length) toast.success(`Saved ${toSave.length} secret${toSave.length === 1 ? '' : 's'}`);
-}
-
-// ── Step: Mirror (sync AgeniusDesk secrets to n8n as typed credentials) ─────
-
-function renderMirror() {
-  return `
-    <h2>Sync credentials to n8n</h2>
-    <p class="wizard-subtitle">
-      Push the secrets you just created into your n8n instance as typed credentials. Workflows in n8n reference them by ID, so the raw values never end up in workflow JSON. Skip any you do not need in n8n.
-    </p>
-    <div id="wizard-mirror-target" style="font-size:12px;color:var(--text-dim);margin:8px 0 12px"></div>
-    <div id="wizard-mirror-list">
-      <div style="text-align:center;padding:24px;color:var(--text-dim)">Loading secrets...</div>
-    </div>
-    <div id="wizard-mirror-result" style="margin-top:16px"></div>
-    <div style="margin-top:16px;display:flex;gap:8px;align-items:center">
-      <button class="btn btn-primary" id="wizard-mirror-btn">Mirror to n8n</button>
-      <span id="wizard-mirror-hint" style="font-size:12px;color:var(--text-dim)"></span>
-    </div>
-  `;
-}
-
-async function bindMirror() {
-  const targetEl = document.getElementById('wizard-mirror-target');
-  const listEl = document.getElementById('wizard-mirror-list');
-  const btn = document.getElementById('wizard-mirror-btn');
-  const resultEl = document.getElementById('wizard-mirror-result');
-  const hintEl = document.getElementById('wizard-mirror-hint');
-
-  // Resolve the target n8n instance. The wizard just saved one in the previous
-  // step; fall back to the active instance from the instances list otherwise.
-  let instanceId = state.data.n8n?.id || '';
-  let instanceName = state.data.n8n?.name || '';
-  let instanceUrl = state.data.n8n?.url || '';
-  if (!instanceId) {
-    try {
-      const r = await get('/api/n8n/instances');
-      const instances = r.instances || [];
-      if (instances.length) {
-        const active = instances.find(i => i.active) || instances[0];
-        instanceId = active.id;
-        instanceName = active.name || '';
-        instanceUrl = active.url || '';
-      }
-    } catch { /* fall through to the no-instance branch below */ }
-  }
-
-  if (!instanceId) {
-    targetEl.textContent = '';
-    listEl.innerHTML = `<p style="color:var(--text-dim)">No n8n instance is configured yet — there is nothing to mirror into. Go back a step to add one, or skip this step to finish the wizard.</p>`;
-    btn.disabled = true;
-    return;
-  }
-
-  targetEl.innerHTML = `Target: <code style="color:var(--info)">${esc(instanceName || instanceId)}</code> <span style="color:var(--text-dim)">${esc(instanceUrl)}</span>`;
-
-  // Fetch the credential-type list from THIS n8n instance — schemas are
-  // fetched live from the target, so the dropdown only shows types the
-  // instance actually supports. First call takes ~1s (parallel schema probes),
-  // subsequent calls hit the backend's 5-min cache.
-  let types = [];
-  try {
-    const r = await get(`/api/n8n-credentials/${encodeURIComponent(instanceId)}/mappings`);
-    types = r.types || [];
-  } catch (e) {
-    listEl.innerHTML = `<p style="color:var(--error)">Could not load credential mappings: ${esc(e.message)}</p>`;
-    btn.disabled = true;
-    return;
-  }
-
-  // Pull the real stored secrets — includes anything added in the Secrets step
-  // plus anything the AI Assistant step promoted (e.g. provider keys saved via
-  // /api/admin/secrets/promote). Compound secrets are skipped here because
-  // the batch UI expects one row per $NAME; they can be mirrored from the
-  // Secrets page after the wizard closes.
-  let storedSecrets = [];
-  try {
-    const r = await get('/api/admin/secrets');
-    storedSecrets = (r.secrets || []).filter(s => s.kind !== 'compound');
-  } catch {
-    storedSecrets = [];
-  }
-
-  // Respect per-secret instance scope if any were set (wizard just configured
-  // one instance so most will be unscoped — unscoped = everywhere).
-  const secrets = storedSecrets.filter(s => {
-    const scope = Array.isArray(s.allowed_instances) ? s.allowed_instances : [];
-    return scope.length === 0 || scope.includes(instanceId);
-  });
-
-  if (!secrets.length) {
-    listEl.innerHTML = `<p style="color:var(--text-dim)">No secrets to mirror. You can add more in the Secrets page after finishing the wizard.</p>`;
-    btn.disabled = true;
-    return;
-  }
-
-  const items = secrets.map(s => {
-    const detected = detectTypeClient(s.name, types);
-    return {
-      secret_name: s.name,
-      credential_type: detected,
-      skip: !detected, // no match → default to skip; user can flip.
-    };
-  });
-  state.data.mirror = { instanceId, instanceName, items, results: null };
-
-  listEl.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr 80px;gap:8px;padding:6px 0;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border-dim)">
-      <div>AgeniusDesk secret</div>
-      <div>Mirror as n8n credential</div>
-      <div style="text-align:right">Skip</div>
-    </div>
-    ${items.map((item, i) => `
-      <div class="wizard-mirror-row" data-i="${i}" style="display:grid;grid-template-columns:1fr 1fr 80px;gap:8px;padding:10px 0;border-bottom:1px solid var(--border-dim);align-items:center">
-        <code style="font-family:var(--font-mono);color:var(--info);font-size:12px">$${esc(item.secret_name)}</code>
-        <select class="wizard-mirror-type" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:6px 10px;color:var(--text-primary);font-size:12px">
-          <option value="">(pick type)</option>
-          ${types.map(t => `<option value="${esc(t.type)}" ${t.type === item.credential_type ? 'selected' : ''}>${esc(t.display_name)}</option>`).join('')}
-        </select>
-        <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;justify-content:flex-end;gap:6px;cursor:pointer">
-          <input type="checkbox" class="wizard-mirror-skip" ${item.skip ? 'checked' : ''}>
-        </label>
-      </div>
-    `).join('')}
-  `;
-
-  listEl.querySelectorAll('.wizard-mirror-row').forEach(row => {
-    const i = parseInt(row.dataset.i, 10);
-    const typeSel = row.querySelector('.wizard-mirror-type');
-    const skipCb = row.querySelector('.wizard-mirror-skip');
-    typeSel.addEventListener('change', () => {
-      state.data.mirror.items[i].credential_type = typeSel.value;
-      // If the user picked a type, clear the auto-skip so their choice takes effect.
-      if (typeSel.value) {
-        state.data.mirror.items[i].skip = false;
-        skipCb.checked = false;
-      }
-    });
-    skipCb.addEventListener('change', () => {
-      state.data.mirror.items[i].skip = skipCb.checked;
-    });
-  });
-
-  btn.addEventListener('click', async () => {
-    await doMirror(btn, hintEl, resultEl);
-  });
-}
-
-function detectTypeClient(secretName, types) {
-  const upper = (secretName || '').toUpperCase();
-  for (const t of types) {
-    for (const p of (t.name_patterns || [])) {
-      if (upper.includes(p.toUpperCase())) return t.type;
-    }
-  }
-  return '';
-}
-
-async function doMirror(btn, hintEl, resultEl) {
-  const m = state.data.mirror;
-  if (!m || !m.instanceId) return;
-
-  // Only send items the user has actually decided about (has a type OR is skipped).
-  // Items with no type and no skip check get treated as skipped implicitly.
-  const payload = m.items.map(it => ({
-    secret_name: it.secret_name,
-    credential_type: it.credential_type || '',
-    skip: !!(it.skip || !it.credential_type),
-  }));
-
-  btn.disabled = true;
-  btn.textContent = 'Mirroring...';
-  hintEl.textContent = '';
-  resultEl.innerHTML = '';
-
-  try {
-    const r = await post(`/api/n8n-credentials/${m.instanceId}/mirror`, { items: payload });
-    m.results = r.results || [];
-    renderMirrorResults(resultEl, m.results);
-    const ok = m.results.filter(x => x.status === 'ok').length;
-    const err = m.results.filter(x => x.status === 'error').length;
-    btn.textContent = err ? 'Mirror again' : 'Mirrored';
-    hintEl.textContent = err ? 'Some items failed — fix and click again.' : `You can advance (Next → Done) once you are happy.`;
-  } catch (e) {
-    resultEl.innerHTML = `<p style="color:var(--error)">Mirror failed: ${esc(e.message)}</p>`;
-    btn.textContent = 'Mirror to n8n';
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function renderMirrorResults(container, results) {
-  if (!results || !results.length) {
-    container.innerHTML = '<p style="color:var(--text-dim)">No results.</p>';
-    return;
-  }
-  const ok = results.filter(r => r.status === 'ok').length;
-  const skipped = results.filter(r => r.status === 'skipped').length;
-  const err = results.filter(r => r.status === 'error').length;
-  container.innerHTML = `
-    <div style="padding:10px 12px;border:1px solid var(--border-mid);border-radius:var(--radius);background:var(--bg-panel);font-size:12px">
-      <div style="margin-bottom:8px">
-        <strong style="color:var(--success)">${ok} mirrored</strong>
-        &middot;
-        <strong>${skipped} skipped</strong>
-        &middot;
-        <strong style="color:${err ? 'var(--error)' : 'inherit'}">${err} failed</strong>
-      </div>
-      ${results.map(r => {
-        if (r.status === 'ok') {
-          return `<div style="color:var(--success);padding:2px 0">\u2713 $${esc(r.secret_name)} \u2192 ${esc(r.credential_name || r.credential_id || '')} <span style="color:var(--text-dim)">(${esc(r.credential_type)})</span></div>`;
-        }
-        if (r.status === 'skipped') {
-          return `<div style="color:var(--text-dim);padding:2px 0">\u2014 $${esc(r.secret_name)} skipped</div>`;
-        }
-        return `<div style="color:var(--error);padding:2px 0">\u2717 $${esc(r.secret_name)}: ${esc(r.error || 'failed')}</div>`;
-      }).join('')}
-    </div>
-  `;
 }
 
 // ── util ────────────────────────────────────────────────────────────────────

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import socket
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -206,21 +208,40 @@ async def inspect(container_id: str):
 # ── Destroy ───────────────────────────────────────────────────────────────────
 
 
-async def _container_candidate_urls(container_id: str) -> list[str]:
-    """Return the set of URLs this container may be registered under.
+def _is_local_host(host: str) -> bool:
+    """True when `host` clearly refers to this machine: localhost, an *.local
+    name, or a private / loopback IP. A public hostname or routable IP returns
+    False, so we never port-match an instance that points at a remote n8n.
+    """
+    h = (host or "").strip().lower()
+    if not h:
+        return False
+    if h == "localhost" or h.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.is_private or ip.is_loopback
+    except ValueError:
+        return False
 
-    Builds http://localhost:<hostPort> for every TCP port mapping, plus
-    http://<compose_service>:<containerPort> when the container belongs to a
-    compose project.  Used to orphan-detect registered n8n instances after a
-    destroy so stale entries are cleaned up automatically.
+
+async def _container_candidate_urls(container_id: str) -> tuple[list[str], set[str]]:
+    """Return (candidate URLs, published host ports) for a container.
+
+    Candidate URLs are http://localhost:<hostPort> / http://127.0.0.1:<hostPort>
+    per TCP mapping plus http://<compose_service>:<containerPort>. The host-port
+    set lets eviction also match instances registered by LAN IP (which the
+    container can't enumerate as a hostname). Used to orphan-detect registered
+    n8n instances after a destroy so stale entries clean up automatically.
     """
     try:
         c = await docker._get_client().containers.get(container_id)
         info = await c.show()
     except Exception:
-        return []
+        return [], set()
 
     candidates: list[str] = []
+    host_ports: set[str] = set()
     port_bindings = (info.get("HostConfig") or {}).get("PortBindings") or {}
     service = (info.get("Config") or {}).get("Labels", {}).get("com.docker.compose.service", "")
 
@@ -229,25 +250,40 @@ async def _container_candidate_urls(container_id: str) -> list[str]:
         for b in bindings or []:
             host_port = b.get("HostPort", "")
             if host_port:
+                host_ports.add(str(host_port))
                 candidates.append(f"http://localhost:{host_port}")
                 candidates.append(f"http://127.0.0.1:{host_port}")
         if service and container_port:
             candidates.append(f"http://{service}:{container_port}")
 
-    return candidates
+    return candidates, host_ports
 
 
-def _evict_orphaned_instances(candidate_urls: list[str]) -> list[str]:
-    """Remove any registered instances whose URL matches a candidate.
+def _evict_orphaned_instances(candidate_urls: list[str], host_ports: set[str] | None = None) -> list[str]:
+    """Remove any registered instances that point at the destroyed container.
 
+    Matches on an exact candidate URL, or — for an instance that points at a
+    local host (private/loopback/localhost) — on the published host port. The
+    port fallback covers instances registered by LAN IP (e.g.
+    http://10.10.0.15:5678), which can't appear in the candidate-URL list.
     Returns the names of removed instances so callers can surface them.
     """
-    if not candidate_urls:
+    host_ports = host_ports or set()
+    if not candidate_urls and not host_ports:
         return []
     normalised = {u.rstrip("/").lower() for u in candidate_urls}
     evicted: list[str] = []
     for inst in get_instances():
-        if inst.get("url", "").rstrip("/").lower() in normalised:
+        raw = inst.get("url", "")
+        matched = raw.rstrip("/").lower() in normalised
+        if not matched and host_ports:
+            try:
+                parts = urlsplit(raw)
+                if parts.port and str(parts.port) in host_ports and _is_local_host(parts.hostname or ""):
+                    matched = True
+            except ValueError:
+                pass
+        if matched:
             remove_instance(inst["id"])
             evicted.append(inst.get("name", inst["id"]))
     return evicted
@@ -266,14 +302,14 @@ async def destroy_container(
     Any registered n8n instances whose URL matches a port mapping of the
     destroyed container are automatically de-registered.
     """
-    candidates = await _container_candidate_urls(container_id)
+    candidates, host_ports = await _container_candidate_urls(container_id)
 
     try:
         removed = await docker.destroy_container(container_id, remove_volumes=remove_volumes)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    evicted = _evict_orphaned_instances(candidates)
+    evicted = _evict_orphaned_instances(candidates, host_ports)
     return {"ok": True, "volumes_removed": removed, "instances_removed": evicted}
 
 
@@ -340,12 +376,12 @@ async def destroy_bundle(
     # network is removed after all members are gone).
     for c in members:
         try:
-            candidates = await _container_candidate_urls(c["id_full"])
+            candidates, host_ports = await _container_candidate_urls(c["id_full"])
             removed = await docker.destroy_container(c["id_full"], remove_volumes=remove_volumes)
             removed_containers.append(c["name"])
             if removed:
                 volumes_removed_total = True
-            evicted_total.extend(_evict_orphaned_instances(candidates))
+            evicted_total.extend(_evict_orphaned_instances(candidates, host_ports))
         except RuntimeError as exc:
             logger.warning("Bundle %s: failed to destroy member %s: %s", bundle_id, c["name"], exc)
 

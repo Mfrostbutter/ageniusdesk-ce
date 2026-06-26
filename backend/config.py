@@ -69,13 +69,20 @@ class Settings(BaseSettings):
     vault_admin_url: Optional[str] = "http://vault:14321"  # admin REST + web UI
     vault_proxy_url: Optional[str] = "http://vault:14322"  # MITM transparent proxy for subprocess HTTP_PROXY
 
-    # In-app auth gate (F2). Default OFF: the app trusts edge auth (Cloudflare
-    # Access) as the boundary, so behavior is unchanged. Set AGD_REQUIRE_AUTH=true
-    # on a naked-port self-host to require, on privileged routes, either a
-    # recognized edge-auth header (Cf-Access-Authenticated-User-Email /
-    # X-Forwarded-User) OR the AGD_ADMIN_TOKEN bearer. See backend/auth_gate.py.
+    # In-app auth gate. Local account login is enforced by default unless
+    # AGD_DISABLE_LOGIN=true. AGD_REQUIRE_AUTH is the token/edge-auth hard gate
+    # for automation/proxy-fronted installs. Edge identity headers are trusted
+    # only when AGD_TRUST_EDGE_AUTH=true; never enable that on a directly
+    # reachable port because clients can spoof those headers.
     agd_require_auth: bool = False
     agd_admin_token: str = ""
+    agd_trust_edge_auth: bool = False
+    agd_trust_forwarded_for: bool = False
+    # Optional token for the legacy machine-ingest endpoints:
+    # /api/errors/webhook and /api/messages/webhook. When unset, those endpoints
+    # stay open for backward compatibility with existing n8n handlers. Prefer
+    # the X-API-Key protected /api/v1/... webhooks for new integrations.
+    agd_webhook_token: str = ""
 
     # Local account login (accounts + sessions + optional TOTP 2FA). On a fresh
     # install the first browser visit forces creation of an owner account, then
@@ -87,7 +94,26 @@ class Settings(BaseSettings):
     agd_session_absolute_days: int = 30   # hard cap regardless of activity
     agd_login_max_attempts: int = 8       # failures before lockout
     agd_login_lockout_minutes: int = 15
-    agd_password_min_length: int = 10     # raised from the legacy 6 in admin CRUD
+    # Password policy (composition). Enforced on setup, reset, and change.
+    agd_password_min_length: int = 12
+    agd_password_require_upper: bool = True
+    agd_password_require_lower: bool = True
+    agd_password_require_number: bool = True
+    agd_password_require_symbol: bool = True
+    agd_password_reset_ttl_minutes: int = 30  # password-reset link lifetime
+
+    # SMTP for transactional email (password reset). When host is unset, the
+    # reset link is written to the server log instead of being emailed, so a
+    # self-hosted operator without SMTP can still recover access.
+    agd_smtp_host: str = ""
+    agd_smtp_port: int = 587
+    agd_smtp_user: str = ""
+    agd_smtp_password: str = ""
+    agd_smtp_from: str = ""               # defaults to smtp_user when blank
+    agd_smtp_starttls: bool = True
+    # Public base URL used to build links in emails (e.g. https://app.example.com).
+    # Falls back to agd_public_host, then the request origin.
+    agd_public_url: str = ""
 
     # Security hardening knobs (all default to prior behavior).
     # CORS allowed origins: "*" (default, any origin) or a comma-separated list

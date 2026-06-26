@@ -34,14 +34,15 @@ logger = logging.getLogger(__name__)
 # Role ranking for coarse RBAC (viewer < operator < admin).
 _ROLE_ORDER = {"viewer": 1, "operator": 2, "admin": 3}
 
-# Headers a trusted edge proxy injects to assert an authenticated user. We trust
-# these only because, in the supported deployment, the app is reachable solely
-# through the Access-gated tunnel that sets them.
+# Headers a trusted edge proxy injects to assert an authenticated user. These
+# are ignored unless AGD_TRUST_EDGE_AUTH=true.
 _EDGE_HEADERS = ("cf-access-authenticated-user-email", "x-forwarded-user")
 
 
 def edge_identity(request: Request) -> str:
     """Return the edge-authenticated user id from trusted headers, or ""."""
+    if not settings.agd_trust_edge_auth:
+        return ""
     for header in _EDGE_HEADERS:
         value = (request.headers.get(header) or "").strip()
         if value:
@@ -140,4 +141,4 @@ def edge_auth_present_anywhere() -> bool:
     We can't know per-request at startup, so this is intentionally conservative —
     it only reports whether the operator wired an admin token as a fallback.
     """
-    return bool(settings.agd_admin_token)
+    return bool(settings.agd_trust_edge_auth or settings.agd_admin_token)

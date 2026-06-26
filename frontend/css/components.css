@@ -1537,3 +1537,88 @@ tr.clickable {
 .ct-dd-item--danger { color: var(--error); }
 .ct-dd-item--danger:hover { background: var(--error-glow); }
 .ct-dd-item--disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+
+/* ── Onboarding: get-started card ─────────────────────────────────────────── */
+.gs-card { margin-bottom: 20px; border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.gs-card .card-header { align-items: center; }
+.gs-progress {
+  margin-left: auto; margin-right: 8px; font-size: 11px;
+  color: var(--text-dim); font-family: var(--font-mono);
+}
+.gs-rows { display: flex; flex-direction: column; gap: 4px; }
+.gs-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--radius);
+  border: 1px solid var(--border-dim); background: var(--bg-input);
+}
+.gs-row--done { opacity: 0.7; }
+.gs-check {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  background: var(--bg-void); border: 1px solid var(--border-dim);
+}
+.gs-check--done { color: #fff; background: var(--success, #34d399); border-color: transparent; }
+.gs-row-text { flex: 1; min-width: 0; }
+.gs-row-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.gs-row-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.gs-opt {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px; padding: 1px 7px; font-weight: 600;
+}
+.gs-row-action { flex-shrink: 0; }
+.gs-done-label { font-size: 11px; color: var(--success, #34d399); }
+
+/* ── Connect-n8n guide modal ──────────────────────────────────────────────── */
+.cn-num {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+  background: var(--accent, #ff6d5a);
+}
+.cn-step-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.cn-step-desc { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-top: 3px; }
+
+/* ── Password policy checklist (auth gate + change password) ───────────────── */
+.agd-pwck { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.agd-pwck-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary, #9aa0aa); }
+.agd-pwck-mark {
+  flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%;
+  border: 1px solid var(--border, #2a2f3a); position: relative; transition: all 0.12s;
+}
+.agd-pwck-item.met { color: var(--success, #34d399); }
+.agd-pwck-item.met .agd-pwck-mark { background: var(--success, #34d399); border-color: transparent; }
+.agd-pwck-item.met .agd-pwck-mark::after {
+  content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 7px;
+  border: solid #0f1115; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+
+/* ── Onboarding: page coachmarks ──────────────────────────────────────────── */
+.agd-coach-overlay { position: fixed; inset: 0; z-index: 11000; overflow: hidden; }
+.agd-coach-mask { position: absolute; inset: 0; pointer-events: none; }
+.agd-coach-dim { fill: rgba(0, 0, 0, 0.62); }
+/* The dim layer captures clicks (so the page behind is inert) but the spotlight
+   hole is cut out of it visually; the ring sits over the hole and lets the
+   highlighted control stay clickable via pointer-events:none. */
+.agd-coach-mask { pointer-events: auto; }
+.agd-coach-ring {
+  position: absolute; border-radius: 10px; pointer-events: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: all 0.18s ease;
+}
+.agd-coach-no-motion .agd-coach-ring { transition: none; }
+.agd-coach-bubble {
+  position: absolute; z-index: 11001; width: 300px; max-width: calc(100vw - 24px);
+  background: var(--bg-elevated, #1a1d24); border: 1px solid var(--border, #2a2f3a);
+  border-radius: 12px; padding: 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.agd-coach-bubble:focus { outline: none; }
+.agd-coach-title { font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 5px; }
+.agd-coach-body { font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.agd-coach-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 14px;
+}
+.agd-coach-count { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+.agd-coach-btns { display: flex; gap: 6px; }

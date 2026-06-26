@@ -51,7 +51,8 @@ See [docs/CONFIG.md](CONFIG.md) for all environment variables.
 ```bash
 # .env file
 PORT=3000
-AGD_REQUIRE_AUTH=true              # Enable login (recommended for public deployments)
+AGD_DISABLE_LOGIN=false            # Default: browser login enabled
+AGD_REQUIRE_AUTH=false             # Leave false unless you rely on token/edge auth
 AGD_TLS_VERIFY=true                # Verify HTTPS certificates (set false only for self-signed certs on private LANs)
 
 # AI Assistant (pick one)
@@ -99,21 +100,27 @@ ageniusdesk.example.com {
 
 ## Authentication
 
-By default, AgeniusDesk has no built-in login. For public deployments:
+By default, AgeniusDesk enforces local account login. On first visit, create the owner account and keep `AGD_DISABLE_LOGIN=false` for any deployment reachable by other people.
 
 **Option 1: Built-in login** (simple)
 
 ```bash
-AGD_REQUIRE_AUTH=true
+AGD_DISABLE_LOGIN=false
 ```
 
-This enables local user accounts. Users log in with a username and password (hashed with PBKDF2).
+Users log in with an email and password (hashed with PBKDF2). Optional TOTP two-factor is available in Settings > Account.
 
 **Option 2: Reverse proxy auth** (advanced)
 
-Let your reverse proxy handle authentication (nginx basic auth, Cloudflare Access, KeyCloak, etc.) and ensure it sets trusted headers. AGD respects `X-Remote-User` from a proxy.
+Let your reverse proxy handle authentication (Cloudflare Access, Authelia, Keycloak, etc.), ensure the app is not reachable except through that proxy, then opt into trusted proxy identity headers:
 
-For development (private LAN), leave `AGD_REQUIRE_AUTH=false`.
+```bash
+AGD_TRUST_EDGE_AUTH=true
+```
+
+For external machine integrations, prefer `/api/v1/...` endpoints with an AgeniusDesk API key. If you use the legacy `/api/errors/webhook` or `/api/messages/webhook` ingest endpoints on a public URL, set `AGD_WEBHOOK_TOKEN` and send it as `Authorization: Bearer ...` or `X-AGD-Webhook-Token`.
+
+For development on localhost only, you may set `AGD_DISABLE_LOGIN=true`, but anyone who can reach the port gets full access.
 
 ## Backup and Recovery
 
@@ -233,4 +240,3 @@ Migrations run automatically on startup.
 - Check [docs/CONFIG.md](CONFIG.md) for configuration options
 - Open a GitHub issue at https://github.com/Mfrostbutter/ageniusdesk-ce/issues
 - Review logs: `docker compose logs dashboard` or `tail -f debug.log`
-

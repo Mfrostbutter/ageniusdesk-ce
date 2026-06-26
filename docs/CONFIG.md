@@ -8,7 +8,7 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
 |----------|---------|-------------|
 | `PORT` | `3000` | Port the dashboard listens on |
 | `SECRET_KEY` | Auto-generated | Master key for encrypting secrets. If not set, generated and persisted to `data/.secret_key` (mode 600) on first run. Losing this file makes all encrypted values unrecoverable. Back it up. |
-| `AGD_REQUIRE_AUTH` | `false` | Enable built-in dashboard authentication (local user accounts). Set to `true` for public deployments, or front with an auth proxy (nginx, Cloudflare Access). |
+| `AGD_REQUIRE_AUTH` | `false` | Extra hard gate for token/edge-auth deployments. Local account login is enforced by default unless `AGD_DISABLE_LOGIN=true`; set this to keep auth required even when browser login is disabled. |
 | `AGD_TLS_VERIFY` | `true` | Verify TLS certificates on outbound HTTP calls to n8n instances. Set to `false` only for self-signed certificates on private LANs. |
 
 ## Database
@@ -57,8 +57,12 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGD_REQUIRE_AUTH` | `false` | Enforce in-app auth on privileged routes and the `/ws` WebSocket. Leave `false` when an auth proxy fronts the app; set `true` for a bare public bind. Requires `AGD_ADMIN_TOKEN` and/or a trusted edge-auth header. |
-| `AGD_ADMIN_TOKEN` | (none) | Bearer token accepted on privileged routes when `AGD_REQUIRE_AUTH=true`. Compared in constant time. |
+| `AGD_REQUIRE_AUTH` | `false` | Keep internal API auth required even if `AGD_DISABLE_LOGIN=true`; useful for token/edge-auth automation deployments. |
+| `AGD_ADMIN_TOKEN` | (none) | Bearer token accepted on internal API routes when set. Compared in constant time. |
+| `AGD_TRUST_EDGE_AUTH` | `false` | Trust Cloudflare Access / reverse-proxy identity headers (`Cf-Access-Authenticated-User-Email`, `X-Forwarded-User`). Enable only when the dashboard is reachable exclusively through that trusted proxy. |
+| `AGD_TRUST_FORWARDED_FOR` | `false` | Use `X-Forwarded-For` for login throttling. Enable only behind a trusted proxy. |
+| `AGD_WEBHOOK_TOKEN` | (none) | Optional bearer or `X-AGD-Webhook-Token` token for legacy `/api/errors/webhook` and `/api/messages/webhook` ingestion. When unset, those legacy endpoints remain open for backward compatibility; new integrations should use the X-API-Key protected `/api/v1/...` webhooks. |
+| `DASHBOARD_MCP_TOKEN` | (none) | Optional bearer token for external clients calling `/api/mcp-dashboard`. Without it, browser sessions can still use the endpoint; unauthenticated external access is blocked by the internal API gate. |
 | `AGD_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins. Restrict to your dashboard origin(s) for a browser-facing deployment. |
 | `AGD_MAX_REQUEST_BYTES` | `26214400` | Max request body size in bytes (25 MiB). Larger requests get `413`. |
 | `AGD_CSP` | (none) | Optional `Content-Security-Policy` header. Opt-in: the editors load from CDNs and the music tab embeds arbitrary origins, so a strict policy can break features. A recommended starting policy is in `.env.example`. |
@@ -67,18 +71,41 @@ Baseline response headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referre
 
 ## Local Account Login
 
-AgeniusDesk ships with built-in account login. On first run the browser forces you to create an owner account (username + password), then requires sign-in on every visit. The owner account is an `admin`. Accounts may optionally enable TOTP two-factor (any authenticator app); recovery codes are issued once at enrollment.
+AgeniusDesk ships with built-in account login. On first run the browser forces you to create an owner account (email + password), then requires sign-in on every visit. The email is the login identity and is also used for password recovery. The owner account is an `admin`. Accounts may optionally enable TOTP two-factor (any authenticator app); recovery codes are issued once at enrollment.
 
-An edge identity (Cloudflare Access / trusted reverse proxy header) still satisfies the gate without a local account, so existing proxy-fronted deployments are unchanged. Automation can authenticate with `AGD_ADMIN_TOKEN` as a bearer token.
+An edge identity (Cloudflare Access / trusted reverse proxy header) can satisfy the gate without a local account only when `AGD_TRUST_EDGE_AUTH=true`. Do not enable that on a directly reachable port; clients can spoof those headers. Automation can authenticate with `AGD_ADMIN_TOKEN` as a bearer token.
+
+**Forgot password:** the sign-in screen has a "Forgot password?" link. It issues a single-use, time-limited reset link to the account email. Delivery requires SMTP (below); if SMTP is not configured the link is written to the container log so a self-hosted operator can still recover access. Completing a reset signs out all other sessions.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AGD_DISABLE_LOGIN` | `false` | Turn browser login OFF entirely (no account, no session). Dev/localhost only; logged loudly at startup. Anyone who can reach the port gets full access. |
 | `AGD_SESSION_TTL_DAYS` | `14` | Sliding session lifetime; extended on activity. |
 | `AGD_SESSION_ABSOLUTE_DAYS` | `30` | Hard cap on a session regardless of activity. |
-| `AGD_LOGIN_MAX_ATTEMPTS` | `8` | Failed logins (per username and per IP) before a temporary lockout. |
+| `AGD_LOGIN_MAX_ATTEMPTS` | `8` | Failed logins (per email and per IP) before a temporary lockout. |
 | `AGD_LOGIN_LOCKOUT_MINUTES` | `15` | Lockout duration after too many failures. |
-| `AGD_PASSWORD_MIN_LENGTH` | `10` | Minimum password length for new accounts and password changes. |
+| `AGD_PASSWORD_MIN_LENGTH` | `12` | Minimum password length for new accounts, resets, and changes. |
+| `AGD_PASSWORD_REQUIRE_UPPER` | `true` | Require an uppercase letter. |
+| `AGD_PASSWORD_REQUIRE_LOWER` | `true` | Require a lowercase letter. |
+| `AGD_PASSWORD_REQUIRE_NUMBER` | `true` | Require a digit. |
+| `AGD_PASSWORD_REQUIRE_SYMBOL` | `true` | Require a non-alphanumeric symbol. |
+| `AGD_PASSWORD_RESET_TTL_MINUTES` | `30` | Lifetime of a password-reset link. |
+
+The setup, reset, and change-password screens show a live checklist of these rules; the same policy is enforced server-side.
+
+### Email (SMTP) for password reset
+
+Configure SMTP to deliver password-reset links. When `AGD_SMTP_HOST` is blank, AgeniusDesk logs the reset link instead of emailing it (a deliberate fallback for self-hosted installs without a mail server).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGD_SMTP_HOST` | (none) | SMTP server hostname. Unset = log reset links instead of sending. |
+| `AGD_SMTP_PORT` | `587` | SMTP port. |
+| `AGD_SMTP_USER` | (none) | SMTP username (or API-key user). |
+| `AGD_SMTP_PASSWORD` | (none) | SMTP password. |
+| `AGD_SMTP_FROM` | `AGD_SMTP_USER` | From address on outgoing mail. |
+| `AGD_SMTP_STARTTLS` | `true` | Issue STARTTLS before authenticating. |
+| `AGD_PUBLIC_URL` | (request origin) | Public base URL for links in emails, e.g. `https://app.example.com`. Set this behind a proxy. |
 
 Passwords are hashed with PBKDF2-HMAC-SHA256 (600k iterations, per-user random salt; legacy hashes are upgraded transparently on next login). Sessions are stored server-side as a SHA-256 of the token, so a database leak cannot be replayed. The session cookie is `HttpOnly`, `SameSite=Strict`, and `Secure` over HTTPS; mutations carry a double-submit CSRF token. Roles are `viewer < operator < admin`; v1 enforcement is coarse per route group (read surfaces require any signed-in user, the n8n and container control surfaces require `operator`, and admin/secrets require `admin`).
 

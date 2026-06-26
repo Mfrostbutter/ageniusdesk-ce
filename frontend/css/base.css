@@ -67,6 +67,11 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   zoom: 1.07;
+  /* Global viewport constraint: nothing may produce a horizontal scrollbar.
+     The main UI is already bounded by .app-layout/#app-content; this is the
+     site-wide backstop for body-level overlays (modals, drawers, coachmarks,
+     toasts) so off-canvas content is clipped, never scrolled to. */
+  overflow-x: hidden;
 }
 
 /* App layout — sidebar + main */

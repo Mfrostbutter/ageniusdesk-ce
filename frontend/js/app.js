@@ -28,12 +28,25 @@ import * as knowledgeView from './views/knowledge.js';
 import * as knowledgeConnectorsView from './views/knowledge-connectors.js';
 import * as knowledgeInstructionsView from './views/knowledge-instructions.js';
 import * as containersView from './views/containers.js';
+import * as instancesView from './views/instances.js';
+import * as modelsView from './views/models.js';
+import * as mcpView from './views/mcp.js';
 
 import { loadCommunityModules, installHostContext } from './community-modules.js';
+import * as onboarding from './onboarding/index.js';
 
 // Expose window.AgeniusDesk early so any module script injected during
 // boot can assume it's present.
 installHostContext();
+
+// Dev convenience: visiting with `?fresh=1` clears all local UI state — coachmark
+// "seen" flags, the get-started/connect/error-handler dismissals, dashboards,
+// and prefs — for a true first-run walkthrough. Runs before any module reads
+// localStorage, then strips the param so a reload doesn't wipe again.
+if (new URLSearchParams(location.search).has('fresh')) {
+  try { localStorage.clear(); } catch { /* ignore */ }
+  try { history.replaceState({}, '', location.pathname); } catch { /* ignore */ }
+}
 
 const views = {
   dashboard: dashboardView,
@@ -53,6 +66,12 @@ const views = {
   'knowledge-connectors': knowledgeConnectorsView,
   'knowledge-instructions': knowledgeInstructionsView,
   containers: containersView,
+  // Sidebar drill-downs that used to deep-link into Settings tabs. Now first-
+  // class focused views (no Settings tab strip). data-view names in index.html:
+  // instances / ai-settings / mcp-servers.
+  instances: instancesView,
+  'ai-settings': modelsView,
+  'mcp-servers': mcpView,
 };
 
 // Community modules are loaded async on boot; their views merge into the
@@ -69,6 +88,9 @@ let currentView = 'dashboard';
 async function navigate(viewName, opts) {
   const view = views[viewName];
   if (!view) return;
+  // Remember where we came from so "Replay tips on this page" (invoked from the
+  // Settings view) can target the view the user was actually on.
+  if (currentView && currentView !== viewName) window.__priorView = currentView;
   currentView = viewName;
   window.__currentView = viewName;
   // Stash opts for the target view to read on mount. Always reset (so stale
@@ -77,9 +99,24 @@ async function navigate(viewName, opts) {
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === viewName);
   });
+  // First-visit marker (used by the "Meet the harness" onboarding milestone and
+  // any future per-view first-run logic).
+  try { localStorage.setItem(`agd_seen:${viewName}`, '1'); } catch { /* ignore */ }
   document.dispatchEvent(new CustomEvent('agd:view-changed', { detail: { view: viewName } }));
   await view.render(document.getElementById('app-content'));
+  // Fire AFTER render resolves so the coachmark engine sees the new view's DOM,
+  // not the previous view's stale content. (agd:view-changed stays pre-render
+  // for listeners that must react immediately, e.g. closing an open drawer.)
+  document.dispatchEvent(new CustomEvent('agd:view-rendered', { detail: { view: viewName } }));
 }
+
+// Auto-run a view's coachmark tour on first visit (engine self-guards on
+// tips-enabled, seen-flag, blocking overlays, and anchor presence).
+document.addEventListener('agd:view-rendered', e => onboarding.maybeRunTour(e.detail.view));
+window.__replayTour = onboarding.replayTour;
+window.__resetTips = onboarding.resetAllTips;
+window.__setTipsEnabled = onboarding.setTipsEnabled;
+window.__tipsEnabled = onboarding.tipsEnabled;
 
 window.__nav = navigate;
 window.__currentView = currentView;
@@ -130,15 +167,12 @@ window.__goSettings = (tab) => {
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const viewName = btn.dataset.view;
-    // Special case: several sidebar items are shortcuts that deep-link into
-    // specific Settings tabs. Keeps them discoverable at the nav level while
-    // reusing existing panel code. No dedicated view module for these —
-    // window.__goSettings(tabName) handles both navigation + tab switch.
+    // A few sidebar items remain Settings deep-links (panels with no dedicated
+    // view of their own). Instances / Models / MCP are now first-class views in
+    // the `views` map above, so they fall through to navigate() and render
+    // focused, tab-strip-free pages.
     const SETTINGS_SHORTCUTS = {
-      'ai-settings': 'assistant',
-      'instances':   'instances',
-      'mcp-servers': 'mcp',
-      'plugins':     'modules',
+      'plugins': 'modules',
     };
     if (SETTINGS_SHORTCUTS[viewName]) {
       if (window.__goSettings) {

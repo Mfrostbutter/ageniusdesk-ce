@@ -132,6 +132,10 @@ async def save_jobs(req: JobsRequest):
                 base["fallback_provider"] = str(sel.get("fallback_provider") or "").strip()
             if "fallback_model" in sel:
                 base["fallback_model"] = str(sel.get("fallback_model") or "").strip()
+            # Optional explicit secret ref for this area's API key. Empty string
+            # means "use the per-provider convention key" (the default).
+            if "api_key_ref" in sel:
+                base["api_key_ref"] = str(sel.get("api_key_ref") or "").strip()
         cleaned[surface] = base
     ai["jobs"] = cleaned
     config["assistant"] = ai
@@ -214,7 +218,11 @@ async def chat(req: ChatRequest):
     # Model/provider: an explicit session override (the inline picker) wins for
     # on-the-fly experimentation; otherwise use the job's configured model. Both
     # resolve their provider key from the secrets store the same way.
-    override = req.override or {"provider": job["provider"], "model": job["model"]}
+    override = req.override or {
+        "provider": job["provider"],
+        "model": job["model"],
+        "api_key_ref": job.get("api_key_ref", ""),
+    }
 
     # Fallback: an explicit request wins; otherwise the job's own fallback.
     fallback = req.fallback or None
@@ -236,7 +244,7 @@ async def chat(req: ChatRequest):
 
 
 @router.get("/models")
-async def list_models(provider: str = "openrouter", ollama_url: str = ""):
+async def list_models(provider: str = "openrouter", ollama_url: str = "", api_key_ref: str = ""):
     """List available models for a provider.
 
     Strategy:
@@ -262,7 +270,7 @@ async def list_models(provider: str = "openrouter", ollama_url: str = ""):
         return {"models": models, "provider": "ollama", "source": source}
 
     if p in ("anthropic", "openai", "openrouter"):
-        result = await providers.list_provider_models(p)
+        result = await providers.list_provider_models(p, api_key_ref=api_key_ref)
         result["provider"] = p
         return result
 
@@ -284,24 +292,51 @@ async def test_connection():
 class TestCredsRequest(BaseModel):
     provider: str
     api_key: str = ""
+    api_key_ref: str = ""  # a $NAME secret to resolve server-side (preferred over api_key)
     model: str = ""
     ollama_url: str = ""
 
 
 @router.post("/test-creds")
 async def test_creds(req: TestCredsRequest):
-    """Test arbitrary AI provider creds without saving. Used by the setup wizard."""
+    """Test AI provider creds without saving. Used by the setup wizard and the
+    Models area key picker. A `$NAME` ref is resolved from the secrets store
+    server-side so the plaintext key never round-trips through the browser."""
     import httpx
     p = req.provider
+    # Resolve a chosen secret ref to its plaintext key (preferred path).
+    if req.api_key_ref:
+        ref = req.api_key_ref if req.api_key_ref.startswith("$") else f"${req.api_key_ref}"
+        resolved = providers.decrypt_value(ref)
+        if not resolved or resolved == ref[1:]:
+            return {"ok": False, "error": f"Secret {ref} is empty or not found."}
+        req.api_key = resolved
+    elif not req.api_key and p in ("anthropic", "openai", "openrouter"):
+        # "Use provider default key" — resolve the per-provider convention secret.
+        req.api_key = providers._resolve_provider_key(p)
+
+    # Never fire a request with an empty key: an empty "Bearer " header is itself
+    # an httpx error ("Illegal header value"). Return a clean message instead.
+    if p != "ollama" and not req.api_key:
+        return {
+            "ok": False,
+            "error": "No API key set for this area. Pick a saved key above, "
+                     "or add the provider's key in Secrets.",
+        }
+
     try:
         if p == "openrouter":
+            # OpenRouter's /v1/models is public (200 even with a bad key), so a
+            # real connection test must hit the key-validation endpoint.
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.get(
-                    "https://openrouter.ai/api/v1/models",
+                    "https://openrouter.ai/api/v1/key",
                     headers={"Authorization": f"Bearer {req.api_key}"},
                 )
                 if r.status_code == 200:
                     return {"ok": True, "model": req.model or "anthropic/claude-sonnet-4"}
+                if r.status_code in (401, 403):
+                    return {"ok": False, "error": "Invalid or unauthorized API key"}
                 return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
         if p == "openai":
             async with httpx.AsyncClient(timeout=10) as c:

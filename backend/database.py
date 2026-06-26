@@ -78,6 +78,20 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     await db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(username)")
     await db.commit()
 
+    # auth_resets — single-use, short-lived password-reset tokens. Only the
+    # sha256 of the token is stored; a DB leak cannot be replayed as a live
+    # reset link. Rows are deleted on use and lazily pruned when expired.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS auth_resets (
+            token_hash  TEXT PRIMARY KEY,
+            username    TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            expires_at  TEXT NOT NULL
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_auth_resets_user ON auth_resets(username)")
+    await db.commit()
+
 
 async def close_db() -> None:
     global _db

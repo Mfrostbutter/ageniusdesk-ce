@@ -231,6 +231,20 @@ async def clear_errors(
 # ── Global error-handler workflow install ─────────────────────────────────────
 
 _HANDLER_TEMPLATE = Path(__file__).resolve().parents[2] / "n8n_workflows" / "global-error-handler.json"
+_HANDLER_NAME = "Global Error Handler → AgeniusDesk"
+
+
+async def _find_handler() -> dict | None:
+    """Return the existing global-error-handler workflow on the active instance,
+    or None. Used to keep install idempotent (no duplicate workflows)."""
+    try:
+        res = await n8n.list_workflows(name_contains="Global Error Handler", limit=250)
+    except Exception:
+        return None
+    for w in res.get("workflows", []):
+        if "global error handler" in (w.get("name") or "").lower():
+            return w
+    return None
 
 
 def _load_handler_template(dashboard_url: str = "") -> dict:
@@ -263,10 +277,29 @@ async def handler_template(dashboard_url: str = ""):
     return _load_handler_template(dashboard_url)
 
 
+@router.get("/handler-status")
+async def handler_status():
+    """Whether the active instance already has the global error handler. Lets the
+    UI skip the install prompt (and avoid a duplicate) when it's already there."""
+    if not is_configured():
+        return {"configured": False, "installed": False}
+    existing = await _find_handler()
+    if not existing:
+        return {"configured": True, "installed": False}
+    return {
+        "configured": True,
+        "installed": True,
+        "active": bool(existing.get("active", False)),
+        "workflow_id": existing.get("id", ""),
+        "name": existing.get("name", _HANDLER_NAME),
+    }
+
+
 @router.post("/install-handler", dependencies=[Depends(require_trusted_request)])
 async def install_handler(req: _InstallHandlerRequest):
     """One-click install: import the global error-handler workflow into the
-    active n8n instance and (optionally) activate it.
+    active n8n instance and (optionally) activate it. Idempotent — if a handler
+    is already present it is reused (and activated) instead of importing a copy.
 
     n8n's public API cannot set a workflow as the instance-wide Error Workflow,
     so the caller still selects it once under n8n Settings -> Workflows ->
@@ -274,6 +307,27 @@ async def install_handler(req: _InstallHandlerRequest):
     """
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instance configured. Add one first.")
+
+    # Idempotency: never create a second copy. Reuse an existing handler if found.
+    existing = await _find_handler()
+    if existing:
+        wf_id = existing.get("id", "")
+        activated = bool(existing.get("active", False))
+        activation_error = ""
+        if req.activate and not activated and wf_id:
+            act = await n8n.set_workflow_active(wf_id, True)
+            activated = bool(act.get("success"))
+            if not activated:
+                activation_error = act.get("error", "activation failed")
+        return {
+            "success": True,
+            "workflow_id": wf_id,
+            "name": existing.get("name", _HANDLER_NAME),
+            "activated": activated,
+            "activation_error": activation_error,
+            "already_existed": True,
+        }
+
     wf = _load_handler_template(req.dashboard_url)
     result = await n8n.import_workflow(wf)
     if not result.get("success"):
@@ -293,4 +347,5 @@ async def install_handler(req: _InstallHandlerRequest):
         "name": result.get("name", ""),
         "activated": activated,
         "activation_error": activation_error,
+        "already_existed": False,
     }

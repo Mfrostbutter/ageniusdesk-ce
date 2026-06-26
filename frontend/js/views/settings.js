@@ -9,6 +9,7 @@ import { secretField, invalidateRefsCache } from '../components/secretfield.js';
 import { renderModules } from './settings-modules.js';
 import { openModal } from '../components/modal.js';
 import { renderQR } from '../vendor/qrcode.js';
+import { mountChecklist } from '../components/password-policy.js';
 
 const COLORS = ['#ff6d5a', '#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6', '#38bdf8', '#fb923c'];
 
@@ -28,6 +29,7 @@ export async function render(container) {
       <button class="tab-btn" data-tab="themes" onclick="window.__settingsTab('themes')">Themes</button>
       <button class="tab-btn" data-tab="error-handler" onclick="window.__settingsTab('error-handler')">Error Handler</button>
       <button class="tab-btn" data-tab="modules" onclick="window.__settingsTab('modules')">Modules</button>
+      <button class="tab-btn" data-tab="help" onclick="window.__settingsTab('help')">Help &amp; Tips</button>
     </div>
 
     <div id="settings-tab-content"></div>
@@ -53,11 +55,70 @@ function switchTab(tab) {
   else if (tab === 'themes') renderThemes(el);
   else if (tab === 'error-handler') renderErrorHandler(el);
   else if (tab === 'modules') renderModules(el);
+  else if (tab === 'help') renderHelp(el);
+}
+
+// ── Help & Tips ───────────────────────────────────────────────────────────────
+
+function renderHelp(el) {
+  const tipsOn = window.__tipsEnabled ? window.__tipsEnabled() : true;
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Page tips</span></div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">
+        Short coachmarks appear the first time you open each view, pointing out the
+        key controls. Manage them here.
+      </p>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="help-tips-toggle" ${tipsOn ? 'checked' : ''}
+               style="width:15px;height:15px;accent-color:var(--accent)">
+        Show page tips
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm" id="help-replay">Replay tips on this page</button>
+        <button class="btn btn-sm btn-ghost" id="help-reset">Reset all tips</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-dim);margin-top:10px">
+        "Replay" opens the tour for the last view you visited before Settings.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Setup</span></div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">
+        Reopen the guided setup if you dismissed it or want to revisit a step.
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm" id="help-checklist">Reopen setup checklist</button>
+        <button class="btn btn-sm btn-ghost" id="help-wizard">Reopen setup wizard</button>
+      </div>
+    </div>`;
+
+  el.querySelector('#help-tips-toggle')?.addEventListener('change', (e) => {
+    if (window.__setTipsEnabled) window.__setTipsEnabled(e.target.checked);
+  });
+  el.querySelector('#help-replay')?.addEventListener('click', () => {
+    // window.__currentView is "settings" right now, so target the prior view.
+    const prior = window.__priorView && window.__priorView !== 'settings' ? window.__priorView : 'settings';
+    if (window.__replayTour) window.__replayTour(prior);
+    if (prior !== 'settings' && window.__nav) window.__nav(prior);
+  });
+  el.querySelector('#help-reset')?.addEventListener('click', () => {
+    if (window.__resetTips) window.__resetTips();
+    toast.success('All tips reset. They will reappear as you visit views.');
+  });
+  el.querySelector('#help-checklist')?.addEventListener('click', () => {
+    try { localStorage.removeItem('agd_getstarted_dismissed'); } catch { /* ignore */ }
+    if (window.__nav) window.__nav('dashboard');
+  });
+  el.querySelector('#help-wizard')?.addEventListener('click', () => {
+    if (window.__openWizard) window.__openWizard();
+  });
 }
 
 // ── Instances ───────────────────────────────────────────────────────────────
 
-async function renderInstances(el) {
+export async function renderInstances(el) {
   el.innerHTML = `
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
@@ -565,7 +626,7 @@ window.__instCredentials = (id, name, url, color) => {
 
 // ── MCP Servers ─────────────────────────────────────────────────────────────
 
-async function renderMCP(el) {
+export async function renderMCP(el) {
   el.innerHTML = `
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
@@ -932,16 +993,20 @@ const ASSISTANT_MODELS = {
 // with ASSISTANT_MODELS as the fallback when the network call fails.
 const assistantModelCache = {};
 
-async function fetchAssistantModels(provider, ollamaUrl = '') {
-  const cached = assistantModelCache[provider];
+async function fetchAssistantModels(provider, ollamaUrl = '', keyRef = '') {
+  // Cache per (provider, key) so a custom-keyed area's live list doesn't shadow
+  // the convention-keyed one.
+  const cacheKey = `${provider}|${keyRef || ''}`;
+  const cached = assistantModelCache[cacheKey];
   if (cached && provider !== 'ollama') return cached;
   try {
     const qs = new URLSearchParams({ provider });
     if (provider === 'ollama' && ollamaUrl) qs.set('ollama_url', ollamaUrl);
+    if (keyRef) qs.set('api_key_ref', keyRef);
     const data = await get(`/api/assistant/models?${qs.toString()}`);
     const models = Array.isArray(data.models) ? data.models : [];
     if (models.length) {
-      assistantModelCache[provider] = models;
+      assistantModelCache[cacheKey] = models;
       return models;
     }
     return ASSISTANT_MODELS[provider] || [];
@@ -974,11 +1039,11 @@ const MODEL_JOB_SUBTITLE = {
 const MODEL_PROVIDERS = [['openrouter', 'OpenRouter'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['ollama', 'Ollama']];
 const MODEL_KEY_REF = { anthropic: '$ANTHROPIC_KEY', openai: '$OPEN_AI_KEY', openrouter: '$OPEN_ROUTER_KEY' };
 
-async function _fillJobModelSelect(modelSel, provider, preferred) {
+async function _fillJobModelSelect(modelSel, provider, preferred, keyRef = '') {
   if (!modelSel) return;
   modelSel.innerHTML = '<option value="">Loading...</option>';
   const ollamaUrl = provider === 'ollama' ? (document.getElementById('ai-ollama-url')?.value || '') : '';
-  const models = await fetchAssistantModels(provider, ollamaUrl);
+  const models = await fetchAssistantModels(provider, ollamaUrl, keyRef);
   let html = models.map(m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}</option>`).join('');
   if (!models.length) html = '<option value="">No models</option>';
   // Preserve a saved model that isn't in the live list (e.g. a custom id).
@@ -997,7 +1062,7 @@ async function _fillJobFallbackSelect(modelSel, provider, preferred) {
   await _fillJobModelSelect(modelSel, provider, preferred);
 }
 
-async function renderModelsTab(el) {
+export async function renderModelsTab(el) {
   const provOpts = MODEL_PROVIDERS.map(([v, n]) => `<option value="${v}">${n}</option>`).join('');
   const fbProvOpts = '<option value="">None (disabled)</option>' + provOpts;
   const taStyle = 'width:100%;box-sizing:border-box;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:10px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;resize:vertical;line-height:1.5';
@@ -1012,9 +1077,14 @@ async function renderModelsTab(el) {
       <div class="card" style="margin-bottom:16px">
         <div class="card-header"><span class="card-title" id="job-${key}-title">${key}</span></div>
         <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">${MODEL_JOB_SUBTITLE[key] || ''}</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
           <label>Provider<select id="job-${key}-provider">${provOpts}</select></label>
           <label>Model<select id="job-${key}-model"></select></label>
+        </div>
+        <label style="display:block;margin-bottom:4px">API key</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+          <select id="job-${key}-keyref" style="flex:1"></select>
+          <button class="btn btn-sm" id="job-${key}-test" type="button" style="white-space:nowrap">Test &amp; load models</button>
         </div>
         <div id="job-${key}-keyhint" style="font-size:11px;margin-bottom:10px;min-height:14px"></div>
         <label style="display:block">Instructions
@@ -1031,6 +1101,10 @@ async function renderModelsTab(el) {
             <label>Fallback model<select id="job-${key}-fbmodel"><option value="">None</option></select></label>
           </div>
         </details>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-dim)">
+          <button class="btn btn-primary btn-sm" id="job-${key}-save" type="button">Save</button>
+          <span id="job-${key}-save-result" style="font-size:12px"></span>
+        </div>
       </div>
     `).join('')}
 
@@ -1045,11 +1119,6 @@ async function renderModelsTab(el) {
         <span id="ai-shared-result" style="font-size:12px"></span>
       </div>
     </div>
-
-    <div style="display:flex;gap:10px;align-items:center;position:sticky;bottom:0;padding:12px 0;background:var(--bg-base);border-top:1px solid var(--border-dim)">
-      <button class="btn btn-primary" id="ai-jobs-save" type="button">Save all areas</button>
-      <span id="ai-jobs-result" style="font-size:12px"></span>
-    </div>
   `;
 
   let cfg = {};
@@ -1059,6 +1128,25 @@ async function renderModelsTab(el) {
   const keyStatus = cfg.key_status || {};
   const defaults = cfg.instruction_defaults || {};
   const labels = cfg.job_labels || { codelab: 'Code Lab', triage: 'Error Triage', assistant: 'General Assistant' };
+
+  // Stashed secrets, for the per-area "API key" dropdown. Each is { ref: "$NAME", hint }.
+  let secretRefs = [];
+  try { secretRefs = (await get('/api/admin/secrets/refs')).refs || []; } catch { /* offline */ }
+
+  // Build the <option> list for a key-ref select: a "use provider default" entry
+  // first, then every saved secret. The empty value means "convention key".
+  function keyRefOptions(selectedRef) {
+    const opts = [`<option value=""${!selectedRef ? ' selected' : ''}>Use provider default key</option>`];
+    for (const r of secretRefs) {
+      const sel = r.ref === selectedRef ? ' selected' : '';
+      opts.push(`<option value="${esc(r.ref)}"${sel}>${esc(r.ref)}${r.hint ? ` — ${esc(r.hint)}` : ''}</option>`);
+    }
+    // A saved value that no longer matches any secret still shows, so the user sees it.
+    if (selectedRef && !secretRefs.some(r => r.ref === selectedRef)) {
+      opts.push(`<option value="${esc(selectedRef)}" selected>${esc(selectedRef)} (not found)</option>`);
+    }
+    return opts.join('');
+  }
 
   const ollamaInput = document.getElementById('ai-ollama-url');
   if (ollamaInput) ollamaInput.value = cfg.ollama_url || 'http://localhost:11434';
@@ -1074,11 +1162,17 @@ async function renderModelsTab(el) {
       hintEl.innerHTML = '<span style="color:var(--text-dim)">No API key needed (uses the shared Ollama URL below).</span>';
       return;
     }
+    // An explicit secret chosen for this area takes precedence over the convention key.
+    const chosenRef = document.getElementById(`job-${key}-keyref`)?.value || '';
+    if (chosenRef) {
+      hintEl.innerHTML = `<span style="color:var(--success, #34d399)">&#10003; Using ${esc(chosenRef)} for this area</span>`;
+      return;
+    }
     const ok = !!keyStatus[prov];
     if (ok) {
-      hintEl.innerHTML = `<span style="color:var(--success, #34d399)">&#10003; ${esc(prov)} key found in Secrets</span>`;
+      hintEl.innerHTML = `<span style="color:var(--success, #34d399)">&#10003; ${esc(prov)} key found in Secrets (${esc(MODEL_KEY_REF[prov] || '')})</span>`;
     } else {
-      hintEl.innerHTML = `<span style="color:var(--warning, #fbbf24)">&#9888; ${esc(prov)} key missing &mdash; add ${esc(MODEL_KEY_REF[prov] || '')} in the <a href="#" class="job-go-secrets" style="color:var(--accent)">Secrets tab</a></span>`;
+      hintEl.innerHTML = `<span style="color:var(--warning, #fbbf24)">&#9888; no ${esc(prov)} key &mdash; add ${esc(MODEL_KEY_REF[prov] || '')} in <a href="#" class="job-go-secrets" style="color:var(--accent)">Secrets</a>, or pick a saved key above</span>`;
       hintEl.querySelector('.job-go-secrets')?.addEventListener('click', goSecrets);
     }
   }
@@ -1095,11 +1189,46 @@ async function renderModelsTab(el) {
 
     provSel.value = j.provider || 'openrouter';
     instr.value = j.instructions || '';
-    await _fillJobModelSelect(modelSel, provSel.value, j.model || '');
+    const keyRefSel = document.getElementById(`job-${key}-keyref`);
+    if (keyRefSel) keyRefSel.innerHTML = keyRefOptions(j.api_key_ref || '');
+
+    // Reload the model list live using whatever key this area is set to (the
+    // chosen secret, else the convention key). Optionally test the connection
+    // first and surface the result in the key hint — done when the user picks a
+    // key, so selecting a key both validates it and pulls the full live list.
+    const refreshArea = async (test) => {
+      const prov = provSel.value;
+      const keyRef = keyRefSel ? keyRefSel.value : '';
+      const hintEl = document.getElementById(`job-${key}-keyhint`);
+      if (test && prov !== 'ollama') {
+        if (hintEl) hintEl.innerHTML = '<span style="color:var(--text-dim)">Testing connection&hellip;</span>';
+        let ok = false, errMsg = '';
+        try {
+          const r = await post('/api/assistant/test-creds', { provider: prov, api_key_ref: keyRef, model: modelSel.value || '' });
+          ok = !!r.ok; errMsg = r.error || '';
+        } catch (e) { errMsg = e.message; }
+        await _fillJobModelSelect(modelSel, prov, modelSel.value || '', keyRef);
+        if (hintEl) {
+          hintEl.innerHTML = ok
+            ? `<span style="color:var(--success, #34d399)">&#10003; Connected${keyRef ? ` with ${esc(keyRef)}` : ''} &mdash; live models loaded</span>`
+            : `<span style="color:var(--error)">&#10007; ${esc(errMsg || 'Connection failed')}</span>`;
+        }
+      } else {
+        await _fillJobModelSelect(modelSel, prov, modelSel.value || '', keyRef);
+        renderKeyHint(key);
+      }
+    };
+
+    await _fillJobModelSelect(modelSel, provSel.value, j.model || '', keyRefSel ? keyRefSel.value : '');
     renderKeyHint(key);
+    if (keyRefSel) keyRefSel.addEventListener('change', () => refreshArea(true));
+    document.getElementById(`job-${key}-test`)?.addEventListener('click', () => refreshArea(true));
     provSel.addEventListener('change', async () => {
-      await _fillJobModelSelect(modelSel, provSel.value, '');
-      renderKeyHint(key);
+      // A key chosen for the old provider won't authenticate the new one; reset
+      // to the provider-default key so the model list reloads cleanly.
+      if (keyRefSel) keyRefSel.value = '';
+      modelSel.value = '';
+      await refreshArea(false);
     });
 
     fbProv.value = j.fallback_provider || '';
@@ -1110,40 +1239,40 @@ async function renderModelsTab(el) {
       e.preventDefault();
       instr.value = defaults[key] || '';
     });
-  }
 
-  const saveBtn = document.getElementById('ai-jobs-save');
-  saveBtn?.addEventListener('click', async () => {
-    const out = {};
-    for (const key of MODEL_JOB_ORDER) {
+    // Per-area Save: only this area's config is sent. The /jobs endpoint merges
+    // partial payloads, so the other two areas are left untouched.
+    document.getElementById(`job-${key}-save`)?.addEventListener('click', async (e) => {
       const fbp = document.getElementById(`job-${key}-fbprovider`).value;
-      out[key] = {
+      const payload = {
         provider: document.getElementById(`job-${key}-provider`).value,
         model: document.getElementById(`job-${key}-model`).value,
         instructions: document.getElementById(`job-${key}-instructions`).value,
         fallback_provider: fbp,
         fallback_model: fbp ? document.getElementById(`job-${key}-fbmodel`).value : '',
+        api_key_ref: document.getElementById(`job-${key}-keyref`)?.value || '',
       };
-    }
-    const res = document.getElementById('ai-jobs-result');
-    saveBtn.disabled = true;
-    try {
-      await post('/api/assistant/jobs', { jobs: out });
-      // A saved area model supersedes any sticky inline session pick, and a
-      // mounted Code Lab / Assistant picker updates live.
+      const btn = e.currentTarget;
+      const res = document.getElementById(`job-${key}-save-result`);
+      btn.disabled = true;
       try {
-        sessionStorage.removeItem('ageniusdesk:codelab_override');
-        sessionStorage.removeItem('ageniusdesk:assistant_override');
-      } catch { /* ignore */ }
-      try { window.dispatchEvent(new CustomEvent('agd:area-defaults-saved', { detail: out })); } catch { /* ignore */ }
-      if (res) { res.textContent = 'Saved'; res.style.color = 'var(--success, #34d399)'; }
-      toast.success('Areas saved');
-    } catch (e) {
-      if (res) { res.textContent = e.message; res.style.color = 'var(--error)'; }
-    } finally {
-      saveBtn.disabled = false;
-    }
-  });
+        await post('/api/assistant/jobs', { jobs: { [key]: payload } });
+        // A saved area model supersedes any sticky inline session pick, and a
+        // mounted Code Lab / Assistant picker updates live.
+        try {
+          sessionStorage.removeItem('ageniusdesk:codelab_override');
+          sessionStorage.removeItem('ageniusdesk:assistant_override');
+        } catch { /* ignore */ }
+        try { window.dispatchEvent(new CustomEvent('agd:area-defaults-saved', { detail: { [key]: payload } })); } catch { /* ignore */ }
+        if (res) { res.textContent = 'Saved'; res.style.color = 'var(--success, #34d399)'; }
+        toast.success(`${labels[key] || key} saved`);
+      } catch (err) {
+        if (res) { res.textContent = err.message; res.style.color = 'var(--error)'; }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 
   document.getElementById('ai-shared-save')?.addEventListener('click', async () => {
     const res = document.getElementById('ai-shared-result');
@@ -1275,8 +1404,10 @@ async function renderAccount(el) {
     <div class="card" style="margin-bottom:16px">
       <h3 style="margin-top:0">Account</h3>
       <p class="muted" style="margin:0">
-        Signed in as <strong>${_esc(me.username)}</strong>
+        Signed in as <strong>${_esc(me.email || me.username)}</strong>
         <span class="badge">${_esc(me.role)}</span></p>
+      ${me.display_name && me.display_name !== me.username
+        ? `<p class="muted" style="margin:6px 0 0;font-size:12px">${_esc(me.display_name)}</p>` : ''}
       <button class="btn btn-secondary" id="acc-logout" style="margin-top:14px">Sign out</button>
     </div>
 
@@ -1286,7 +1417,8 @@ async function renderAccount(el) {
         <input type="password" id="pw-cur" autocomplete="current-password"></div>
       <div class="field"><label>New password</label>
         <input type="password" id="pw-new" autocomplete="new-password"></div>
-      <div class="field"><label>Confirm new password</label>
+      <div id="pw-ck"></div>
+      <div class="field" style="margin-top:12px"><label>Confirm new password</label>
         <input type="password" id="pw-new2" autocomplete="new-password"></div>
       <button class="btn btn-primary" id="pw-save" style="margin-top:18px">Update password</button>
       <div id="pw-msg" class="muted" style="margin-top:10px"></div>
@@ -1307,16 +1439,25 @@ async function renderAccount(el) {
     catch (e) { toast.error(e.message); }
   };
 
+  // Live password-policy checklist on the new-password field. Policy comes from
+  // the (unauthenticated) status endpoint so it always mirrors the server.
+  let pwChecklist = null;
+  get('/api/auth/status')
+    .then(s => { pwChecklist = mountChecklist(el.querySelector('#pw-ck'), el.querySelector('#pw-new'), s.password_policy); })
+    .catch(() => { pwChecklist = mountChecklist(el.querySelector('#pw-ck'), el.querySelector('#pw-new'), null); });
+
   el.querySelector('#pw-save').onclick = async () => {
     const cur = el.querySelector('#pw-cur').value;
     const nw = el.querySelector('#pw-new').value;
     const nw2 = el.querySelector('#pw-new2').value;
     const msg = el.querySelector('#pw-msg');
+    if (pwChecklist && !pwChecklist.isValid()) { msg.textContent = 'Password does not meet the requirements below'; return; }
     if (nw !== nw2) { msg.textContent = 'New passwords do not match'; return; }
     try {
       await post('/api/auth/password', { current_password: cur, new_password: nw });
       msg.textContent = 'Password updated. Other sessions were signed out.';
       el.querySelector('#pw-cur').value = el.querySelector('#pw-new').value = el.querySelector('#pw-new2').value = '';
+      if (pwChecklist) pwChecklist.refresh();
     } catch (e) { msg.textContent = e.message; }
   };
 

@@ -204,41 +204,64 @@ def provider_key_status() -> dict:
 
 
 def _resolve_override(cfg: dict, override: dict | None) -> dict | str:
-    """Apply an {provider, model} override to a cfg dict.
+    """Apply an {provider, model, api_key_ref} override to a cfg dict.
 
-    Returns the mutated cfg on success, or an error message string if the
-    override can't be applied (unknown provider, missing convention secret).
-    Does not mutate the caller's dict; returns a new one.
+    Key resolution is deterministic for non-ollama providers, regardless of
+    whether the provider changed:
+      1. If `api_key_ref` is given (a $NAME chosen in the Models area), resolve
+         exactly that secret.
+      2. Otherwise resolve the per-provider convention secret
+         ($ANTHROPIC_KEY / $OPEN_AI_KEY / $OPEN_ROUTER_KEY).
+      3. Otherwise, if the provider matches the saved global provider and a
+         legacy global key exists, use that.
+
+    Returns the new cfg on success, or an error message string if the override
+    can't be applied (unknown provider, missing/empty secret). Does not mutate
+    the caller's dict.
     """
     cfg = dict(cfg)
     if not override:
         return cfg
-    ov_provider = override.get("provider")
+    prev_provider = cfg.get("provider")
+    ov_provider = override.get("provider") or prev_provider
     ov_model = override.get("model")
-    provider_changed = bool(ov_provider) and ov_provider != cfg["provider"]
+    ov_key_ref = (override.get("api_key_ref") or "").strip()
 
-    if provider_changed:
-        if ov_provider == "ollama":
-            cfg["provider"] = "ollama"
-            cfg["api_key"] = ""
+    if ov_provider == "ollama":
+        cfg["provider"] = "ollama"
+        cfg["api_key"] = ""
+    else:
+        if ov_key_ref:
+            # Explicit secret chosen for this area. Resolve exactly it.
+            ref = ov_key_ref if ov_key_ref.startswith("$") else f"${ov_key_ref}"
+            bare = ref[1:]
+            resolved = decrypt_value(ref)
+            # decrypt_value returns the bare name when the $VAR is not found.
+            if not resolved or resolved == bare:
+                return (
+                    f"The selected key {ref} is empty or not found. "
+                    f"Pick a different secret for this area in Models."
+                )
         else:
             name = PROVIDER_KEY_MAP.get(ov_provider)
             if not name:
                 return f"Unknown provider: {ov_provider}"
             resolved = decrypt_value(f"${name}")
-            # decrypt_value returns the bare name when the $VAR is not found
-            # in env or the secrets store.
             if not resolved or resolved == name:
-                return (
-                    f"{ov_provider} is not configured. "
-                    f"Add ${name} in Settings > Secrets."
-                )
-            cfg["provider"] = ov_provider
-            cfg["api_key"] = resolved
+                # Fall back to the legacy global key when the provider matches.
+                if ov_provider == prev_provider and cfg.get("api_key"):
+                    resolved = cfg["api_key"]
+                else:
+                    return (
+                        f"{ov_provider} is not configured. Add ${name} in "
+                        f"Settings > Secrets, or pick a saved key for this area in Models."
+                    )
+        cfg["provider"] = ov_provider
+        cfg["api_key"] = resolved
 
     if ov_model:
         cfg["model"] = ov_model
-    elif provider_changed:
+    elif ov_provider != prev_provider:
         cfg["model"] = PROVIDER_DEFAULTS.get(ov_provider, cfg["model"])
 
     return cfg
@@ -1125,13 +1148,16 @@ _LIVE_FETCHERS = {
 }
 
 
-async def list_provider_models(provider: str) -> dict[str, Any]:
+async def list_provider_models(provider: str, api_key_ref: str = "") -> dict[str, Any]:
     """Return a shaped model list for a provider, preferring live data.
 
     Result: {"models": [...], "source": "live" | "cached" | "fallback", "cached_at": float?}
 
-    - If the provider has a resolvable API key, we call the live models
-      endpoint. Result is cached in-memory for 5 minutes.
+    - `api_key_ref` (a $NAME chosen for a Models area) takes precedence; the live
+      models endpoint is called with that exact secret. When empty, the
+      per-provider convention key is used.
+    - Result is cached in-memory for 5 minutes, keyed per resolved key so two
+      areas using different keys for the same provider don't evict each other.
     - On any error (no key, network, auth, timeout) we log WARNING and return
       the hardcoded fallback list. Never hard-errors.
     """
@@ -1140,13 +1166,19 @@ async def list_provider_models(provider: str) -> dict[str, Any]:
         # Providers without a live fetcher (e.g. something we haven't wired)
         return {"models": _FALLBACK_MAP.get(p, []), "source": "fallback"}
 
-    api_key = _resolve_provider_key(p)
+    if api_key_ref:
+        ref = api_key_ref if api_key_ref.startswith("$") else f"${api_key_ref}"
+        resolved = decrypt_value(ref)
+        api_key = "" if (not resolved or resolved == ref[1:]) else resolved
+    else:
+        api_key = _resolve_provider_key(p)
     key_fp = _key_fingerprint(api_key)
+    cache_key = f"{p}:{key_fp}"
 
-    # Cache hit check (still within TTL AND same key fingerprint)
-    cached = _MODEL_CACHE.get(p)
+    # Cache hit check (still within TTL for this exact key)
+    cached = _MODEL_CACHE.get(cache_key)
     now = time.time()
-    if cached and (now - cached["at"]) < _MODEL_CACHE_TTL and cached.get("key_fp") == key_fp:
+    if cached and (now - cached["at"]) < _MODEL_CACHE_TTL:
         return {
             "models": cached["models"],
             "source": "cached",
@@ -1164,7 +1196,7 @@ async def list_provider_models(provider: str) -> dict[str, Any]:
             # Provider returned 200 but no models — treat as fallback.
             logger.warning("%s /v1/models returned empty list; using fallback", p)
             return {"models": _FALLBACK_MAP.get(p, []), "source": "fallback"}
-        _MODEL_CACHE[p] = {"at": now, "models": models, "key_fp": key_fp}
+        _MODEL_CACHE[cache_key] = {"at": now, "models": models}
         return {"models": models, "source": "live", "cached_at": now}
     except httpx.HTTPStatusError as e:
         body = e.response.text[:200] if e.response is not None else ""

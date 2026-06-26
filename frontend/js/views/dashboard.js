@@ -8,6 +8,7 @@ import { get, post, del, onEvent } from '../api.js';
 import * as toast from '../components/toast.js';
 import * as assistantDock from '../components/assistant-dock.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
+import * as getstarted from '../components/getstarted.js';
 
 // ── Widget registry ──────────────────────────────────────────────────────────
 
@@ -117,9 +118,13 @@ export async function render(container) {
         ${dash.id !== 'main' ? `<button id="dash-delete-btn" class="btn btn-sm btn-ghost" style="color:var(--error)">Delete</button>` : ''}
       </div>
     </div>
+    <div id="getstarted-slot"></div>
     <div id="welcome-n8n-slot"></div>
     <div id="widget-grid"></div>
   `;
+
+  // Setup Journey card (self-hides once core setup is done or dismissed).
+  getstarted.mount(container.querySelector('#getstarted-slot'));
 
   const grid = container.querySelector('#widget-grid');
   renderWidgetGrid(grid, dashId);
@@ -139,6 +144,11 @@ export async function render(container) {
     if (dot) { dot.classList.remove('hidden'); dot.classList.add('error-pulse'); }
     prependError(data);
   });
+
+  // Lightweight refresh hook for callers that change instance/workflow state
+  // (e.g. installing the error handler) so the stats + widgets update without a
+  // full re-navigation.
+  window.__refreshDashboard = () => { loadDashboardData(); loadInstances(); };
 
   loadDashboardData();
   loadInstances();
