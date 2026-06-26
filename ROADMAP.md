@@ -2,6 +2,8 @@
 
 AgeniusDesk Community Edition is a lightweight, open-source control plane for n8n. The roadmap prioritizes stability, extensibility, and the features operators need most.
 
+Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
+
 ## Current Release: v0.1.0 (2026-06-23)
 
 ### Completed Features
@@ -23,6 +25,49 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 - Docker Compose deployment with setup wizard
 - Comprehensive documentation and contributing guidelines
 
+### Shipped since v0.1.0
+
+- Authentication and accounts: owner account, session login, optional TOTP two-factor, password reset, login throttling/lockout, and CSRF protection ([spec](docs/specs/2026-06-24-authorization-and-accounts.md))
+- Role-based access control: viewer / operator / admin enforced per router group
+- Onboarding: derived-state Setup Journey ("Get started" card) plus per-view page coachmarks ([spec](docs/specs/2026-06-24-onboarding-and-coachmarks.md))
+- AgeniusDesk wordmark on the login splash
+
+---
+
+## Next Release (v0.2) — In Progress
+
+Sequenced: observability first, then the community-module pipeline and its first module.
+
+### 1. OpenTelemetry observability ([spec](docs/specs/2026-06-26-opentelemetry-observability.md))
+
+Push-based, per-node execution visibility. Hybrid design: an embedded OTLP/HTTP receiver MVP (spans/metrics to SQLite with bounded retention and a trace-waterfall Observability view) plus an optional one-click external stack (OpenTelemetry Collector + Tempo + Prometheus + Grafana). Additive to Insights, not a replacement.
+
+- [ ] OTLP/HTTP receiver (traces) with token auth (`AGD_OTEL_TOKEN`) and body limits
+- [ ] Span storage with bounded retention (age + row cap) and a pruning task
+- [ ] Observability view: recent-traces list + parent/child trace waterfall
+- [ ] Metrics ingest + the throughput / error-rate / latency strip
+- [ ] Live WebSocket updates + cross-links from Insights and Errors
+- [ ] Optional external-stack one-click template + Grafana linking
+
+### 2. Community module security: scan + consent ([spec](docs/specs/2026-06-26-community-module-security-and-youtube-research.md))
+
+Make installing a community module a deliberate, informed act. Capability manifest, an AST static scanner, a two-phase inspect/install flow with proportional consent, and a tamper-evident audit trail. Heuristic review, not a sandbox; out-of-process isolation is the deferred real boundary (see Future Directions).
+
+- [ ] Capability manifest schema + validation
+- [ ] AST static scanner + fixtures (declared-vs-detected diff)
+- [ ] Two-phase inspect/install + consent + `module_installs` audit table
+- [ ] Consent modal + per-module capability/scan surfacing
+- [ ] Optional manifest signature verification + provenance display
+
+### 3. YouTube research module (first community module)
+
+Built against the pipeline above as its first consumer. Captions-only v1, Inbox -> classify + tag -> auto-file into the Harness research vault, with a scaffolded starter taxonomy. Distributed as its own GitHub repo and installed through the scan/consent flow. Whisper transcription fallback and out-of-process isolation are deferred (see Future Directions).
+
+### Release hygiene
+
+- [ ] Logout control in the app chrome (finishes the auth spec, Section 7.3)
+- [ ] Persistent Code Lab across instance switch: keep the editor contents (e.g. a workflow JSON being built) intact when switching the active instance, so an operator can author on one instance and deploy to another without losing work
+
 ---
 
 ## Near-Term (Next 2-3 Months)
@@ -30,27 +75,31 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 - [ ] **More container templates**: MySQL, MongoDB, Minio, additional databases and services
 - [ ] **Richer Code Lab**: code snippets library, n8n node documentation sidebar, template expansion
 - [ ] **Additional knowledge connectors**: HTTP fetch, GitHub, API connectors beyond Qdrant
+- [ ] **Harness skills section**: a library of skills in the Harness that agent instructions can point at for specific areas of concern, so an agent loads focused, domain-specific guidance on demand
+- [ ] **Curate high-quality n8n skills**: source and vet excellent n8n-focused skills (node config, expressions, workflow patterns) to ship as starting content for the Harness skills section
 - [ ] **Workflow version history**: snapshot on import, diff viewer, restore from snapshot
 - [ ] **Scheduled backups**: automated per-instance backup with configurable retention
 - [ ] **Health monitoring**: configurable endpoint polling, uptime tracking, SLA dashboards
 - [ ] **Expanded notification sinks**: email, PagerDuty, webhook routing per instance
-- [ ] **Security audit scan**: detect missing error handlers, unused credentials, exposed webhooks
+- [ ] **Workflow security audit scan**: detect missing error handlers, unused credentials, exposed webhooks (this audits n8n workflows; distinct from the community-module code scanner in v0.2)
+- [ ] **Project landing page**: a public web page introducing AgeniusDesk CE (overview, screenshots, install, docs and repo links)
 
 ---
 
-## Medium-Term (v0.2 Concept)
+## Medium-Term (v0.3 Concept)
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
-- [ ] **User roles and permissions**: operator, viewer, workflow-trigger-only roles
-- [ ] **Audit logging**: track all user actions for compliance
+- [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
 - [ ] **Cost tracking integration**: aggregate LLM spend and n8n execution metrics
 - [ ] **Workflow promotion**: promote workflows across dev, staging, production instances
-- [ ] **Public API stabilization**: versioned `/api/v1` endpoints with X-API-Key auth
+- [ ] **Public API hardening**: expand and stabilize the existing versioned `/api/v1` (X-API-Key) surface
 
 ---
 
 ## Future Directions
 
+- **Out-of-process module isolation**: run community modules in a sandboxed subprocess behind an RPC contract (the real security boundary the v0.2 scan/consent layer bridges until it lands)
+- Whisper transcription fallback for the YouTube research module (videos without captions; never a bundled GPU dependency)
 - Workflow diff viewer (visual side-by-side comparison)
 - External secret sources (1Password, AWS Secrets Manager, Vault)
 - Git integration (export workflows to repos, branch-based environments)
