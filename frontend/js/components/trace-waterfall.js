@@ -62,11 +62,17 @@ export function buildWaterfall(spans) {
     const barColor = isErr ? 'var(--error)' : 'var(--accent)';
     const indent = (dmap[s.span_id] || 0) * 14;
 
+    // n8n names every node span "node.execute"; the useful label is in the
+    // attributes (n8n.node.name / n8n.workflow.name). Fall back to the span name.
+    const a = s.attributes || {};
+    const label = a['n8n.node.name'] || a['n8n.workflow.name'] || s.name;
+    const kindHint = a['n8n.node.type'] || s.name;
+
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:3px 0;cursor:pointer';
     row.innerHTML = `
-      <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${esc(s.name)}">
-        ${isErr ? '<span style="color:var(--error)">●</span> ' : ''}${esc(s.name)}
+      <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${esc(label)} (${esc(kindHint)})">
+        ${isErr ? '<span style="color:var(--error)">●</span> ' : ''}${esc(label)}
       </div>
       <div style="flex:1;position:relative;height:16px;background:var(--bg-input,rgba(255,255,255,.04));border-radius:3px">
         <div style="position:absolute;left:${leftPct}%;width:${widthPct}%;top:2px;height:12px;background:${barColor};border-radius:3px;min-width:2px"></div>
