@@ -42,6 +42,149 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 3000
 
 The backend will start on port 3000. Access at `http://localhost:3000`.
 
+## Deploy on a VPS as a public web app (DigitalOcean, Hostinger, etc.)
+
+This takes you from a fresh Ubuntu VPS to AgeniusDesk on your own domain with automatic HTTPS, reachable from anywhere. About 15 minutes. Commands assume Ubuntu 22.04 or 24.04 LTS; adapt the package steps for other distros. Any provider works (DigitalOcean, Hostinger, Linode, Hetzner, Vultr, AWS Lightsail); you just need an Ubuntu VPS with a public IP and SSH access.
+
+**Cost/size:** 1 GB RAM / 1 vCPU / 20 GB disk is the minimum. 2 GB RAM is comfortable once you use the AI assistant and manage several instances.
+
+### 1. Create the server
+
+- **DigitalOcean:** Create > Droplets > Ubuntu 24.04 LTS, Basic / Regular, 2 GB / 1 vCPU. Add your SSH key. (Or pick the "Docker on Ubuntu" Marketplace image to skip step 5.)
+- **Hostinger:** VPS > choose a plan > set the OS to the **Ubuntu 24.04 with Docker** template in hPanel (or plain Ubuntu 24.04). Add your SSH key or note the root password.
+- Note the server's public **IP address**.
+
+### 2. Point a domain at it
+
+Create a DNS **A record** for the hostname you want (e.g. `app.example.com`) pointing at the VPS's public IP. A subdomain is fine. Wait until it resolves (`ping app.example.com` returns the VPS IP). HTTPS in step 8 will not issue a certificate until this works.
+
+### 3. Log in and create a non-root user
+
+```bash
+ssh root@YOUR_SERVER_IP
+adduser deploy && usermod -aG sudo deploy
+rsync --archive --chown=deploy:deploy ~/.ssh /home/deploy   # copy your SSH key over
+```
+
+Recommended hardening: edit `/etc/ssh/sshd_config` to set `PermitRootLogin no` and `PasswordAuthentication no`, then `sudo systemctl restart ssh`. Reconnect as `deploy@YOUR_SERVER_IP` for the rest.
+
+### 4. Firewall
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+Do **not** open port 3000. Important: Docker writes its own iptables rules and **bypasses ufw for published ports**, so a port published on `0.0.0.0` is reachable from the internet even with `ufw deny 3000`. Step 6 binds the app to localhost so this can't happen.
+
+### 5. Install Docker
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER && newgrp docker   # use docker without sudo
+```
+
+Skip this if you used a Docker Marketplace/template image.
+
+### 6. Get AgeniusDesk and bind it to localhost only
+
+```bash
+git clone https://github.com/Mfrostbutter/ageniusdesk-ce.git
+cd ageniusdesk-ce
+cp .env.example .env
+```
+
+Edit `docker-compose.yml` so the dashboard is published only on the loopback interface. The reverse proxy in front (step 8) still reaches it; the internet cannot:
+
+```yaml
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+```
+
+### 7. Configure `.env` for a public deployment
+
+Generate a master encryption key and set the public URL and origin:
+
+```bash
+echo "SECRET_KEY=$(openssl rand -base64 36)" >> .env
+```
+
+Then edit `.env` and set at least:
+
+```bash
+AGD_DISABLE_LOGIN=false                    # keep login ON (this is public)
+AGD_PUBLIC_URL=https://app.example.com     # your domain; used for reset-email links
+AGD_CORS_ORIGINS=https://app.example.com   # lock CORS to your domain
+AGD_TRUST_FORWARDED_FOR=true               # correct client IPs behind the proxy (login throttling)
+ANTHROPIC_KEY=sk-ant-...                   # or OPEN_AI_KEY / OPEN_ROUTER_KEY / OLLAMA_URL
+```
+
+Start it and confirm it is up on the loopback:
+
+```bash
+docker compose up -d --build
+curl -I http://127.0.0.1:3000/api/status   # a 200/3xx means it is running
+```
+
+### 8. Put a reverse proxy in front for automatic HTTPS
+
+Pick **one** of the two paths. Both use [Caddy](https://caddyserver.com), which fetches and renews Let's Encrypt certificates automatically and proxies WebSockets without extra config.
+
+**Path A: Caddy on the host (recommended, simplest).**
+
+```bash
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install -y caddy
+```
+
+Set `/etc/caddy/Caddyfile` to (use your domain):
+
+```caddy
+app.example.com {
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+```bash
+sudo systemctl reload caddy
+```
+
+**Path B: Caddy as a container (everything in Docker).** The repo ships templates for this:
+
+```bash
+cp Caddyfile.example Caddyfile        # edit the domain inside
+# (you already bound the dashboard to 127.0.0.1 in step 6)
+docker compose -f docker-compose.yml -f docker-compose.prod.example.yml up -d --build
+```
+
+The bundled `docker-compose.prod.example.yml` adds a Caddy service on ports 80/443 that proxies to `dashboard:3000` over the internal Docker network and stores its certificates in a named volume.
+
+### 9. Create your owner account
+
+Open `https://app.example.com`. The first visit forces you to create the owner (admin) account, then requires login. It is now reachable from anywhere over HTTPS.
+
+### Hardening for a public deployment
+
+The app is internet-facing now. Confirm:
+
+- **Keep login ON** (`AGD_DISABLE_LOGIN=false`). Never disable it on a public host.
+- Enable **TOTP two-factor** in Settings > Account, and use a strong owner password.
+- **The Docker socket is root on the host.** The default `docker-compose.yml` mounts `/var/run/docker.sock` so the Containers tab can manage containers. On a public box this means any admin who logs in can control the host. Either keep it (it is gated behind admin login, so protect that account) or remove the `/var/run/docker.sock:/var/run/docker.sock` line to disable container management.
+- `AGD_CORS_ORIGINS` is set to your exact domain (step 7).
+- Optional: put **Cloudflare** in front (proxy the A record) for DDoS protection and an extra auth layer. With Cloudflare Access you can add `AGD_TRUST_EDGE_AUTH=true`, but only if the app is reachable *exclusively* through Cloudflare.
+- Optional: set `AGD_SMTP_*` so password-reset emails send (otherwise the reset link is written to the container log).
+- Run through the full [Deployment hardening checklist](architecture/security.md#deployment-hardening-checklist-public-bind).
+
+### Day-2: update, back up, logs
+
+- **Update:** `cd ageniusdesk-ce && git pull && docker compose up -d --build` (add `-f docker-compose.prod.example.yml` if you used Path B).
+- **Back up** the encryption key, database, and secrets (see [Backup and Recovery](#backup-and-recovery)). The data lives in the `dashboard-data` Docker volume.
+- **Logs:** `docker compose logs -f dashboard`; for the proxy, `journalctl -u caddy -f` (Path A) or `docker compose logs -f caddy` (Path B).
+
 ## Configuration
 
 See [docs/CONFIG.md](CONFIG.md) for all environment variables.

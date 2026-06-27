@@ -7,6 +7,7 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 Targeting v0.3.
 
 ### Added
+- **VPS deployment guide.** A step-by-step walkthrough for hosting AgeniusDesk as a public web app on your own domain (DigitalOcean, Hostinger, or any Ubuntu VPS): provision, point DNS, run in Docker bound to localhost, and front it with Caddy for automatic HTTPS, plus a public-deployment hardening checklist. Ships `docker-compose.prod.example.yml` (Caddy reverse-proxy overlay) and `Caddyfile.example` so the all-Docker path is copy-paste. See [docs/DEPLOY.md](docs/DEPLOY.md).
 - **Community-module frontend isolation (sandboxed iframe).** A community module's frontend view no longer runs in the app page. It loads in an `<iframe sandbox="allow-scripts ...">` without `allow-same-origin`, so the module's code runs in an opaque origin and cannot read or change the host DOM, `window`, cookies, or storage: a buggy or hostile module can break itself but not the AgeniusDesk UI. The module reaches the host only through a `postMessage` bridge that reimplements `window.AgeniusDesk` (`fetch`, `notify`, `navigate`, `openInHarness`); the host verifies the message source and restricts `fetch` to same-origin `/api/` paths (adding auth and CSRF host-side). The host also pushes the active theme's CSS variables into the frame and auto-resizes it to content height. Module code that already uses `AgeniusDesk.*` keeps working unchanged. Out-of-process backend isolation remains the deferred boundary.
 
 ### Next

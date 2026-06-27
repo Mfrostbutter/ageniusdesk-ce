@@ -1,0 +1,17 @@
+# Caddyfile for AgeniusDesk behind automatic HTTPS (Let's Encrypt).
+#
+# Replace app.example.com with your domain. Its DNS A record must already point
+# at this server, and ports 80 + 443 must be open, before Caddy can get a cert.
+#
+# Used by docker-compose.prod.example.yml, where Caddy reaches the dashboard by
+# its compose service name (dashboard:3000).
+#
+# If you run Caddy directly on the host instead (apt install caddy), change the
+# upstream to 127.0.0.1:3000 and place this file at /etc/caddy/Caddyfile.
+#
+# Caddy handles the HTTP->HTTPS redirect, certificate issuance/renewal, and
+# WebSocket upgrades automatically. See docs/DEPLOY.md.
+
+app.example.com {
+	reverse_proxy dashboard:3000
+}

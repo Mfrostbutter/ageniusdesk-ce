@@ -1,0 +1,38 @@
+# docker-compose.prod.example.yml
+#
+# Production overlay: puts a Caddy reverse proxy in front of the dashboard for
+# automatic HTTPS (Let's Encrypt), so AgeniusDesk is reachable at your own
+# domain from anywhere, with no host-level web server to configure.
+#
+# Full walkthrough: docs/DEPLOY.md ("Deploy on a VPS as a public web app").
+#
+# Quick use:
+#   1. cp Caddyfile.example Caddyfile     # then set your domain in Caddyfile
+#   2. In docker-compose.yml, bind the dashboard to loopback so port 3000 is NOT
+#      public (Docker bypasses ufw for published ports):
+#          ports:
+#            - "127.0.0.1:${PORT:-3000}:3000"
+#   3. Open ports 80 and 443 on your firewall (never 3000).
+#   4. docker compose -f docker-compose.yml -f docker-compose.prod.example.yml up -d --build
+#
+# Caddy reaches the dashboard over the compose network by service name
+# (dashboard:3000), so the loopback bind above does not affect it; it only keeps
+# the app off the public internet except through Caddy.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # issued certificates (persist across restarts)
+      - caddy-config:/config
+    depends_on:
+      - dashboard
+
+volumes:
+  caddy-data:
+  caddy-config:

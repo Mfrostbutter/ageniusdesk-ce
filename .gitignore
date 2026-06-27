@@ -31,6 +31,11 @@ node_modules/
 .playwright-mcp/
 docker-compose.override.yml
 
+# Production deploy: real overlay + Caddyfile carry your domain; the *.example
+# templates are tracked, these are not.
+docker-compose.prod.yml
+/Caddyfile
+
 # Syncthing
 .stfolder/
 .stversions/

@@ -120,6 +120,10 @@ cp .env.example .env
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 3000
 ```
 
+### Host it on a server (access from anywhere)
+
+Want to reach AgeniusDesk from any device over HTTPS on your own domain? The deployment guide has a step-by-step walkthrough for a public VPS (DigitalOcean, Hostinger, etc.): provision the server, point a domain at it, run AgeniusDesk in Docker, and front it with Caddy for automatic HTTPS, plus a hardening checklist. See **[docs/DEPLOY.md](docs/DEPLOY.md#deploy-on-a-vps-as-a-public-web-app-digitalocean-hostinger-etc)**.
+
 ## Configuration
 
 Configuration is controlled via environment variables and the `.env` file. The full reference is at [docs/CONFIG.md](docs/CONFIG.md).
