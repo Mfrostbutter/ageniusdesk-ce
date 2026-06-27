@@ -134,6 +134,7 @@ function renderTree(container, node, parentPath) {
     row.style.cssText = 'padding:3px 6px;cursor:pointer;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     if (child.type === 'dir') {
       row.textContent = `📁 ${child.name}`;
+      row.dataset.dirPath = path;
       row.addEventListener('click', () => {
         if (row.dataset.expanded) {
           row.nextElementSibling.remove();
@@ -287,8 +288,29 @@ async function openNote(path) {
     }
     setStatus('loaded');
     loadBacklinks(path);
+    revealInTree(path);
   } catch (e) {
     toast.error(`Couldn't open ${path}: ${e.message}`);
+  }
+}
+
+// Expand the file tree down to `path` and scroll/highlight the file row, so an
+// opened note (incl. deep-links from other views) is revealed in place, not left
+// collapsed at the root.
+function revealInTree(path) {
+  const tree = document.getElementById('notes-tree');
+  if (!tree) return;
+  const parts = path.split('/');
+  let cum = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    cum = cum ? `${cum}/${parts[i]}` : parts[i];
+    const dir = [...tree.querySelectorAll('[data-dir-path]')].find(d => d.dataset.dirPath === cum);
+    if (dir && !dir.dataset.expanded) dir.click();  // expands synchronously
+  }
+  const file = [...tree.querySelectorAll('[data-path]')].find(f => f.dataset.path === path);
+  if (file) {
+    file.scrollIntoView({ block: 'nearest' });
+    file.style.background = 'var(--bg-primary)';
   }
 }
 
