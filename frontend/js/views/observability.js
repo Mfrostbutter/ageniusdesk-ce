@@ -1,9 +1,12 @@
 /**
  * Observe — per-execution OpenTelemetry traces from n8n.
  *
- * Left: recent traces (one per execution) for the active instance. Right: the
- * selected trace as a waterfall. Live-updates when the receiver broadcasts a
- * new trace. When the receiver is off, shows setup instructions instead.
+ * Top: a span-derived metrics strip (executions, error rate, p50/p95 latency,
+ * throughput) for the active instance over a window. Left: recent traces (one per
+ * execution). Right: the selected trace as a waterfall. Live-updates on new traces.
+ * Accepts a workflow filter via nav opts ({workflowId, workflowName}) so Insights
+ * can deep-link into one workflow's traces. Setup instructions when the receiver
+ * is off.
  */
 
 import { get, onEvent } from '../api.js';
@@ -17,8 +20,16 @@ function esc(s) {
 
 let _wsBound = false;
 let _selected = null;
+let _filter = { workflowId: '', workflowName: '' };
+
+function wfQuery() {
+  return _filter.workflowId ? `&workflow_id=${encodeURIComponent(_filter.workflowId)}` : '';
+}
 
 export async function render(container) {
+  const o = window.__viewOpts || {};
+  _filter = { workflowId: o.workflowId || '', workflowName: o.workflowName || '' };
+
   container.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px" data-tour="observe-header">
       <div>
@@ -31,10 +42,10 @@ export async function render(container) {
   `;
   await load(container);
 
-  // Bind the live-refresh listener once for the app lifetime; it self-guards on
-  // the active view so it does nothing while the user is elsewhere.
   if (!_wsBound) {
-    onEvent('otel:trace', () => { if (window.__currentView === 'observe') refreshList(); });
+    onEvent('otel:trace', () => {
+      if (window.__currentView === 'observe') { refreshList(); renderMetrics(); }
+    });
     _wsBound = true;
   }
 }
@@ -56,6 +67,8 @@ async function load(container) {
     return;
   }
   body.innerHTML = `
+    ${filterChip()}
+    <div id="obs-metrics" style="margin-bottom:16px"></div>
     <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
       <div style="flex:1 1 340px;min-width:280px">
         <div id="obs-traces-list"><div class="spinner"></div></div>
@@ -66,7 +79,43 @@ async function load(container) {
         </div>
       </div>
     </div>`;
+  renderMetrics();
   await refreshList();
+}
+
+function filterChip() {
+  if (!_filter.workflowId) return '';
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:13px">
+      <span style="color:var(--text-secondary)">Traces for</span>
+      <span class="pill pill-neutral">${esc(_filter.workflowName || _filter.workflowId)}</span>
+      <button class="btn btn-sm btn-ghost" style="font-size:11px;padding:2px 8px" onclick="window.__nav('observe')">Clear filter</button>
+    </div>`;
+}
+
+function metricCard(label, value, sub) {
+  return `
+    <div style="flex:1 1 120px;min-width:110px;padding:12px 14px;border:1px solid var(--border-dim);border-radius:10px;background:var(--bg-elevated)">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-secondary)">${label}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:3px">${value}</div>
+      ${sub ? `<div style="font-size:11px;color:var(--text-dim);margin-top:1px">${sub}</div>` : ''}
+    </div>`;
+}
+
+async function renderMetrics() {
+  const el = document.getElementById('obs-metrics');
+  if (!el) return;
+  let m = {};
+  try { m = await get(`/api/otel/metrics?window_hours=24${wfQuery()}`); } catch { return; }
+  const errPct = `${((m.error_rate || 0) * 100).toFixed(1)}%`;
+  const errColor = (m.error_rate || 0) > 0 ? 'var(--error)' : 'var(--text-primary)';
+  el.innerHTML = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      ${metricCard('Executions (24h)', m.executions ?? 0, `${(m.throughput_per_hr ?? 0)}/hr`)}
+      ${metricCard('Error rate', `<span style="color:${errColor}">${errPct}</span>`, `${m.errors ?? 0} failed`)}
+      ${metricCard('p50 latency', `${m.p50_ms ?? 0} ms`, 'median run')}
+      ${metricCard('p95 latency', `${m.p95_ms ?? 0} ms`, 'slow tail')}
+    </div>`;
 }
 
 function setupHtml() {
@@ -85,7 +134,7 @@ async function refreshList() {
   const listEl = document.getElementById('obs-traces-list');
   if (!listEl) return;
   let traces = [];
-  try { traces = (await get('/api/otel/traces?limit=50')).traces || []; } catch { /* ignore */ }
+  try { traces = (await get(`/api/otel/traces?limit=50${wfQuery()}`)).traces || []; } catch { /* ignore */ }
 
   if (!traces.length) {
     listEl.innerHTML = '<div class="empty-state"><p>No traces yet. Run a workflow on the active instance.</p></div>';
@@ -108,7 +157,6 @@ async function refreshList() {
   listEl.querySelectorAll('.obs-trace-row').forEach(b =>
     b.addEventListener('click', () => selectTrace(b.dataset.trace)));
 
-  // Auto-select the first trace (or keep the current selection if still present).
   const keep = _selected && traces.some(t => t.trace_id === _selected);
   selectTrace(keep ? _selected : traces[0].trace_id);
 }

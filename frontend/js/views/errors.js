@@ -8,8 +8,17 @@
  */
 
 import { get, post, del, onEvent } from '../api.js';
+import { openTraceModal } from '../components/trace-waterfall.js';
 
 let unsub = null;
+
+// Open the OpenTelemetry trace for an error's execution (degrades to a "no trace
+// captured" message when the receiver is off or the run predates it).
+window.__observeError = (btn) => {
+  const execId = btn.dataset.exec;
+  if (!execId) return;
+  openTraceModal({ execId, title: `Trace · ${btn.dataset.wf || 'workflow'} · exec ${execId}` });
+};
 
 const RANGE_STORAGE_KEY = 'ageniusdesk:errors_range';
 const VIEW_STORAGE_KEY = 'ageniusdesk:errors_view';
@@ -220,6 +229,7 @@ function renderGroupItem(g) {
         <code>${esc(g.last_error_message || '')}</code>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-ghost err-ai-btn" data-wf="${attr(g.workflow_name)}" data-node="${attr(g.node_name || '')}" data-type="${attr(g.error_type)}" data-msg="${attr(g.last_error_message || '')}" data-exec="${attr(g.last_execution_id || '')}" data-wfid="${attr(g.workflow_id)}" onclick="event.stopPropagation();window.__askErrorAI(this)" title="Ask AI to analyze this error">&#10022; Ask AI</button>
+          ${g.last_execution_id ? `<button class="btn btn-sm btn-ghost" data-wf="${attr(g.workflow_name)}" data-exec="${attr(g.last_execution_id)}" onclick="event.stopPropagation();window.__observeError(this)" title="View this execution's OpenTelemetry trace">&#128202; Trace</button>` : ''}
           <button class="btn btn-sm btn-primary" onclick="window.__nav('workflows',{selectId:'${jsStr(g.workflow_id)}'})">View Workflow</button>
           ${n8nExecUrl ? `<a class="btn btn-sm btn-ghost" href="${n8nExecUrl}" target="_blank" rel="noopener">Open Last in n8n</a>` : ''}
           <button class="btn btn-sm btn-danger" onclick="window.__clearGroup('${jsStr(g.workflow_id)}','${jsStr(g.node_name || '')}','${jsStr(g.error_type)}', ${g.count}, this)">Clear Group (×${g.count})</button>
@@ -253,6 +263,7 @@ function renderErrorItem(e) {
         <code>${esc(e.error_message)}</code>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-ghost err-ai-btn" data-wf="${attr(e.workflow_name)}" data-node="${attr(e.node_name || '')}" data-type="${attr(e.error_type)}" data-msg="${attr(e.error_message || '')}" data-exec="${attr(e.execution_id || '')}" data-wfid="${attr(e.workflow_id)}" onclick="event.stopPropagation();window.__askErrorAI(this)" title="Ask AI to analyze this error">&#10022; Ask AI</button>
+          ${e.execution_id ? `<button class="btn btn-sm btn-ghost" data-wf="${attr(e.workflow_name)}" data-exec="${attr(e.execution_id)}" onclick="event.stopPropagation();window.__observeError(this)" title="View this execution's OpenTelemetry trace">&#128202; Trace</button>` : ''}
           <button class="btn btn-sm btn-primary" onclick="window.__nav('workflows',{selectId:'${jsStr(e.workflow_id)}'})">View Workflow</button>
           ${n8nExecUrl ? `<a class="btn btn-sm btn-ghost" href="${n8nExecUrl}" target="_blank" rel="noopener">Open in n8n</a>` : ''}
           ${e.execution_id ? `<button class="btn btn-sm btn-danger" onclick="window.__deleteExecution('${jsStr(e.execution_id)}', this)">Delete This Error</button>` : ''}

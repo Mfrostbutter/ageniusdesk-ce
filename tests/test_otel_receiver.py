@@ -167,6 +167,38 @@ def test_by_execution_lookup(client, monkeypatch):
     assert empty["trace_id"] == "" and empty["spans"] == []
 
 
+def test_metrics_summary(client, monkeypatch):
+    monkeypatch.setattr(settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(settings, "agd_otel_token", "")
+    _auth(client)
+    client.post(
+        "/api/otel/v1/traces",
+        content=_sample_request().SerializeToString(),
+        headers={"Content-Type": "application/x-protobuf"},
+    )
+    m = client.get("/api/otel/metrics?window_hours=24").json()
+    assert m["executions"] >= 1
+    assert m["errors"] >= 1  # the sample's node span is ERROR -> trace is errored
+    assert m["error_rate"] > 0
+    # Root trace spans 1.0s -> 1.5s == 500ms; min-start/max-end per trace.
+    assert m["p50_ms"] == 500.0
+
+
+def test_traces_workflow_filter(client, monkeypatch):
+    monkeypatch.setattr(settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(settings, "agd_otel_token", "")
+    _auth(client)
+    client.post(
+        "/api/otel/v1/traces",
+        content=_sample_request().SerializeToString(),
+        headers={"Content-Type": "application/x-protobuf"},
+    )
+    hit = client.get("/api/otel/traces?workflow_id=wf123").json()["traces"]
+    assert any(t["trace_id"] == TRACE_HEX for t in hit)
+    miss = client.get("/api/otel/traces?workflow_id=does-not-exist").json()["traces"]
+    assert all(t["trace_id"] != TRACE_HEX for t in miss)
+
+
 def test_json_ingest_path(client, monkeypatch):
     monkeypatch.setattr(settings, "agd_otel_enabled", True)
     monkeypatch.setattr(settings, "agd_otel_token", "")

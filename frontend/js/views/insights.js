@@ -54,6 +54,17 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Escape a value for a JS single-quoted string nested inside a double-quoted
+// HTML attribute (used in the inline onclick deep-links below).
+function jsAttr(s) {
+  return escapeHtml(String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
+// Deep-link into the Observe view filtered to one workflow's traces.
+function observeLink(r) {
+  return `<a href="#" style="font-size:11px;color:var(--text-dim);margin-left:8px" title="View this workflow's traces in Observe" onclick="event.preventDefault();window.__nav('observe',{workflowId:'${jsAttr(r.workflow_id)}',workflowName:'${jsAttr(r.workflow_name)}'})">traces</a>`;
+}
+
 function renderTile(label, value, sub, color) {
   const colorStyle = color ? `color:${color}` : '';
   return `
@@ -135,13 +146,13 @@ async function loadAndRender() {
   const bucket = payload.bucket || 'hour';
 
   const byVolume = renderTopList(payload.top_by_volume || [], [
-    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>` },
+    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>${observeLink(r)}` },
     { key: 'count', label: 'Runs', align: 'right', cell: r => fmtNum(r.count) },
     { key: 'success_rate', label: 'OK', align: 'right', cell: r => `<span style="color:${rateColor(r.success_rate)}">${fmtPct(r.success_rate)}</span>` },
   ]);
 
   const byErrors = renderTopList(payload.top_by_errors || [], [
-    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>` },
+    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>${observeLink(r)}` },
     { key: 'errors', label: 'Errors', align: 'right', cell: r => `<span style="color:#ef4444;font-weight:600">${fmtNum(r.errors)}</span>` },
     { key: 'count', label: 'of', align: 'right', cell: r => fmtNum(r.count) },
   ]);

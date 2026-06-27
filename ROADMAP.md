@@ -45,8 +45,8 @@ Push-based, per-node execution visibility. Hybrid design: an embedded OTLP/HTTP 
 - [x] OTLP/HTTP receiver (traces) with token auth (`AGD_OTEL_TOKEN`) and body limits
 - [x] Span storage with bounded retention (age + row cap), pruned on ingest
 - [x] Observe view: recent-traces list + parent/child waterfall, live-updating, plus a per-execution trace popup in workflow detail
-- [ ] Metrics ingest + the throughput / error-rate / latency strip
-- [ ] Cross-links from Insights and Errors into a trace
+- [x] Metrics strip (executions / error-rate / p50 / p95 / throughput), span-derived (n8n exports traces, not OTLP metrics)
+- [x] Cross-links: per-execution Trace button in Errors; per-workflow "traces" deep-link from Insights into Observe
 - [ ] Optional external-stack one-click template + Grafana linking
 - [ ] **Cost observability** ([spec](docs/specs/2026-06-27-cost-observability.md)): fold LLM spend into the trace layer. n8n's OTel spans carry no token/cost data, so cost is enriched from n8n run-data (token usage) x a model price book, stored per span, surfaced as cost badges + a trace total + a spend rollup. Subsumes the old "Cost tracking integration" item.
 

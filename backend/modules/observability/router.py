@@ -60,11 +60,24 @@ async def otel_status():
 
 
 @router.get("/traces")
-async def list_traces(limit: int = 50, instance_id: str = ""):
-    """Recent traces (one per execution), scoped to an instance (default: active)."""
+async def list_traces(limit: int = 50, instance_id: str = "", workflow_id: str = ""):
+    """Recent traces (one per execution), scoped to an instance (default: active),
+    optionally filtered to a single workflow."""
     iid = instance_id if instance_id else get_active_instance_id()
     limit = max(1, min(int(limit), 500))
-    return {"traces": await storage.list_traces(iid, limit), "instance_id": iid}
+    return {
+        "traces": await storage.list_traces(iid, limit, workflow_id),
+        "instance_id": iid,
+        "workflow_id": workflow_id,
+    }
+
+
+@router.get("/metrics")
+async def metrics(window_hours: int = 24, instance_id: str = "", workflow_id: str = ""):
+    """Span-derived metrics strip for the active instance (optionally one workflow)."""
+    iid = instance_id if instance_id else get_active_instance_id()
+    window_hours = max(1, min(int(window_hours), 720))
+    return await storage.metrics_summary(iid, window_hours, workflow_id)
 
 
 @router.get("/traces/{trace_id}")

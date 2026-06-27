@@ -56,12 +56,13 @@ async def count_spans() -> int:
     return int(row["n"]) if row else 0
 
 
-async def list_traces(instance_id: str, limit: int = 50) -> list[dict]:
+async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") -> list[dict]:
     """One row per trace (execution), newest first, scoped to an instance.
 
-    instance_id == '' means all instances. Workflow name/id and execution id are
-    pulled with MAX() because only the root workflow span carries them; the
-    aggregate surfaces the non-empty value across the trace's spans.
+    instance_id == '' means all instances. workflow_id != '' filters to traces of
+    that workflow (only the root span carries workflow_id, so match via subquery).
+    Workflow name/id and execution id are pulled with MAX() because only the root
+    workflow span carries them; the aggregate surfaces the non-empty value.
     """
     db = await get_db()
     cur = await db.execute(
@@ -77,11 +78,12 @@ async def list_traces(instance_id: str, limit: int = 50) -> list[dict]:
                MAX(instance_id)                                AS instance_id
         FROM otel_spans
         WHERE (? = '' OR instance_id = ?)
+          AND (? = '' OR trace_id IN (SELECT trace_id FROM otel_spans WHERE workflow_id = ?))
         GROUP BY trace_id
         ORDER BY start_ns DESC
         LIMIT ?
         """,
-        (instance_id, instance_id, int(limit)),
+        (instance_id, instance_id, workflow_id, workflow_id, int(limit)),
     )
     out = []
     for r in await cur.fetchall():
@@ -99,6 +101,50 @@ async def list_traces(instance_id: str, limit: int = 50) -> list[dict]:
             "duration_ms": round((end_ns - start_ns) / 1e6, 2) if end_ns > start_ns else 0.0,
         })
     return out
+
+
+async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id: str = "") -> dict:
+    """Span-derived metrics strip: executions, error rate, p50/p95 latency, throughput.
+
+    Computed from the captured spans (n8n exports traces, not OTLP metrics), per
+    trace = one execution. A trace counts as errored if any of its spans is ERROR.
+    Windowed by ingest time (received_at) so it matches the retention model.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT trace_id,
+               MIN(start_ns) AS s,
+               MAX(end_ns)   AS e,
+               MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS err
+        FROM otel_spans
+        WHERE (? = '' OR instance_id = ?)
+          AND (? = '' OR trace_id IN (SELECT trace_id FROM otel_spans WHERE workflow_id = ?))
+          AND received_at >= datetime('now', ?)
+        GROUP BY trace_id
+        """,
+        (instance_id, instance_id, workflow_id, workflow_id, f"-{int(window_hours)} hours"),
+    )
+    rows = await cur.fetchall()
+    durs = sorted((int(r["e"]) - int(r["s"])) / 1e6 for r in rows if int(r["e"]) > int(r["s"]))
+    n = len(rows)
+    errs = sum(int(r["err"]) for r in rows)
+
+    def pct(p: int) -> float:
+        if not durs:
+            return 0.0
+        i = min(len(durs) - 1, int(round((p / 100) * (len(durs) - 1))))
+        return round(durs[i], 1)
+
+    return {
+        "window_hours": int(window_hours),
+        "executions": n,
+        "errors": errs,
+        "error_rate": round(errs / n, 4) if n else 0.0,
+        "p50_ms": pct(50),
+        "p95_ms": pct(95),
+        "throughput_per_hr": round(n / window_hours, 2) if window_hours else 0.0,
+    }
 
 
 async def trace_id_for_execution(execution_id: str) -> str:
