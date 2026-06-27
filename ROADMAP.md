@@ -48,7 +48,7 @@ Push-based, per-node execution visibility. Hybrid design: an embedded OTLP/HTTP 
 - [x] Metrics strip (executions / error-rate / p50 / p95 / throughput), span-derived (n8n exports traces, not OTLP metrics)
 - [x] Cross-links: per-execution Trace button in Errors; per-workflow "traces" deep-link from Insights into Observe
 - [ ] Optional external-stack one-click template + Grafana linking
-- [ ] **Cost observability** ([spec](docs/specs/2026-06-27-cost-observability.md)): fold LLM spend into the trace layer. n8n's OTel spans carry no token/cost data, so cost is enriched from n8n run-data (token usage) x a model price book, stored per span, surfaced as cost badges + a trace total + a spend rollup. Subsumes the old "Cost tracking integration" item.
+- [x] **Cost observability** ([spec](docs/specs/2026-06-27-cost-observability.md)): LLM spend folded into the trace layer. n8n's spans carry no token/cost data, so cost is enriched from n8n run-data (per-call token usage) x a layered price book (OpenRouter-fetched > bundled, est-flagged), stored per span, surfaced as a Spend card, per-trace cost, and per-AI-span cost in the waterfall. Verified live (a Sonnet agent run priced at ~$0.34). Subsumes the old "Cost tracking integration" item. Follow-ups: operator price overrides UI, the cost-aware gateway for exact cache-aware cost.
 
 ### 2. Community module security: scan + consent ([spec](docs/specs/2026-06-26-community-module-security-and-youtube-research.md))
 
