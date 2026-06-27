@@ -37,6 +37,10 @@ export function applyTheme(theme) {
   } else {
     stopMatrixRain();
   }
+
+  // Let sandboxed community-module iframes re-sync their CSS vars (they keep a
+  // mirror of these overrides; see community-modules.js).
+  try { window.dispatchEvent(new CustomEvent('agd:theme-changed')); } catch { /* ignore */ }
 }
 
 export async function setActiveTheme(themeId) {

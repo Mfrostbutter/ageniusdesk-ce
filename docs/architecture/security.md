@@ -8,7 +8,7 @@ See also: [Architecture Overview](overview.md), [Authentication & RBAC](auth.md)
 
 - **In scope.** Anyone who can reach the listening port without credentials; a partially-trusted caller (e.g. one that can set request headers); leakage of secrets through API responses, logs, or stored files; path traversal in the static/theme file servers; server-side request forgery via operator-supplied probe URLs; CSRF against the cookie-authenticated browser session.
 - **Trusted.** An authenticated admin. Once a request resolves to an admin identity (session, edge, or admin token) it is allowed to do admin things, including operations that are root-equivalent when a Docker socket is mounted. RBAC adds coarse role tiers (viewer/operator/admin) but the console is not a least-privilege multi-tenant system.
-- **Out of scope.** Isolation for community modules — backend (they run in-process) and frontend (their `static/` view is injected into the app page, sharing the DOM/`window`); the inspect/scan/consent flow is defense-in-depth, not containment. Also constraining the Docker socket (root-equivalent by design). See accepted risks below.
+- **Out of scope.** Backend isolation for community modules: they run Python in-process with full data and credential access. The frontend is isolated as of v0.3 (a community view runs in a sandboxed `iframe` and reaches the host only through a whitelisted postMessage bridge; see implemented controls). The inspect/scan/consent flow is defense-in-depth on top, not a backend boundary. Also constraining the Docker socket (root-equivalent by design). See accepted risks below.
 
 ## Implemented controls
 
@@ -58,6 +58,12 @@ When the server fetches an operator-supplied Ollama URL (model listing, connecti
 
 Secrets are encrypted at rest with Fernet (AES-128-CBC + HMAC-SHA256), keyed from `SECRET_KEY` (env, else persisted `data/.secret_key`, mode 600). The `$NAME` reference convention keeps real values out of config files. Public API keys are stored as `sha256` hashes only, never raw. The dashboard MCP and public-API responses deliberately omit secret values and instance API keys (names/hints only). `harden_file_permissions()` chmods the sensitive data files to 600 on boot.
 
+### Community-module frontend isolation (sandboxed iframe)
+
+A community module's frontend view is not injected into the app page. The loader (`frontend/js/community-modules.js`) mounts each view in an `<iframe sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads">`. The deliberate omission of `allow-same-origin` gives the frame an opaque origin, so the module's script cannot reach the host `window`, DOM, cookies, or storage, and cannot navigate the top frame: a buggy or hostile module can break itself but not the AgeniusDesk UI.
+
+Because the frame is opaque-origin, its own `fetch()` carries no session cookie, so the module reaches the host only through a `postMessage` RPC bridge. The host listens for messages, verifies each one came from that iframe's `contentWindow`, and dispatches a small whitelist: `fetch` (restricted to same-origin `/api/` paths, performed host-side so the session cookie and CSRF token apply), `notify` (toast), `navigate`, and `openInHarness`. Any other path or method is rejected. The bridge reimplements `window.AgeniusDesk` inside the iframe over this channel, so module code keeps the same API. The host also pushes the active theme's CSS variables into the iframe and auto-resizes it to content height. The backend half of a module still runs in-process (see accepted risks); the iframe constrains the frontend only.
+
 ### Other response-level controls
 
 - `security_headers` middleware sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, HSTS over HTTPS, and an opt-in CSP (`AGD_CSP`, off by default because the CDN editors and media embeds need a deliberate policy).
@@ -88,7 +94,7 @@ Login policy knobs (`AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, the `
 | Risk | Posture |
 |---|---|
 | Docker socket access | Root-equivalent by design. Only mount the socket where every console user is a fully-trusted admin |
-| Community modules | Accepted now, isolation planned. Backend runs Python in-process (full data/credential access); the frontend `static/` view is injected into the app page (shares DOM/`window`, can break the UI). A two-phase inspect/install flow runs a static AST scan and requires consent proportional to severity (CRITICAL → type the id, HIGH → acknowledge) and records an audit row, but a static scan is a heuristic, not a boundary — it cannot follow obfuscation, runtime-fetched code, or dynamic imports. Out-of-process isolation (backend) and iframe isolation (frontend) are the deferred real boundaries. Install only from sources you trust. See [Module System](modules.md) |
+| Community modules | Backend accepted, frontend sandboxed. The backend runs Python in-process (full data and credential access); install only from sources you trust. The frontend is isolated: a community view runs in an `iframe` with `allow-scripts` but NOT `allow-same-origin`, so it cannot read or change the host DOM, `window`, cookies, or storage, and it reaches the host only through a postMessage bridge whitelisted to same-origin `/api/` fetches (auth and CSRF added host-side), `notify`, `navigate`, and `openInHarness`. On top of that, a two-phase inspect/install flow runs a static AST scan and requires consent proportional to severity (CRITICAL: type the id, HIGH: acknowledge) and records an audit row; a static scan is a heuristic, not a boundary, and cannot follow obfuscation, runtime-fetched code, or dynamic imports. Out-of-process backend isolation is the remaining deferred boundary. See [Module System](modules.md) |
 | No automated regression suite for auth paths | `pytest` collected 0 tests at review time; auth-middleware, edge-trust, webhook-token, and traversal tests are a noted follow-up |
 | Legacy `enc:` secret format | Unauthenticated XOR-stream, kept only for decryption/migration; re-save migrates to Fernet |
 

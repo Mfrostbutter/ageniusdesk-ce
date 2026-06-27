@@ -33,12 +33,8 @@ import * as instancesView from './views/instances.js';
 import * as modelsView from './views/models.js';
 import * as mcpView from './views/mcp.js';
 
-import { loadCommunityModules, installHostContext } from './community-modules.js';
+import { loadCommunityModules } from './community-modules.js';
 import * as onboarding from './onboarding/index.js';
-
-// Expose window.AgeniusDesk early so any module script injected during
-// boot can assume it's present.
-installHostContext();
 
 // Dev convenience: visiting with `?fresh=1` clears all local UI state — coachmark
 // "seen" flags, the get-started/connect/error-handler dismissals, dashboards,

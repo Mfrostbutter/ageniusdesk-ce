@@ -106,7 +106,7 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 
 The headline is real isolation for community modules, the boundary the v0.2 scan/consent layer bridges:
 
-- [ ] **Frontend iframe isolation**: render each community view in a sandboxed `iframe` (`allow-scripts`, no `allow-same-origin`) with a postMessage RPC bridge to a whitelisted host API (`fetch` / `notify` / `navigate` / `openInHarness`), plus theme propagation and auto-resize. Today a module's frontend is injected into the app page and can read, change, or break the host UI; the iframe removes that.
+- [x] **Frontend iframe isolation**: render each community view in a sandboxed `iframe` (`allow-scripts`, no `allow-same-origin`) with a postMessage RPC bridge to a whitelisted host API (`fetch` / `notify` / `navigate` / `openInHarness`), plus theme propagation and auto-resize. A module's frontend can no longer read, change, or break the host UI; it reaches the host only over the bridge, and `fetch` is restricted to same-origin `/api/` paths.
 - [ ] **Out-of-process backend isolation**: run a module's Python in a sandboxed subprocess behind an RPC contract, so a module no longer runs in-process with full data and credential access.
 
 ## Medium-Term (v0.3+ Concept)

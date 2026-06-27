@@ -149,6 +149,8 @@ Modules contribute sidebar entries through `manifest.frontend.nav`. The `modules
 
 The frontend appends these to its hardcoded built-in nav. Built-in module views resolve to a view id registered in `app.js`; community module views are HTML/JS files served from the data volume by `static_router.py` at `/modules/{module_id}/static/{file_path}`, which resolves paths inside the module's own directory and rejects traversal. Built-in frontends are bundled into `frontend/` and are not served through that route. See [Frontend](frontend.md).
 
+A community view is not injected into the app page. The loader (`frontend/js/community-modules.js`) fetches the view HTML (host-side, so the session cookie applies), wraps it in a full document that links the host's `base.css`/`components.css` and an inline bridge script, and mounts it in a sandboxed `<iframe>` (`allow-scripts` but NOT `allow-same-origin`). The opaque origin means the module's code cannot touch the host DOM, `window`, cookies, or storage. The module reaches the host only through a `postMessage` bridge that reimplements `window.AgeniusDesk` (`fetch`, `notify`, `navigate`, `openInHarness`); the host validates the message source, restricts `fetch` to same-origin `/api/` paths (adding auth and CSRF host-side), pushes the active theme's CSS variables into the frame, and auto-resizes it to content height. So a module's frontend can read and write its own backend's API but cannot read or break the rest of the UI. The module's backend, by contrast, still runs in-process (see the security note below). See [Security Posture](security.md).
+
 ## Built-in vs community: load order and directories
 
 | | Built-in | Community |

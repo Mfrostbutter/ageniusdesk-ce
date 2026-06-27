@@ -4,7 +4,13 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
-Targeting v0.3. Next: out-of-process and iframe isolation for community modules (the real boundaries the v0.2 scan/consent layer bridges).
+Targeting v0.3.
+
+### Added
+- **Community-module frontend isolation (sandboxed iframe).** A community module's frontend view no longer runs in the app page. It loads in an `<iframe sandbox="allow-scripts ...">` without `allow-same-origin`, so the module's code runs in an opaque origin and cannot read or change the host DOM, `window`, cookies, or storage: a buggy or hostile module can break itself but not the AgeniusDesk UI. The module reaches the host only through a `postMessage` bridge that reimplements `window.AgeniusDesk` (`fetch`, `notify`, `navigate`, `openInHarness`); the host verifies the message source and restricts `fetch` to same-origin `/api/` paths (adding auth and CSRF host-side). The host also pushes the active theme's CSS variables into the frame and auto-resizes it to content height. Module code that already uses `AgeniusDesk.*` keeps working unchanged. Out-of-process backend isolation remains the deferred boundary.
+
+### Next
+- Out-of-process backend isolation for community modules (the remaining real boundary the v0.2 scan/consent layer bridges).
 
 ## [0.2.0] - 2026-06-27
 
