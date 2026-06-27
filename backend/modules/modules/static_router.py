@@ -33,7 +33,10 @@ def _safe_resolve(module_id: str, path: str) -> Path:
     return target
 
 
-@router.get("/modules/{module_id}/static/{file_path:path}")
+# GET + HEAD: the frontend community-module loader probes the script URL with a
+# HEAD request before injecting it (see frontend community-modules.js), so a
+# GET-only route would 404 the probe and the module's JS would never load.
+@router.api_route("/modules/{module_id}/static/{file_path:path}", methods=["GET", "HEAD"])
 async def serve_module_static(module_id: str, file_path: str):
     target = _safe_resolve(module_id, file_path)
     if not target.is_file():

@@ -436,6 +436,10 @@ def test_static_serves_from_static_subdir(client):
     assert r.status_code == 200
     assert "hello-static" in r.text
 
+    # The community loader probes the script URL with HEAD before injecting it,
+    # so HEAD must succeed too (not just GET).
+    assert client.head("/modules/statictest/static/view.html").status_code == 200
+
     # A file at the module root (outside static/) is not served.
     (installer.COMMUNITY_MODULES_DIR / "statictest" / "secret.py").write_text("x = 1\n")
     assert client.get("/modules/statictest/static/secret.py").status_code == 404
