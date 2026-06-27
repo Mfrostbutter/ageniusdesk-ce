@@ -626,6 +626,37 @@ def decrypt_value(stored: str) -> str:
     return stored  # Plaintext (pre-encryption / legacy)
 
 
+def migrate_legacy_enc_to_fernet() -> None:
+    """One-time sweep: re-encrypt any legacy `enc:` secret to authenticated
+    `fernet:`. Idempotent (no-op once none remain). Best-effort: a value that
+    cannot be decrypted (e.g. SECRET_KEY changed) is left as-is, not corrupted,
+    since _decrypt_legacy returns the ciphertext unchanged on failure.
+    """
+    secrets = load_secrets()
+    if not secrets:
+        return
+    changed = False
+
+    def _reencrypt(v: Any) -> Any:
+        nonlocal changed
+        if isinstance(v, str) and v.startswith(_LEGACY_PREFIX):
+            plain = _decrypt_legacy(v)
+            if plain and not plain.startswith(_LEGACY_PREFIX):
+                changed = True
+                return encrypt_value(plain)
+        return v
+
+    for name, entry in list(secrets.items()):
+        if isinstance(entry, dict) and isinstance(entry.get("fields"), dict):
+            entry["fields"] = {k: _reencrypt(val) for k, val in entry["fields"].items()}
+        else:
+            secrets[name] = _reencrypt(entry)
+
+    if changed:
+        save_secrets(secrets)
+        logger.info("Re-encrypted legacy enc: secret(s) to fernet:")
+
+
 def get_n8n_url() -> str:
     """Get n8n URL for the active instance."""
     inst = get_active_instance()

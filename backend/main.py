@@ -45,6 +45,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("migrate_inline_to_secrets failed: %s", e)
     try:
+        from backend.config import migrate_legacy_enc_to_fernet
+        migrate_legacy_enc_to_fernet()
+    except Exception as e:
+        logger.exception("migrate_legacy_enc_to_fernet failed: %s", e)
+    try:
         from backend.config import settings as _settings
         from backend.config_overlay import apply_overlay_to_settings, load_config_overlay
         apply_overlay_to_settings(_settings, load_config_overlay())
@@ -139,11 +144,11 @@ _LEGACY_WEBHOOK_EXACT = frozenset({
 })
 # OTLP ingest is machine-ingest (n8n's OTel exporter, not a browser): exempt
 # from the session gate, token-checked by AGD_OTEL_TOKEN, and only live when
-# the receiver is enabled. n8n appends /v1/traces (and /v1/metrics) to the
-# configured base endpoint.
+# the receiver is enabled. Only /v1/traces has a handler; a metrics receiver is
+# not implemented, so its path is intentionally NOT allowlisted (allowlisting it
+# would advertise a machine-ingest exemption for a route that only 404s).
 _OTEL_INGEST_EXACT = frozenset({
     "/api/otel/v1/traces",
-    "/api/otel/v1/metrics",
 })
 _SELF_AUTHENTICATING_EXACT = frozenset({
     "/api/music/triggers/fire",
