@@ -1,11 +1,17 @@
 # Spec: Community Module Security (Scan + Consent) and the YouTube Research Module
 
-Status: Draft
+Status: Security pipeline shipped (phases 1-5, 7) 2026-06-27; YouTube module (phase 6) deferred to its own repo.
 Date: 2026-06-26
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition
 Release gate: no (target: next release after 0.1.0)
 Decision on record: ship scan + consent now; out-of-process isolation is roadmap, not this release.
+
+Shipped 2026-06-27 (commit `feat(modules): community-module security pipeline`):
+capability manifest, AST scanner (`backend/modules/modules/scanner.py`), two-phase
+inspect/install + proportional consent + `module_installs` audit table, consent modal,
+provenance display, docs, and 20 tests. Signature *verification* (5) and the YouTube
+research module (6, its own repo) remain. Manifest `signature` field shape is reserved.
 
 ## 1. Goal
 

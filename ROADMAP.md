@@ -54,11 +54,11 @@ Push-based, per-node execution visibility. Hybrid design: an embedded OTLP/HTTP 
 
 Make installing a community module a deliberate, informed act. Capability manifest, an AST static scanner, a two-phase inspect/install flow with proportional consent, and a tamper-evident audit trail. Heuristic review, not a sandbox; out-of-process isolation is the deferred real boundary (see Future Directions).
 
-- [ ] Capability manifest schema + validation
-- [ ] AST static scanner + fixtures (declared-vs-detected diff)
-- [ ] Two-phase inspect/install + consent + `module_installs` audit table
-- [ ] Consent modal + per-module capability/scan surfacing
-- [ ] Optional manifest signature verification + provenance display
+- [x] Capability manifest schema + validation
+- [x] AST static scanner + fixtures (declared-vs-detected diff)
+- [x] Two-phase inspect/install + consent + `module_installs` audit table
+- [x] Consent modal + per-module capability/scan surfacing
+- [ ] Optional manifest signature verification (field shape reserved + provenance display shipped; verification deferred)
 
 ### 3. YouTube research module (first community module)
 
