@@ -88,14 +88,15 @@ def test_is_secret_like_false(name):
 def test_curate_sys_path_drops_host_root_keeps_runtime(tmp_path):
     host_root = str(_REPO_ROOT)
     module_parent = str(tmp_path / "data" / "modules")
-    site = sandbox._runtime_roots()
-    site_example = next(iter(site))
-    current = [host_root, "", site_example, "/some/random/dir"]
+    site_dir = str(tmp_path / "site-packages")
+    current = [host_root, "", site_dir]
     result = sandbox.curate_sys_path(current, module_parent, host_root)
+    # The host source root is dropped...
     assert host_root not in [os.path.realpath(p) for p in result if p]
-    assert any(os.path.realpath(p) == os.path.realpath(site_example) for p in result)
+    # ...the module parent is added...
     assert module_parent in result
-    assert "/some/random/dir" not in result
+    # ...and every other entry (stdlib, DLLs, site-packages) is preserved.
+    assert site_dir in result
 
 
 # ── Host-import blocker (direct) ──────────────────────────────────────────────

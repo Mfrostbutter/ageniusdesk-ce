@@ -18,6 +18,7 @@ silently disappearing.
 
 import importlib
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +37,15 @@ from backend.module_registry import (
 logger = logging.getLogger(__name__)
 
 BUILTIN_DIR = Path(__file__).parent
+
+
+def _isolation_mode() -> str:
+    """Community-module isolation mode: 'in_process' (default) or 'subprocess'.
+
+    Global for now (per-module opt-in is a later phase). Default keeps the
+    pre-isolation behavior so existing installs are unaffected.
+    """
+    return os.environ.get("AGD_MODULE_ISOLATION", "in_process").strip().lower()
 
 
 def _register_builtin(app: FastAPI, child: Path) -> None:
@@ -104,6 +114,10 @@ def _register_community(app: FastAPI, child: Path) -> None:
         ))
         return
 
+    if _isolation_mode() == "subprocess":
+        _register_community_isolated(app, child, manifest, entry_path)
+        return
+
     try:
         # Add the community module's parent dir to sys.path so we can
         # `import {child.name}` as a top-level package.
@@ -143,6 +157,40 @@ def _register_community(app: FastAPI, child: Path) -> None:
         logger.warning("Failed to load community module %s: %s", child.name, e)
 
 
+def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path: str) -> None:
+    """Run a community module in a sandboxed subprocess and reverse-proxy to it.
+
+    No host import of the module here: the worker imports it in a separate
+    process with a scrubbed env and a blocked `backend` import. The host only
+    spawns it and forwards /api/{id}/* to its loopback/UDS bind.
+    """
+    from backend.modules._runtime import proxy, supervisor
+
+    declared_env = manifest.capabilities.env if manifest.capabilities else []
+    try:
+        supervisor.start_worker(manifest.id, child.parent, declared_env)
+        proxy.register_proxy_route(app, manifest.id)
+        missing = check_secrets(manifest)
+        status = "missing_secrets" if missing else "loaded"
+        module_registry.register(RegistryEntry(
+            manifest=manifest,
+            status=status,
+            source="community",
+            missing_secrets=missing,
+            path=entry_path,
+        ))
+        logger.info("Registered community module (isolated subprocess): %s", manifest.id)
+    except Exception as e:
+        module_registry.register(RegistryEntry(
+            manifest=manifest,
+            status="failed",
+            source="community",
+            error=str(e),
+            path=entry_path,
+        ))
+        logger.warning("Failed to start isolated community module %s: %s", manifest.id, e)
+
+
 def register_modules(app: FastAPI) -> list[str]:
     """Scan built-in + community module dirs and mount routers.
 
@@ -159,6 +207,14 @@ def register_modules(app: FastAPI) -> list[str]:
         _register_builtin(app, child)
 
     # Community modules (skip if dir doesn't exist — first-boot case)
+    if _isolation_mode() == "subprocess":
+        # Kill any workers left running by a previous host process before we
+        # spawn fresh ones, so a crash/restart can't leak orphan subprocesses.
+        try:
+            from backend.modules._runtime import supervisor
+            supervisor.sweep_orphans()
+        except Exception as e:
+            logger.warning("worker orphan sweep failed: %s", e)
     if COMMUNITY_MODULES_DIR.exists():
         for child in sorted(COMMUNITY_MODULES_DIR.iterdir()):
             if not child.is_dir() or child.name.startswith("_"):

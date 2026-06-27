@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import sys
-import sysconfig
 
 # Env names a worker may inherit verbatim. Everything else (every secret, token,
 # DB path, host config) is dropped. Allowlist, not blocklist: a newly added host
@@ -29,10 +28,12 @@ _ENV_ALLOW = frozenset(
         "LANG", "LANGUAGE", "TZ",
         "TMPDIR", "TEMP", "TMP",
         "PYTHONHASHSEED", "PYTHONUNBUFFERED", "PYTHONIOENCODING", "PYTHONDONTWRITEBYTECODE",
-        # Windows runtime essentials (sockets/asyncio fail without these).
+        # Windows runtime essentials (sockets/asyncio fail without these; many
+        # libraries call Path.home(), which needs USERPROFILE/HOMEDRIVE/HOMEPATH).
         "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
         "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER",
         "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
+        "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "USERNAME",
     }
 )
 _ENV_ALLOW_PREFIXES = ("LC_",)
@@ -80,43 +81,23 @@ def build_worker_env(
     return out
 
 
-def _runtime_roots() -> set[str]:
-    """Absolute, real-path roots that hold stdlib + site-packages."""
-    paths = sysconfig.get_paths()
-    roots: set[str] = set()
-    for key in ("stdlib", "platstdlib", "purelib", "platlib"):
-        p = paths.get(key)
-        if p:
-            roots.add(os.path.realpath(p))
-    return roots
-
-
-def _under_any(path: str, roots: set[str]) -> bool:
-    rp = os.path.realpath(path)
-    for root in roots:
-        try:
-            if os.path.commonpath([rp, root]) == root:
-                return True
-        except ValueError:  # different drive on Windows, etc.
-            continue
-    return False
-
-
 def curate_sys_path(current: list[str], module_parent: str, host_root: str) -> list[str]:
-    """Return a sys.path that keeps stdlib + site-packages and the module's
-    parent dir, but DROPS the host source root (so `import backend` from source
-    fails). The import blocker is the belt-and-suspenders for site-packages.
+    """Return a sys.path with the host SOURCE ROOT removed (so `import backend`
+    from source fails) and the module's parent dir present.
+
+    Deliberately a denylist, not an allowlist: everything else (stdlib, the
+    Windows DLLs dir, lib-dynload, site-packages) is kept, because aggressively
+    reconstructing the runtime path drops C-extension dirs like `_socket`. The
+    import blocker is the guarantee against `backend` in site-packages; this only
+    needs to drop the one directory where the host source lives.
     """
-    roots = _runtime_roots()
     host_real = os.path.realpath(host_root) if host_root else None
-    mod_real = os.path.realpath(module_parent) if module_parent else None
     keep: list[str] = []
     for p in current:
         rp = os.path.realpath(p) if p else os.path.realpath(os.getcwd())
         if host_real and rp == host_real:
             continue
-        if (mod_real and rp == mod_real) or _under_any(rp, roots):
-            keep.append(p)
+        keep.append(p)
     if module_parent and module_parent not in keep:
         keep.insert(0, module_parent)
     return keep

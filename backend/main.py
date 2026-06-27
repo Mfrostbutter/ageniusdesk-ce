@@ -106,6 +106,11 @@ async def lifespan(app: FastAPI):
     else:
         yield
     # Shutdown
+    try:
+        from backend.modules._runtime import supervisor as _supervisor
+        _supervisor.stop_all()
+    except Exception as e:
+        logger.warning("module worker stop_all failed: %s", e)
     await close_db()
 
 
