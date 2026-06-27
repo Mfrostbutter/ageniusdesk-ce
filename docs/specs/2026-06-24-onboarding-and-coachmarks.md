@@ -3,7 +3,7 @@
 Status: Draft
 Date: 2026-06-24
 Owner: Michael Frostbutter
-Scope: AgeniusDesk Community Edition (`M:\Code\ageniusdesk-ce`)
+Scope: AgeniusDesk Community Edition
 Release gate: yes (must ship before public release)
 Related: `docs/specs/2026-06-24-authorization-and-accounts.md`
 

@@ -3,7 +3,7 @@
 Status: Draft
 Date: 2026-06-26
 Owner: Michael Frostbutter
-Scope: AgeniusDesk Community Edition (`M:\Code\ageniusdesk-ce`)
+Scope: AgeniusDesk Community Edition
 Release gate: no (target: next release; larger workstream, may land as its own milestone)
 Decision on record: hybrid. Embedded OTLP receiver is the self-contained MVP; a
 one-click external observability stack is the documented "go bigger" path.

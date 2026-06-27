@@ -3,7 +3,7 @@
 Status: Draft
 Date: 2026-06-27
 Owner: Michael Frostbutter
-Scope: AgeniusDesk Community Edition (`M:\Code\ageniusdesk-ce`)
+Scope: AgeniusDesk Community Edition
 Release gate: no (extends the OpenTelemetry observability milestone)
 Decision on record: cost is a derived dimension over the spans already captured,
 not a separate pipeline. Enrich from n8n run-data now; a cost-aware gateway is the

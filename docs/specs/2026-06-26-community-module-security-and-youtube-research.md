@@ -3,7 +3,7 @@
 Status: Draft
 Date: 2026-06-26
 Owner: Michael Frostbutter
-Scope: AgeniusDesk Community Edition (`M:\Code\ageniusdesk-ce`)
+Scope: AgeniusDesk Community Edition
 Release gate: no (target: next release after 0.1.0)
 Decision on record: ship scan + consent now; out-of-process isolation is roadmap, not this release.
 
@@ -75,9 +75,9 @@ What exists today:
 Gap: nothing inspects module code or intent before registration, and the operator
 gets no consent moment.
 
-Source to port for the module itself: `M:\Code\ageniusdesk\backend\modules\research\`
-(`router.py`, `artifacts.py`, `llm.py`) plus the whisper (8096) and captions
-(8095) sidecars. This was stripped from CE on the way to open-source.
+Source to port for the module itself: the upstream AgeniusDesk research module
+(`router.py`, `artifacts.py`, `llm.py`) plus the optional whisper and captions
+sidecars. It was stripped from CE on the way to open-source.
 
 ## 5. Design
 
@@ -169,7 +169,7 @@ declared-vs-detected diff, and the honest-framing copy, with Approve / Cancel.
 Distributed as its own GitHub repo (proposed: `ageniusdesk-module-youtube-research`),
 installed through the flow above.
 
-- **Port from** `M:\Code\ageniusdesk\backend\modules\research\` (`router.py`,
+- **Port from** the upstream AgeniusDesk research module (`router.py`,
   `artifacts.py`, `llm.py`), adapting to the CE module manifest + capability model.
 - **Compute (captions-only in v1, lightweight by design).** The captions API is
   the only transcription path in v1. It has been the reliable path in practice and
