@@ -62,22 +62,59 @@ Primary, available today: **enrich from n8n run-data.**
 - Enrichment is keyed by `execution_id`, which every captured span already carries
   via the root `workflow.execute` span.
 
-### 4.2 Price book
+### 4.2 Price book (staying current and accurate)
 
-- A model -> price map: `{model: {input_per_mtok, output_per_mtok}}`, operator
-  editable, with sane defaults for the common providers. OpenRouter list prices are
-  fetchable to seed/refresh it.
-- `cost_usd = prompt_tokens/1e6 * input_per_mtok + completion_tokens/1e6 * output_per_mtok`.
-- Unknown model => store tokens, mark `cost_estimated=false`/`cost=null`, surface
-  "tokens known, price unknown" rather than a wrong number.
+A model -> price map `{model: {input_per_mtok, output_per_mtok}}`. Prices drift, so
+the book is self-refreshing, layered, and snapshotted at compute time rather than
+hand-maintained.
+
+**Source of truth: OpenRouter's models API.** `GET https://openrouter.ai/api/v1/models`
+is public (no key) and returns ~hundreds of models across every provider with
+`pricing.prompt` / `pricing.completion` as per-token USD. We pull from it instead of
+curating prices by hand.
+
+**Layered resolution (highest wins):**
+1. Operator override (manual UI edit — private/self-hosted models, or to pin a number).
+2. Auto-fetched OpenRouter snapshot.
+3. Bundled default snapshot (shipped in the image so a fresh / offline / air-gapped
+   install still prices common models on day one).
+
+All three live in `data/price_book.json` (fetched + overrides) plus the bundled
+default; resolution is override > fetched > bundled.
+
+**Refresh:** a scheduled background fetch on a TTL (`AGD_PRICEBOOK_REFRESH_HOURS`,
+default 24) pulls `/models`, parses pricing, rewrites the cache. Fail-safe: any fetch
+error keeps the last-good cache and never blocks enrichment. Per model we store
+`source` + `priced_at`; the UI shows "priced from OpenRouter, updated Nh ago", a
+**Refresh now** button, and a staleness flag past a threshold.
+
+**Compute-time snapshot (do not retro-reprice).** Cost is computed when a trace is
+enriched, using the price *then in effect*, and the realized `cost_usd` **and the
+unit prices used** are stored on the span (Section 4.3). Later price changes affect
+only new enrichments; historical traces keep their real cost.
+
+**True cost where it is free.** If a call actually routed through OpenRouter, its
+response carries real cost — use that, not the book. The book is for direct-provider
+calls (e.g. `lmChatAnthropic` -> Anthropic), where OpenRouter's resale price is a
+close approximation, not always penny-identical; the operator override covers
+exactness.
+
+**Model-id matching.** n8n run-data gives a model id (e.g. `claude-sonnet-4-...`)
+that may not match OpenRouter's namespaced id (`anthropic/claude-sonnet-4`). A small
+normalize/alias step maps them; an unmatched model stores tokens with `cost_usd=null`
+and surfaces "tokens known, price unknown" so the operator can map it once.
+
+Formula: `cost_usd = prompt_tokens/1e6 * input_per_mtok + completion_tokens/1e6 * output_per_mtok`.
 
 ### 4.3 Storage
 
 Add to `otel_spans` (or a sibling `otel_costs` keyed by span_id) the columns:
 `model TEXT`, `tokens_in INTEGER`, `tokens_out INTEGER`, `cost_usd REAL`,
-`cost_source TEXT` (`n8n-rundata` | `gateway` | `agd-assistant`). Idempotent
-migration in `_migrate()`. Cost then rolls up per trace, workflow, model, instance
-with plain SQL — no second store.
+`cost_source TEXT` (`n8n-rundata` | `gateway` | `agd-assistant`), and the
+compute-time price snapshot `price_in_per_mtok REAL`, `price_out_per_mtok REAL`,
+`price_source TEXT`, `priced_at TEXT` (so a stored cost is auditable and never
+retro-repriced). Idempotent migration in `_migrate()`. Cost then rolls up per trace,
+workflow, model, instance with plain SQL — no second store.
 
 ### 4.4 AgeniusDesk's own assistant spend (free add-on)
 
@@ -110,8 +147,10 @@ feature.
 
 ## 7. Implementation phases
 
-1. Price book (defaults + operator edit + optional OpenRouter refresh) and the
-   `otel_spans` cost columns + migration.
+1. Price book: bundled default snapshot + `data/price_book.json` (layered
+   override > fetched > bundled) + the scheduled OpenRouter `/models` refresh task
+   (`AGD_PRICEBOOK_REFRESH_HOURS`, last-good fallback) + operator edit; and the
+   `otel_spans` cost + price-snapshot columns + migration.
 2. Run-data enrichment: detect AI-node traces, fetch the execution via `n8n_proxy`,
    parse `tokenUsage` + model, compute and store cost. Throttled / idempotent per
    execution.
