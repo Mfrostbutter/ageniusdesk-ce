@@ -20,11 +20,13 @@ from backend.config import (
     save_secrets,
     settings,
 )
-from backend.modules.auth import service as auth_service
 from backend.modules.admin.secret_templates import (
     TEMPLATES as SECRET_TEMPLATES,
+)
+from backend.modules.admin.secret_templates import (
     sanitized_registry as secret_templates_public,
 )
+from backend.modules.auth import service as auth_service
 
 logger = logging.getLogger(__name__)
 
@@ -415,6 +417,29 @@ async def list_env_vars():
 async def reset_config():
     save_config({})
     return {"success": True}
+
+
+@router.post("/restart")
+async def restart_app():
+    """Restart the AgeniusDesk process so a newly installed/removed module loads.
+
+    Mounting a community module's router requires a process restart (we do not
+    hot-import onto the live app). Under the standard Docker `restart:
+    unless-stopped` policy this round-trips cleanly: we send ourselves SIGTERM
+    after the response is sent, uvicorn shuts down gracefully, and Docker brings
+    the container back up. If the app is NOT run under a restart policy or
+    supervisor, it will stop rather than restart.
+    """
+    import asyncio
+    import signal
+
+    async def _terminate() -> None:
+        await asyncio.sleep(0.5)  # let this response flush first
+        logger.warning("Admin-triggered restart: sending SIGTERM to self")
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.create_task(_terminate())
+    return {"restarting": True}
 
 
 # ── Public API Key Management ─────────────────────────────────────────────────

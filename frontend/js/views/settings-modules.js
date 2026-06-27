@@ -399,13 +399,55 @@ async function inspectAndInstall(el, repo, ref, path, msg) {
       consent,
     });
     msg.style.color = '#34d399';
-    msg.innerHTML = `Installed <code>${esc(result.id)}</code> v${esc(result.version)} (sha ${esc(result.installed_sha.slice(0, 7))}, scan ${esc(result.scan_max_severity)}). <strong>Restart the app to activate.</strong>`;
-    toast.success(`Installed ${result.name}. Restart required.`);
-    renderModules(el.parentElement || el);
+    msg.innerHTML = `Installed <code>${esc(result.id)}</code> v${esc(result.version)} (scan ${esc(result.scan_max_severity)}). It activates on restart.
+      <button id="module-restart-btn" class="btn btn-sm btn-primary" style="margin-left:8px">Restart now</button>
+      <span style="opacity:0.65"> or restart AgeniusDesk later.</span>`;
+    msg.querySelector('#module-restart-btn')?.addEventListener('click', restartApp);
+    toast.success(`Installed ${result.name}. Restart to activate.`);
+    // Do not re-render: a community module is not in the registry until the
+    // restart, so re-rendering would just hide this message with no card to show.
   } catch (e) {
     msg.style.color = '#ff6d5a';
     msg.textContent = `Install failed: ${e.message}`;
   }
+}
+
+// ── App restart (activate installed/removed modules) ──────────────────────────
+
+async function restartApp() {
+  try {
+    await post('/api/admin/restart', {});
+  } catch {
+    // The server may drop the connection as it goes down; that is expected.
+  }
+  showRestartOverlay();
+}
+
+function showRestartOverlay() {
+  if (document.getElementById('agd-restart-overlay')) return;
+  const o = document.createElement('div');
+  o.id = 'agd-restart-overlay';
+  o.className = 'modal';
+  o.innerHTML = `
+    <div class="modal-content" style="text-align:center">
+      <h2 style="margin-bottom:8px">Restarting AgeniusDesk…</h2>
+      <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px">Activating modules. This page reloads automatically when it is back.</div>
+      <div class="spinner" style="margin:0 auto"></div>
+    </div>`;
+  document.body.appendChild(o);
+  // Wait for the process to go down, then poll until it answers again, then reload.
+  const start = Date.now();
+  const tick = async () => {
+    try {
+      await fetch('/api/health', { cache: 'no-store' });
+      location.reload();  // any response means the server is back up
+      return;
+    } catch {
+      if (Date.now() - start < 90000) setTimeout(tick, 1500);
+      else location.reload();
+    }
+  };
+  setTimeout(tick, 3000);
 }
 
 function renderDiscovered(el, repo, ref, modules, results, msg) {
@@ -479,8 +521,16 @@ function wireUninstall(el) {
       btn.disabled = true;
       try {
         await del(`/api/modules/${id}`);
-        toast.success(`Uninstalled ${id}. Restart required.`);
-        renderModules(el.parentElement || el);  // re-render
+        toast.success(`Uninstalled ${id}.`);
+        // It is removed from disk but stays mounted until a restart.
+        const msg = el.querySelector('#module-install-msg');
+        if (msg) {
+          msg.style.color = '#34d399';
+          msg.innerHTML = `Uninstalled <code>${esc(id)}</code>. It stays active until restart.
+            <button id="module-restart-btn" class="btn btn-sm btn-primary" style="margin-left:8px">Restart now</button>`;
+          msg.querySelector('#module-restart-btn')?.addEventListener('click', restartApp);
+        }
+        btn.disabled = false;
       } catch (e) {
         toast.error(`Uninstall failed: ${e.message}`);
         btn.disabled = false;
