@@ -1,9 +1,10 @@
 """Static file serving for community module frontend assets.
 
-Community modules ship HTML + JS in their repo. When the frontend loads a
-community module view, it fetches from /modules/{id}/static/{path}. This
-router reads from /data/modules/{id}/ on disk, guarding against path
-traversal.
+Community modules ship their frontend (HTML + JS) in a `static/` subdir. When
+the frontend loads a community module view, it fetches from
+/modules/{id}/static/{path}, which maps to /data/modules/{id}/static/{path} on
+disk, guarding against path traversal. Keeping assets under `static/` separates
+them from the module's Python code (see CONTRIBUTING in the modules repo).
 
 Built-in modules are NOT served via this route — their frontend code is
 bundled into the main frontend/ directory and loaded via the existing
@@ -21,10 +22,10 @@ router = APIRouter(tags=["modules-static"])
 
 
 def _safe_resolve(module_id: str, path: str) -> Path:
-    """Resolve /data/modules/{module_id}/{path}, rejecting traversal."""
-    base = COMMUNITY_MODULES_DIR.resolve() / module_id
+    """Resolve /data/modules/{module_id}/static/{path}, rejecting traversal."""
+    base = (COMMUNITY_MODULES_DIR.resolve() / module_id / "static")
     target = (base / path).resolve()
-    # Ensure the resolved path is still inside the module's own directory.
+    # Ensure the resolved path is still inside the module's static directory.
     try:
         target.relative_to(base)
     except ValueError:

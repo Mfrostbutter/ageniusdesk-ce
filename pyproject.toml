@@ -31,6 +31,10 @@ dependencies = [
     # n8n's native OTel exporter speaks HTTP/Protobuf only, so the embedded
     # observability receiver must decode ExportTraceServiceRequest.
     "opentelemetry-proto>=1.25.0",
+    # Provided to community modules for robust YouTube caption/transcript
+    # extraction (the youtube-research module uses it in-process; no GPU, no
+    # sidecar). Pure-Python; kept current for YouTube's frequent changes.
+    "yt-dlp>=2025.1.1",
 ]
 
 [project.optional-dependencies]

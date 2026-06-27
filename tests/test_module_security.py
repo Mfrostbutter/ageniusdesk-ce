@@ -158,6 +158,24 @@ def test_scanner_over_declaration_is_info(tmp_path):
     assert all(f.category == "over-declared" for f in info)
 
 
+def test_scanner_host_import_is_info(tmp_path):
+    # Importing the AgeniusDesk host is expected for a community module -> INFO.
+    code = "from backend.modules.notes import storage\ndef run():\n    return storage\n"
+    d = _write_module(tmp_path, None, code)
+    report = scan_module(d, ModuleManifest(id="h", name="H"))
+    assert not report.has("MEDIUM") and not report.has("HIGH")
+    assert any(f.category == "host-import" for f in report.findings)
+
+
+def test_scanner_cross_community_import_is_medium(tmp_path):
+    # Reaching into another community module (data/modules/*) stays MEDIUM.
+    code = "from data.modules.other import thing\ndef run():\n    return thing\n"
+    d = _write_module(tmp_path, None, code)
+    report = scan_module(d, ModuleManifest(id="c", name="C"))
+    assert report.has("MEDIUM")
+    assert any(f.category == "cross-module" for f in report.findings)
+
+
 def test_scanner_reports_parse_errors(tmp_path):
     (tmp_path / "broken.py").write_text("def f(:\n")
     report = scan_module(tmp_path, ModuleManifest(id="b", name="B"))
@@ -405,6 +423,32 @@ def test_inspect_and_install_subdir(client, monkeypatch):
     assert not (installer.COMMUNITY_MODULES_DIR / "widget").exists()
     # Staging dir was cleaned up (no leftover .stage-* dirs).
     assert not list(installer.COMMUNITY_MODULES_DIR.glob(".stage-*"))
+
+
+def test_static_serves_from_static_subdir(client):
+    from backend.modules.modules import static_router
+
+    static_dir = installer.COMMUNITY_MODULES_DIR / "statictest" / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    (static_dir / "view.html").write_text("<div>hello-static</div>")
+
+    r = client.get("/modules/statictest/static/view.html")
+    assert r.status_code == 200
+    assert "hello-static" in r.text
+
+    # A file at the module root (outside static/) is not served.
+    (installer.COMMUNITY_MODULES_DIR / "statictest" / "secret.py").write_text("x = 1\n")
+    assert client.get("/modules/statictest/static/secret.py").status_code == 404
+
+    # Traversal out of the static dir is blocked at resolve time.
+    import fastapi
+
+    try:
+        static_router._safe_resolve("statictest", "../secret.py")
+        raised = False
+    except fastapi.HTTPException:
+        raised = True
+    assert raised
 
 
 def test_install_rejects_path_traversal(client, monkeypatch):

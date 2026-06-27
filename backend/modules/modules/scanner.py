@@ -237,8 +237,14 @@ class _FileScanner(ast.NodeVisitor):
                     line,
                     "imports subprocess but the manifest does not declare subprocess access",
                 )
-        if root in ("data", "backend") and "modules" in module.split("."):
-            self._add("MEDIUM", "cross-module", line, f"imports another module's package path '{module}'")
+        # Reaching into the AgeniusDesk host (backend.*) is expected for a
+        # community module and surfaced as INFO transparency, not a risk.
+        # Reaching into the COMMUNITY modules dir (data/modules/*) is another
+        # community module poking at a sibling and stays MEDIUM.
+        if root == "backend":
+            self._add("INFO", "host-import", line, f"imports the AgeniusDesk host package '{module}'")
+        elif root == "data" and "modules" in module.split("."):
+            self._add("MEDIUM", "cross-module", line, f"imports another community module '{module}'")
 
     # -- calls -----------------------------------------------------------------
 
