@@ -25,6 +25,8 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 | ![Agent knowledge workspace: notes vault, sources, and instructions](docs/screenshots/harness.png) | ![Deploy and manage Docker services from the dashboard](docs/screenshots/containers.png) |
 | **YouTube Research (community module)** | **The Harness, populated** |
 | ![Research console: paste a YouTube link, get a structured breakdown filed into the vault](docs/screenshots/research.png) | ![The notes vault with research auto-filed under research/ai-assisted-coding](docs/screenshots/harness-populated.png) |
+| **Secrets store** | **Import / Export** |
+| ![Fernet-encrypted secret store with $NAME references and masked values](docs/screenshots/secrets-store.png) | ![Import n8n workflows from JSON with tags and a title override](docs/screenshots/import-export.png) |
 
 ## What's Included
 
