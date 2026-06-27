@@ -46,7 +46,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 
 **AI Assistant**
 - Chat with context from your workflows and error history
-- Support for OpenRouter, OpenAI, Anthropic, or local Ollama
+- Works with OpenRouter (one key, hundreds of models), OpenAI, Anthropic, Perplexity, Groq, DeepSeek, Mistral, xAI (Grok), Together AI, local Ollama, or any OpenAI-compatible endpoint via a Custom base URL (Azure OpenAI, LiteLLM, vLLM, LocalAI, ...). Each area (Code Lab / Error Triage / Assistant) picks its own provider and model.
 - Function calling to query workflows, run executions, view errors
 - Attach MCP servers to extend the assistant with external tools
 - Works great with [n8n-mcp](https://github.com/czlonkowski/n8n-mcp) by czlonkowski, an MCP server that gives the assistant deep n8n node knowledge plus workflow search, validation, and create/update tools (add it under Settings, MCP Servers)
@@ -132,7 +132,8 @@ Key variables:
 
 - `PORT` - Dashboard port (default 3000)
 - `SECRET_KEY` - Master key for secrets encryption (auto-generated if not set)
-- `ANTHROPIC_KEY`, `OPEN_AI_KEY`, `OPEN_ROUTER_KEY`, `OLLAMA_URL` - AI provider credentials
+- `ANTHROPIC_KEY`, `OPEN_AI_KEY`, `OPEN_ROUTER_KEY`, `OLLAMA_URL` - core AI provider credentials
+- `PERPLEXITY_KEY`, `GROQ_KEY`, `DEEPSEEK_KEY`, `MISTRAL_KEY`, `XAI_KEY`, `TOGETHER_KEY`, `CUSTOM_LLM_KEY` - additional OpenAI-compatible providers (the Custom one pairs with a base URL set in Models)
 - `QDRANT_URL`, `QDRANT_API_KEY` - Optional Qdrant RAG backend
 - `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL` - Optional notification sinks
 

@@ -57,6 +57,7 @@ class SharedConfigRequest(BaseModel):
     ollama_url: str | None = None
     qdrant_url: str | None = None
     qdrant_collection: str | None = None
+    custom_base_url: str | None = None  # API root for the "custom" OpenAI-compatible provider
 
 
 class ConfigRequest(BaseModel):
@@ -110,8 +111,10 @@ async def get_config():
             "triage": providers.default_triage_instructions(),
             "assistant": providers.default_assistant_instructions(),
         },
-        # Shared infra (not per-job): local Ollama endpoint + RAG store.
+        # Shared infra (not per-job): local Ollama endpoint, custom OpenAI-
+        # compatible endpoint, RAG store.
         "ollama_url": ollama_url,
+        "custom_base_url": ai.get("custom_base_url", ""),
         "qdrant_url": ai.get("qdrant_url", ""),
         "qdrant_collection": ai.get("qdrant_collection", ""),
         # Legacy fields kept for any older caller; the new UI ignores them.
@@ -166,6 +169,8 @@ async def save_shared(req: SharedConfigRequest):
     ai = config.get("assistant", {})
     if req.ollama_url is not None:
         ai["ollama_url"] = req.ollama_url
+    if req.custom_base_url is not None:
+        ai["custom_base_url"] = req.custom_base_url.strip().rstrip("/")
     if req.qdrant_url is not None:
         ai["qdrant_url"] = req.qdrant_url
     if req.qdrant_collection is not None:
@@ -265,10 +270,11 @@ async def list_models(provider: str = "openrouter", ollama_url: str = "", api_ke
 
     Strategy:
       - For `ollama`, always hits the live /api/tags endpoint.
-      - For `anthropic` / `openai` / `openrouter`, calls the live /v1/models
-        endpoint when an API key is configured (resolved from the conventional
-        `$ANTHROPIC_KEY` / `$OPEN_AI_KEY` / `$OPEN_ROUTER_KEY` secrets). Result
-        is cached in-memory for 5 minutes.
+      - For the OpenAI-compatible providers (anthropic / openai / openrouter and
+        the registry: groq / deepseek / mistral / xai / together / custom), calls
+        the live /models endpoint when a key is configured (resolved from the
+        per-provider convention secret) and caches it for 5 minutes. Perplexity
+        and the custom provider without a base URL serve a curated fallback list.
       - On any failure (missing key, auth error, network, timeout) we return
         the hardcoded fallback list. The client always sees SOME models.
 
@@ -285,7 +291,7 @@ async def list_models(provider: str = "openrouter", ollama_url: str = "", api_ke
         source = "live" if models else "fallback"
         return {"models": models, "provider": "ollama", "source": source}
 
-    if p in ("anthropic", "openai", "openrouter"):
+    if p in ("anthropic", "openai", "openrouter") or p in providers.OPENAI_COMPAT_PROVIDERS:
         result = await providers.list_provider_models(p, api_key_ref=api_key_ref)
         result["provider"] = p
         return result
@@ -327,7 +333,7 @@ async def test_creds(req: TestCredsRequest):
         if not resolved or resolved == ref[1:]:
             return {"ok": False, "error": f"Secret {ref} is empty or not found."}
         req.api_key = resolved
-    elif not req.api_key and p in ("anthropic", "openai", "openrouter"):
+    elif not req.api_key and p in providers.PROVIDER_KEY_MAP:
         # "Use provider default key" — resolve the per-provider convention secret.
         req.api_key = providers._resolve_provider_key(p)
 
@@ -385,7 +391,9 @@ async def test_creds(req: TestCredsRequest):
                     return {"ok": True, "model": req.model or "llama3"}
                 # Don't reflect the fetched body: the target is operator-supplied.
                 return {"ok": False, "error": f"HTTP {r.status_code} from Ollama at {base}"}
-        return {"ok": False, "error": f"Unknown provider: {p}"}
+        # Perplexity / Groq / DeepSeek / Mistral / xAI / Together / custom — a
+        # minimal chat-completions ping via the provider registry.
+        return await providers.ping_provider(p, api_key=req.api_key, model=req.model)
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

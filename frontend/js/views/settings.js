@@ -986,6 +986,42 @@ const ASSISTANT_MODELS = {
     { id: 'claude-haiku-4-20250414', name: 'Claude Haiku 4' },
     { id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
   ],
+  perplexity: [
+    { id: 'sonar', name: 'Sonar' },
+    { id: 'sonar-pro', name: 'Sonar Pro' },
+    { id: 'sonar-reasoning', name: 'Sonar Reasoning' },
+    { id: 'sonar-reasoning-pro', name: 'Sonar Reasoning Pro' },
+    { id: 'sonar-deep-research', name: 'Sonar Deep Research' },
+  ],
+  groq: [
+    { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile' },
+    { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant' },
+    { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill 70B' },
+    { id: 'qwen-2.5-32b', name: 'Qwen 2.5 32B' },
+  ],
+  deepseek: [
+    { id: 'deepseek-chat', name: 'DeepSeek V3 (chat)' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek R1 (reasoner)' },
+  ],
+  mistral: [
+    { id: 'mistral-large-latest', name: 'Mistral Large' },
+    { id: 'mistral-small-latest', name: 'Mistral Small' },
+    { id: 'codestral-latest', name: 'Codestral' },
+    { id: 'open-mistral-nemo', name: 'Mistral Nemo' },
+  ],
+  xai: [
+    { id: 'grok-3', name: 'Grok 3' },
+    { id: 'grok-3-mini', name: 'Grok 3 Mini' },
+    { id: 'grok-2-latest', name: 'Grok 2' },
+    { id: 'grok-2-vision-latest', name: 'Grok 2 Vision' },
+  ],
+  together: [
+    { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo' },
+    { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3' },
+    { id: 'Qwen/Qwen2.5-72B-Instruct-Turbo', name: 'Qwen 2.5 72B Turbo' },
+    { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B' },
+  ],
+  custom: [],
   ollama: [],
 };
 
@@ -1036,8 +1072,17 @@ const MODEL_JOB_SUBTITLE = {
   triage: 'Powers the "Ask AI" analysis on workflow errors.',
   assistant: 'Powers the main dashboard assistant chat.',
 };
-const MODEL_PROVIDERS = [['openrouter', 'OpenRouter'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['ollama', 'Ollama']];
-const MODEL_KEY_REF = { anthropic: '$ANTHROPIC_KEY', openai: '$OPEN_AI_KEY', openrouter: '$OPEN_ROUTER_KEY' };
+const MODEL_PROVIDERS = [
+  ['openrouter', 'OpenRouter'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'],
+  ['perplexity', 'Perplexity'], ['groq', 'Groq'], ['deepseek', 'DeepSeek'],
+  ['mistral', 'Mistral'], ['xai', 'xAI (Grok)'], ['together', 'Together AI'],
+  ['ollama', 'Ollama'], ['custom', 'Custom (OpenAI-compatible)'],
+];
+const MODEL_KEY_REF = {
+  anthropic: '$ANTHROPIC_KEY', openai: '$OPEN_AI_KEY', openrouter: '$OPEN_ROUTER_KEY',
+  perplexity: '$PERPLEXITY_KEY', groq: '$GROQ_KEY', deepseek: '$DEEPSEEK_KEY',
+  mistral: '$MISTRAL_KEY', xai: '$XAI_KEY', together: '$TOGETHER_KEY', custom: '$CUSTOM_LLM_KEY',
+};
 
 async function _fillJobModelSelect(modelSel, provider, preferred, keyRef = '') {
   if (!modelSel) return;
@@ -1119,6 +1164,21 @@ export async function renderModelsTab(el) {
         <span id="ai-shared-result" style="font-size:12px"></span>
       </div>
     </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Shared: Custom OpenAI-compatible endpoint</span></div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
+        Base URL used whenever a job's provider is set to <strong>Custom</strong>. Point it at any
+        OpenAI-compatible API root (Azure OpenAI, LiteLLM, vLLM, LocalAI, Fireworks, ...). The key
+        comes from <code>$CUSTOM_LLM_KEY</code> in Secrets (or pick a saved key per area). Save here
+        before testing the Custom provider.
+      </p>
+      <label>Base URL<input type="url" id="ai-custom-base-url" placeholder="https://my-proxy.example.com/v1"></label>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button class="btn" id="ai-custom-save" type="button">Save endpoint</button>
+        <span id="ai-custom-result" style="font-size:12px"></span>
+      </div>
+    </div>
   `;
 
   let cfg = {};
@@ -1150,6 +1210,8 @@ export async function renderModelsTab(el) {
 
   const ollamaInput = document.getElementById('ai-ollama-url');
   if (ollamaInput) ollamaInput.value = cfg.ollama_url || 'http://localhost:11434';
+  const customInput = document.getElementById('ai-custom-base-url');
+  if (customInput) customInput.value = cfg.custom_base_url || '';
 
   const goSecrets = (e) => { e.preventDefault(); if (window.__goSettings) window.__goSettings('secrets'); };
   document.getElementById('ai-go-secrets')?.addEventListener('click', goSecrets);
@@ -1278,6 +1340,16 @@ export async function renderModelsTab(el) {
     const res = document.getElementById('ai-shared-result');
     try {
       await post('/api/assistant/shared', { ollama_url: ollamaInput?.value || '' });
+      if (res) { res.textContent = 'Saved'; res.style.color = 'var(--success, #34d399)'; }
+    } catch (e) {
+      if (res) { res.textContent = e.message; res.style.color = 'var(--error)'; }
+    }
+  });
+
+  document.getElementById('ai-custom-save')?.addEventListener('click', async () => {
+    const res = document.getElementById('ai-custom-result');
+    try {
+      await post('/api/assistant/shared', { custom_base_url: customInput?.value || '' });
       if (res) { res.textContent = 'Saved'; res.style.color = 'var(--success, #34d399)'; }
     } catch (e) {
       if (res) { res.textContent = e.message; res.style.color = 'var(--error)'; }

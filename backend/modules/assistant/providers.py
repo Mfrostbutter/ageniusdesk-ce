@@ -114,12 +114,122 @@ ANTHROPIC_MODELS = [
     {"id": "claude-3-5-haiku-latest", "name": "Claude Haiku 3.5", "provider": "Anthropic"},
 ]
 
+# ── OpenAI-compatible provider registry ──────────────────────────────────────
+# Every entry here speaks the OpenAI /chat/completions wire format, so chat,
+# model-listing, and key-validation all reuse the shared OpenAI-compatible code
+# paths. `openai` and `openrouter` keep their bespoke handling above (the OpenAI
+# Responses API, OpenRouter referer headers) and are NOT in this registry.
+#
+# `custom` is the universal escape hatch: an operator supplies a base URL (the
+# API root, e.g. https://my-proxy/v1) for ANY OpenAI-compatible endpoint, which
+# covers Azure OpenAI, LiteLLM, vLLM, LocalAI, Fireworks, Open-anything. The
+# chat/models URLs for `custom` come from assistant.custom_base_url at runtime.
+#
+# `supports_tools` gates whether we send the n8n/MCP tool definitions. Providers
+# that reject an unknown `tools` field (Perplexity) must set this False; they
+# still generate workflow JSON, just without live tool-calling.
+PERPLEXITY_MODELS = [
+    {"id": "sonar", "name": "Sonar", "provider": "Perplexity"},
+    {"id": "sonar-pro", "name": "Sonar Pro", "provider": "Perplexity"},
+    {"id": "sonar-reasoning", "name": "Sonar Reasoning", "provider": "Perplexity"},
+    {"id": "sonar-reasoning-pro", "name": "Sonar Reasoning Pro", "provider": "Perplexity"},
+    {"id": "sonar-deep-research", "name": "Sonar Deep Research", "provider": "Perplexity"},
+]
+
+GROQ_MODELS = [
+    {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B Versatile", "provider": "Groq"},
+    {"id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B Instant", "provider": "Groq"},
+    {"id": "deepseek-r1-distill-llama-70b", "name": "DeepSeek R1 Distill 70B", "provider": "Groq"},
+    {"id": "qwen-2.5-32b", "name": "Qwen 2.5 32B", "provider": "Groq"},
+]
+
+DEEPSEEK_MODELS = [
+    {"id": "deepseek-chat", "name": "DeepSeek V3 (chat)", "provider": "DeepSeek"},
+    {"id": "deepseek-reasoner", "name": "DeepSeek R1 (reasoner)", "provider": "DeepSeek"},
+]
+
+MISTRAL_MODELS = [
+    {"id": "mistral-large-latest", "name": "Mistral Large", "provider": "Mistral"},
+    {"id": "mistral-small-latest", "name": "Mistral Small", "provider": "Mistral"},
+    {"id": "codestral-latest", "name": "Codestral", "provider": "Mistral"},
+    {"id": "open-mistral-nemo", "name": "Mistral Nemo", "provider": "Mistral"},
+]
+
+XAI_MODELS = [
+    {"id": "grok-3", "name": "Grok 3", "provider": "xAI"},
+    {"id": "grok-3-mini", "name": "Grok 3 Mini", "provider": "xAI"},
+    {"id": "grok-2-latest", "name": "Grok 2", "provider": "xAI"},
+    {"id": "grok-2-vision-latest", "name": "Grok 2 Vision", "provider": "xAI"},
+]
+
+TOGETHER_MODELS = [
+    {"id": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "name": "Llama 3.3 70B Turbo", "provider": "Together"},
+    {"id": "deepseek-ai/DeepSeek-V3", "name": "DeepSeek V3", "provider": "Together"},
+    {"id": "Qwen/Qwen2.5-72B-Instruct-Turbo", "name": "Qwen 2.5 72B Turbo", "provider": "Together"},
+    {"id": "mistralai/Mixtral-8x7B-Instruct-v0.1", "name": "Mixtral 8x7B", "provider": "Together"},
+]
+
+OPENAI_COMPAT_PROVIDERS: dict[str, dict] = {
+    "perplexity": {
+        "label": "Perplexity", "key_env": "PERPLEXITY_KEY", "supports_tools": False,
+        "chat_url": "https://api.perplexity.ai/chat/completions", "models_url": "",
+        "default_model": "sonar", "fallback": PERPLEXITY_MODELS,
+    },
+    "groq": {
+        "label": "Groq", "key_env": "GROQ_KEY", "supports_tools": True,
+        "chat_url": "https://api.groq.com/openai/v1/chat/completions",
+        "models_url": "https://api.groq.com/openai/v1/models",
+        "default_model": "llama-3.3-70b-versatile", "fallback": GROQ_MODELS,
+    },
+    "deepseek": {
+        "label": "DeepSeek", "key_env": "DEEPSEEK_KEY", "supports_tools": True,
+        "chat_url": "https://api.deepseek.com/chat/completions",
+        "models_url": "https://api.deepseek.com/models",
+        "default_model": "deepseek-chat", "fallback": DEEPSEEK_MODELS,
+    },
+    "mistral": {
+        "label": "Mistral", "key_env": "MISTRAL_KEY", "supports_tools": True,
+        "chat_url": "https://api.mistral.ai/v1/chat/completions",
+        "models_url": "https://api.mistral.ai/v1/models",
+        "default_model": "mistral-large-latest", "fallback": MISTRAL_MODELS,
+    },
+    "xai": {
+        "label": "xAI (Grok)", "key_env": "XAI_KEY", "supports_tools": True,
+        "chat_url": "https://api.x.ai/v1/chat/completions",
+        "models_url": "https://api.x.ai/v1/models",
+        "default_model": "grok-3", "fallback": XAI_MODELS,
+    },
+    "together": {
+        "label": "Together AI", "key_env": "TOGETHER_KEY", "supports_tools": True,
+        "chat_url": "https://api.together.xyz/v1/chat/completions",
+        "models_url": "https://api.together.xyz/v1/models",
+        "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "fallback": TOGETHER_MODELS,
+    },
+    # Operator-supplied base URL (assistant.custom_base_url). chat_url/models_url
+    # are derived from it at runtime in _dispatch_chat / list_provider_models.
+    "custom": {
+        "label": "Custom (OpenAI-compatible)", "key_env": "CUSTOM_LLM_KEY", "supports_tools": True,
+        "chat_url": "", "models_url": "", "default_model": "", "fallback": [],
+    },
+}
+
+
+def _custom_base_url() -> str:
+    """Operator-supplied base URL for the `custom` provider (API root). Empty if unset."""
+    try:
+        ai = load_config().get("assistant", {})
+        return (ai.get("custom_base_url") or "").strip().rstrip("/")
+    except Exception:
+        return ""
+
+
 # Map provider to default model
 PROVIDER_DEFAULTS = {
     "openrouter": "anthropic/claude-sonnet-4",
     "openai": "gpt-4o",
     "anthropic": "claude-sonnet-4-20250514",
     "ollama": "llama3",
+    **{p: spec["default_model"] for p, spec in OPENAI_COMPAT_PROVIDERS.items() if spec["default_model"]},
 }
 
 
@@ -133,6 +243,7 @@ def get_assistant_config() -> dict:
         "api_key": decrypt_value(ai.get("api_key", "")),
         "model": ai.get("model", PROVIDER_DEFAULTS.get(provider, "anthropic/claude-sonnet-4")),
         "ollama_url": ai.get("ollama_url") or _ollama_default(),
+        "custom_base_url": (ai.get("custom_base_url") or "").strip().rstrip("/"),
         "qdrant_url": decrypt_value(ai.get("qdrant_url", "")),
         "qdrant_collection": ai.get("qdrant_collection", ""),
         "system_prompt": ai.get("system_prompt", ""),
@@ -147,6 +258,8 @@ PROVIDER_KEY_MAP = {
     "anthropic": "ANTHROPIC_KEY",
     "openai": "OPEN_AI_KEY",
     "openrouter": "OPEN_ROUTER_KEY",
+    # OpenAI-compatible providers each resolve their key by convention secret.
+    **{p: spec["key_env"] for p, spec in OPENAI_COMPAT_PROVIDERS.items()},
 }
 
 # ── Per-job (per-area) configuration ────────────────────────────────────────
@@ -374,8 +487,25 @@ async def _dispatch_chat(messages: list[dict], system: str, cfg: dict) -> dict[s
             base_url="https://api.openai.com/v1/chat/completions",
             provider_name="openai",
         )
+    elif provider in OPENAI_COMPAT_PROVIDERS:
+        # Perplexity / Groq / DeepSeek / Mistral / xAI / Together / custom — all
+        # speak OpenAI chat-completions. Route through the shared compat path.
+        spec = OPENAI_COMPAT_PROVIDERS[provider]
+        if provider == "custom":
+            base = (cfg.get("custom_base_url") or _custom_base_url()).strip().rstrip("/")
+            if not base:
+                return {"error": "Custom provider selected but no base URL is set. Add it in Models > Custom endpoint."}
+            chat_url = f"{base}/chat/completions"
+        else:
+            chat_url = spec["chat_url"]
+        return await _chat_openai_compat(
+            messages, system, cfg,
+            base_url=chat_url,
+            provider_name=provider,
+            tools_enabled=spec.get("supports_tools", True),
+        )
     else:
-        # OpenRouter — default
+        # OpenRouter — default (and the fallback for any unknown provider id)
         surface = _api_surface_for(cfg.get("model", ""))
         if surface == "embeddings":
             return {"error": "Embedding models cannot be used as chat models. Pick a chat or codex model."}
@@ -612,16 +742,26 @@ def _extract_message_text(message: dict) -> str:
 
 async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
                               base_url: str, provider_name: str,
-                              extra_headers: dict | None = None) -> dict[str, Any]:
-    """Chat via OpenAI-compatible API with tool use support."""
+                              extra_headers: dict | None = None,
+                              tools_enabled: bool = True) -> dict[str, Any]:
+    """Chat via OpenAI-compatible API.
+
+    `tools_enabled` controls whether the n8n + MCP tool definitions are offered.
+    Set False for OpenAI-compatible providers that reject an unknown `tools`
+    field (e.g. Perplexity); the model then answers directly with no tool loop.
+    """
     from backend.config import get_active_instance_id
     from backend.modules.assistant.mcp_client import execute_tool as mcp_execute
     from backend.modules.assistant.mcp_client import get_all_mcp_tools
     from backend.modules.assistant.tools import TOOL_DEFINITIONS, execute_tool
 
-    active_instance_id = get_active_instance_id()
-    mcp_tools, mcp_tool_map = await get_all_mcp_tools(instance_id=active_instance_id)
-    all_tools = TOOL_DEFINITIONS + mcp_tools
+    if tools_enabled:
+        active_instance_id = get_active_instance_id()
+        mcp_tools, mcp_tool_map = await get_all_mcp_tools(instance_id=active_instance_id)
+        all_tools = TOOL_DEFINITIONS + mcp_tools
+    else:
+        mcp_tool_map = {}
+        all_tools = []
 
     headers = {
         "Authorization": f"Bearer {cfg['api_key']}",
@@ -639,8 +779,9 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
             "messages": all_messages,
             "max_tokens": 4096,
             "temperature": 0.7,
-            "tools": all_tools,
         }
+        if all_tools:
+            payload["tools"] = all_tools
 
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
@@ -1177,6 +1318,27 @@ async def _fetch_openrouter_models(api_key: str) -> list[dict]:
     return out
 
 
+async def _fetch_openai_compat_models(api_key: str, models_url: str, label: str) -> list[dict]:
+    """List models from any OpenAI-compatible /models endpoint (Groq, DeepSeek,
+    Mistral, xAI, Together, custom). Shapes the standard {data:[{id}]} response;
+    tolerates a bare list. Raises on any HTTP/parse failure (caller falls back)."""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(models_url, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    items = data.get("data") if isinstance(data, dict) else data
+    out = []
+    for m in items or []:
+        mid = m.get("id") if isinstance(m, dict) else m
+        if not mid:
+            continue
+        name = (m.get("name") if isinstance(m, dict) else None) or mid
+        out.append({"id": mid, "name": name, "provider": label})
+    out.sort(key=lambda x: str(x["id"]))
+    return out
+
+
 _FALLBACK_MAP = {
     "anthropic": ANTHROPIC_MODELS,
     "openai": OPENAI_MODELS,
@@ -1204,9 +1366,27 @@ async def list_provider_models(provider: str, api_key_ref: str = "") -> dict[str
       the hardcoded fallback list. Never hard-errors.
     """
     p = (provider or "").lower()
-    if p not in _LIVE_FETCHERS:
-        # Providers without a live fetcher (e.g. something we haven't wired)
-        return {"models": _FALLBACK_MAP.get(p, []), "source": "fallback"}
+
+    # Resolve (fetcher, fallback_list) for both the bespoke providers
+    # (anthropic/openai/openrouter) and the OpenAI-compatible registry.
+    fallback: list[dict] = []
+    fetcher = None
+    if p in _LIVE_FETCHERS:
+        fallback = _FALLBACK_MAP.get(p, [])
+        fetcher = _LIVE_FETCHERS[p]
+    elif p in OPENAI_COMPAT_PROVIDERS:
+        spec = OPENAI_COMPAT_PROVIDERS[p]
+        fallback = spec["fallback"]
+        models_url = spec["models_url"]
+        if p == "custom":
+            base = _custom_base_url()
+            models_url = f"{base}/models" if base else ""
+        if models_url:
+            label = spec["label"]
+            fetcher = lambda key, _u=models_url, _l=label: _fetch_openai_compat_models(key, _u, _l)  # noqa: E731
+    else:
+        # Unknown provider — nothing to fetch.
+        return {"models": fallback, "source": "fallback"}
 
     if api_key_ref:
         ref = api_key_ref if api_key_ref.startswith("$") else f"${api_key_ref}"
@@ -1227,17 +1407,18 @@ async def list_provider_models(provider: str, api_key_ref: str = "") -> dict[str
             "cached_at": cached["at"],
         }
 
-    if not api_key:
-        # No key configured — return fallback list without trying.
-        return {"models": _FALLBACK_MAP.get(p, []), "source": "fallback"}
+    # No live fetcher (e.g. Perplexity has no /models, or custom has no base URL)
+    # or no key configured — return the curated fallback without trying.
+    if not fetcher or not api_key:
+        return {"models": fallback, "source": "fallback"}
 
     # Try live fetch.
     try:
-        models = await _LIVE_FETCHERS[p](api_key)
+        models = await fetcher(api_key)
         if not models:
             # Provider returned 200 but no models — treat as fallback.
             logger.warning("%s /v1/models returned empty list; using fallback", p)
-            return {"models": _FALLBACK_MAP.get(p, []), "source": "fallback"}
+            return {"models": fallback, "source": "fallback"}
         _MODEL_CACHE[cache_key] = {"at": now, "models": models}
         return {"models": models, "source": "live", "cached_at": now}
     except httpx.HTTPStatusError as e:
@@ -1251,7 +1432,7 @@ async def list_provider_models(provider: str, api_key_ref: str = "") -> dict[str
             "%s /v1/models fetch failed (%s) — falling back to hardcoded list",
             p, e,
         )
-    return {"models": _FALLBACK_MAP.get(p, []), "source": "fallback"}
+    return {"models": fallback, "source": "fallback"}
 
 
 def _api_surface_for(model: str) -> str:
@@ -1309,7 +1490,11 @@ async def ping_provider(
             except Exception:
                 # Containers can't reach host `localhost`. Point the hint at the
                 # common fixes so the UI can show something actionable.
-                return {"ok": False, "error": f"Could not reach Ollama at {base}. Set OLLAMA_URL to host.docker.internal:11434 (Mac) or the host LAN IP."}
+                return {
+                    "ok": False,
+                    "error": f"Could not reach Ollama at {base}. Set OLLAMA_URL to "
+                             "host.docker.internal:11434 (Mac) or the host LAN IP.",
+                }
 
         if not api_key:
             return {"ok": False, "error": "API key required"}
@@ -1393,6 +1578,33 @@ async def ping_provider(
                 r = await c.post(url, headers=headers, json=payload)
                 if r.status_code == 200:
                     return {"ok": True, "model": target_model, "api_surface": surface}
+                return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+
+        if p in OPENAI_COMPAT_PROVIDERS:
+            spec = OPENAI_COMPAT_PROVIDERS[p]
+            chat_url = spec["chat_url"]
+            if p == "custom":
+                base = _custom_base_url()
+                if not base:
+                    return {
+                        "ok": False,
+                        "error": "No base URL set for the custom provider. "
+                                 "Save it in Models > Custom endpoint first.",
+                    }
+                chat_url = f"{base}/chat/completions"
+            target_model = model or spec["default_model"]
+            if not target_model:
+                return {"ok": False, "error": "Pick a model to test."}
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": target_model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.post(chat_url, headers=headers, json=payload)
+                if r.status_code == 200:
+                    return {"ok": True, "model": target_model}
                 return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
 
         return {"ok": False, "error": f"Unknown provider: {provider}"}

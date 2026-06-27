@@ -23,8 +23,17 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
 |----------|---------|-------------|
 | `ANTHROPIC_KEY` | (none) | Anthropic API key for Claude models. Can also set as `ANTHROPIC_API_KEY`. |
 | `OPEN_AI_KEY` | (none) | OpenAI API key for GPT models. Can also set as `OPENAI_API_KEY`. |
-| `OPEN_ROUTER_KEY` | (none) | OpenRouter API key for 11+ LLM models. |
+| `OPEN_ROUTER_KEY` | (none) | OpenRouter API key. One key reaches hundreds of models across providers; a good default. |
 | `OLLAMA_URL` | `http://localhost:11434` | Local Ollama endpoint for self-hosted models. Inside Docker, use `http://host.docker.internal:11434` or your LAN IP. |
+| `PERPLEXITY_KEY` | (none) | Perplexity API key (Sonar models). |
+| `GROQ_KEY` | (none) | Groq API key (fast Llama / Qwen / DeepSeek-distill inference). |
+| `DEEPSEEK_KEY` | (none) | DeepSeek API key (deepseek-chat / deepseek-reasoner). |
+| `MISTRAL_KEY` | (none) | Mistral API key (Mistral / Codestral models). |
+| `XAI_KEY` | (none) | xAI API key (Grok models). |
+| `TOGETHER_KEY` | (none) | Together AI API key (open models). |
+| `CUSTOM_LLM_KEY` | (none) | API key for the **Custom** provider: any OpenAI-compatible endpoint (Azure OpenAI, LiteLLM, vLLM, LocalAI, Fireworks, ...). Set its base URL in Models > "Custom OpenAI-compatible endpoint" (stored as `assistant.custom_base_url`). |
+
+All of the above except Ollama are OpenAI-compatible and route through the same chat path. Each assistant area (Code Lab / Error Triage / General Assistant) selects its own provider and model independently.
 
 ## Knowledge & RAG
 
