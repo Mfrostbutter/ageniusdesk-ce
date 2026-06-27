@@ -66,8 +66,9 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 
 ### Release hygiene
 
-- [ ] Logout control in the app chrome (finishes the auth spec, Section 7.3)
-- [ ] Persistent Code Lab across instance switch: keep the editor contents (e.g. a workflow JSON being built) intact when switching the active instance, so an operator can author on one instance and deploy to another without losing work
+- [x] Logout control in the app chrome (sidebar account row; finishes the auth spec, Section 7.3)
+- [x] Persistent Code Lab across instance switch: the editor buffer survives re-render, so authoring on one instance and deploying to another no longer loses work
+- [x] "Open" button per instance in the sidebar switcher: open an n8n instance's UI directly in a new tab
 
 ---
 

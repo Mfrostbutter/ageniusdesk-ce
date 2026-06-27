@@ -130,6 +130,9 @@
         <!-- Instance selector -->
         <div class="sidebar-instances" id="instance-selector"></div>
       </div>
+      <!-- Logged-in account + logout. Populated by app.js; stays empty for
+           edge-identity / admin-token / login-disabled installs (no session). -->
+      <div id="sidebar-account"></div>
       <div class="sidebar-footer">
         <span id="connection-status" class="status-dot offline"></span>
         <span class="sidebar-footer-text" id="conn-label">Disconnected</span>

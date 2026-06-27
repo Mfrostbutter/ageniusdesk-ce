@@ -9,6 +9,10 @@ import * as toast from '../components/toast.js';
 let editor = null;
 let monacoLoaded = false;
 let _mode = 'code';  // 'code' (Code-node snippet) | 'workflow' (workflow JSON builder)
+// Last editor buffer, preserved across editor re-creation so switching the active
+// instance (which re-renders the view) never wipes work in progress. Null until
+// the editor has been created at least once.
+let _savedCode = null;
 
 export async function render(container) {
   container.innerHTML = `
@@ -597,11 +601,16 @@ function registerN8nCompletions() {
 function initEditor() {
   const container = document.getElementById('monaco-container');
   if (!container) return;
-  // Dispose stale editor instance from a previous navigation
-  if (editor) { editor.dispose(); editor = null; }
+  // Dispose stale editor instance from a previous navigation, capturing its
+  // buffer first so a re-render (e.g. active-instance switch) preserves the work.
+  if (editor) {
+    try { _savedCode = editor.getValue(); } catch { /* ignore */ }
+    editor.dispose();
+    editor = null;
+  }
 
   editor = monaco.editor.create(container, {
-    value: getTemplate('blank'),
+    value: _savedCode != null ? _savedCode : getTemplate('blank'),
     language: 'javascript',
     theme: 'n8n-dark',
     fontSize: 13,
@@ -617,6 +626,10 @@ function initEditor() {
     suggestOnTriggerCharacters: true,
     quickSuggestions: true,
   });
+
+  // Re-apply the persisted mode so the toolbar, model language, and content type
+  // match what the user had before this re-render (no-op for a fresh 'code' load).
+  applyMode(_mode);
 }
 
 // ── Templates ───────────────────────────────────────────────────────────────

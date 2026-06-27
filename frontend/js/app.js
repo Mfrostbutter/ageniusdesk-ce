@@ -452,12 +452,17 @@ async function loadInstances() {
 
     el.innerHTML = `
       <div class="instance-label">Instances</div>
-      ${instances.map(inst => `
-        <button class="instance-item ${inst.active ? 'active' : ''}" onclick="window.__switchInstance('${jsStr(inst.id)}')">
-          <span class="instance-dot" style="background:${inst.color || '#ff6d5a'}"></span>
-          ${esc(inst.name)}
-        </button>
-      `).join('')}
+      ${instances.map(inst => {
+        const openUrl = (inst.login_url || inst.url || '').replace(/\/$/, '');
+        return `
+        <div class="instance-row" style="display:flex;align-items:center;gap:6px">
+          <button class="instance-item ${inst.active ? 'active' : ''}" style="flex:1;min-width:0" onclick="window.__switchInstance('${jsStr(inst.id)}')">
+            <span class="instance-dot" style="background:${inst.color || '#ff6d5a'}"></span>
+            ${esc(inst.name)}
+          </button>
+          ${openUrl ? `<button class="instance-open" title="Open ${esc(inst.name)} in a new tab" onclick="window.open('${jsStr(openUrl)}','_blank','noopener')" style="flex:none;display:flex;align-items:center;gap:3px;font-size:11px;padding:5px 9px;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:6px;color:var(--text-secondary);cursor:pointer;white-space:nowrap">Open <span aria-hidden="true">&#8599;</span></button>` : ''}
+        </div>`;
+      }).join('')}
       <button class="instance-add" onclick="window.__addInstance()">+ Add</button>
     `;
 
@@ -541,6 +546,31 @@ async function loadThemeDropdown() {
   } catch { select.innerHTML = '<option>Default</option>'; }
 }
 
+// ── Account / logout (sidebar) ──────────────────────────────────────────────
+
+async function loadAccount() {
+  const el = document.getElementById('sidebar-account');
+  if (!el) return;
+  try {
+    const s = await get('/api/auth/status');
+    const u = s.user;
+    // Only show a logout control for a real local session; edge-identity and
+    // admin-token installs have no session to end.
+    if (!u || u.source !== 'session') { el.innerHTML = ''; return; }
+    const name = u.username || 'Account';
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid var(--border-dim)">
+        <span style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(name)}">${esc(name)}</span>
+        <button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px;flex:none" onclick="window.__logout()" title="Log out">Log out</button>
+      </div>`;
+  } catch { el.innerHTML = ''; }
+}
+
+window.__logout = async () => {
+  try { await post('/api/auth/logout', {}); } catch { /* reload still bounces to the login gate */ }
+  location.reload();
+};
+
 // ── Init ────────────────────────────────────────────────────────────────────
 
 window.__n8nUrl = '';
@@ -557,7 +587,7 @@ async function init() {
     window.__appVersion = status.version || '';
 
     if (status.theme) await loadTheme(status.theme);
-    await Promise.all([loadInstances(), loadThemeDropdown()]);
+    await Promise.all([loadInstances(), loadThemeDropdown(), loadAccount()]);
 
     // Init music player banner
     await player.init();
