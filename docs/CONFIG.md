@@ -62,6 +62,25 @@ All of the above except Ollama are OpenAI-compatible and route through the same 
 
 > **Security:** the Containers tab requires mounting the Docker socket (see `docker-compose.yml`). That grants the dashboard root-equivalent control of the host. Only run it mounted when the dashboard is not exposed unauthenticated: keep it on a trusted LAN, front it with an auth proxy, or set `AGD_REQUIRE_AUTH=true`. Remove the socket mount to disable the Containers tab.
 
+## Observability (OpenTelemetry)
+
+The dashboard can receive per-execution, per-node spans from n8n's native OTel
+exporter and render them as a trace waterfall in the Observability view. Off by
+default. The ingest endpoint (`POST /api/otel/v1/traces`) is a machine-ingest
+surface, exempt from the session gate and protected by `AGD_OTEL_TOKEN`; set the
+token before exposing the port beyond a trusted LAN.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGD_OTEL_ENABLED` | `false` | Enable the embedded OTLP/HTTP receiver. When off, the ingest endpoint returns `404`. |
+| `AGD_OTEL_TOKEN` | (none) | Bearer (or `X-AGD-Otel-Token`) token n8n must send. Unset = open (trusted-LAN only); compared in constant time. On n8n: `N8N_OTEL_EXPORTER_OTLP_ENDPOINT=http://<host>:<PORT>/api/otel` and `N8N_OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <token>`. |
+| `AGD_OTEL_RETENTION_HOURS` | `72` | Spans older than this are pruned on ingest. |
+| `AGD_OTEL_MAX_SPANS` | `500000` | Hard cap on stored spans; oldest dropped past it. |
+
+The query endpoints under `/api/otel/*` (trace list, waterfall, metrics, cost)
+are ordinary session-authed routes; the price-book refresh (`POST
+/api/otel/pricing/refresh`) requires `operator`.
+
 ## Security
 
 | Variable | Default | Description |

@@ -6,10 +6,11 @@ import time
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import decrypt_value, encrypt_value, load_config, save_config
 
 
@@ -24,7 +25,9 @@ def _build_redirect_uri(request: Request) -> str:
         base = base.replace("://localhost", "://127.0.0.1")
     return base + "/api/spotify/callback"
 
-router = APIRouter(prefix="/api/spotify", tags=["spotify"])
+# Operator floor: Spotify is an operator-configured integration (OAuth setup +
+# playback control). A viewer doesn't set up or drive it.
+router = APIRouter(prefix="/api/spotify", tags=["spotify"], dependencies=[Depends(require_role("operator"))])
 
 SPOTIFY_AUTH_URL  = "https://accounts.spotify.com/authorize"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"

@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.modules.notes import index as _index
 from backend.modules.notes import storage
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
+
+# Operator floor for vault writes (reindex/write/append/delete); reads stay open
+# to any authenticated user. The assistant/MCP write the vault via the storage
+# functions directly, not through this HTTP surface, so they are unaffected.
+_operator = Depends(require_role("operator"))
 
 
 class WriteRequest(BaseModel):
@@ -42,7 +48,7 @@ async def list_tags():
     return {"tags": await _index.list_tags()}
 
 
-@router.post("/reindex")
+@router.post("/reindex", dependencies=[_operator])
 async def reindex():
     """Drop and rebuild the full-text index from disk. Use after editing
     files directly (e.g. via Obsidian sync) to pick up external changes."""
@@ -69,7 +75,7 @@ async def read_note(path: str):
     return {"path": vp.rel, "content": content}
 
 
-@router.put("/{path:path}")
+@router.put("/{path:path}", dependencies=[_operator])
 async def write_note(path: str, req: WriteRequest):
     storage.ensure_vault()
     _resolve_or_400(path)
@@ -77,7 +83,7 @@ async def write_note(path: str, req: WriteRequest):
     return result
 
 
-@router.post("/{path:path}/append")
+@router.post("/{path:path}/append", dependencies=[_operator])
 async def append_note(path: str, req: AppendRequest):
     storage.ensure_vault()
     _resolve_or_400(path)
@@ -85,7 +91,7 @@ async def append_note(path: str, req: AppendRequest):
     return result
 
 
-@router.delete("/{path:path}")
+@router.delete("/{path:path}", dependencies=[_operator])
 async def delete_note(path: str):
     storage.ensure_vault()
     try:

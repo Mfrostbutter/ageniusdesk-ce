@@ -8,9 +8,10 @@ session-authed `/api/*` routes consumed by the Observability view.
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from backend.auth_gate import require_role
 from backend.config import get_active_instance_id, settings
 
 from . import cost, ingest, pricing, storage
@@ -111,7 +112,7 @@ async def pricing_status():
     return pricing.status()
 
 
-@router.post("/pricing/refresh")
+@router.post("/pricing/refresh", dependencies=[Depends(require_role("operator"))])
 async def pricing_refresh():
     """Force a price-book refresh from OpenRouter's models API."""
     return await pricing.refresh(force=True)

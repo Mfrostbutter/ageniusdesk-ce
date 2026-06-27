@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from backend.auth_gate import require_role
 from backend.config import get_active_instance_id
 from backend.modules.insights.aggregator import get_insights, invalidate
 
@@ -37,7 +38,7 @@ async def get_insights_payload(
     return await get_insights(inst, range_key=range)
 
 
-@router.post("/refresh")
+@router.post("/refresh", dependencies=[Depends(require_role("operator"))])
 async def refresh_insights(instance_id: str = Query(""), range: str = Query("")):
     """Drop the cache so the next GET re-fetches from n8n. Used by Refresh button."""
     inst = _resolve_instance(instance_id) if instance_id else ""

@@ -91,3 +91,36 @@ def test_operator_allowed_themes_write(anon, monkeypatch):
     _as_role(monkeypatch, "operator")
     # 404 (no such theme) is fine; it proves the role gate let the operator past.
     assert anon.post("/api/themes/active/nonexistent-xyz").status_code != 403
+
+
+# ── #5 convention sweep: writes gated on remaining routers; reads stay open ───
+
+
+def test_viewer_blocked_insights_refresh_reads_open(anon, monkeypatch):
+    _as_role(monkeypatch, "viewer")
+    assert anon.post("/api/insights/refresh").status_code == 403
+    assert anon.get("/api/insights").status_code != 403  # analytics read stays open
+
+
+def test_viewer_blocked_observability_pricing_refresh(anon, monkeypatch):
+    _as_role(monkeypatch, "viewer")
+    assert anon.post("/api/otel/pricing/refresh").status_code == 403
+
+
+def test_viewer_blocked_notes_writes_reads_open(anon, monkeypatch):
+    _as_role(monkeypatch, "viewer")
+    assert anon.post("/api/notes/reindex").status_code == 403
+    assert anon.put("/api/notes/foo", json={"content": "x"}).status_code == 403
+    assert anon.delete("/api/notes/foo").status_code == 403
+    assert anon.get("/api/notes/tree").status_code != 403  # vault read stays open
+
+
+def test_operator_allowed_notes_write(anon, monkeypatch):
+    _as_role(monkeypatch, "operator")
+    assert anon.put("/api/notes/rbac-test-note", json={"content": "hi"}).status_code != 403
+
+
+def test_viewer_blocked_player(anon, monkeypatch):
+    _as_role(monkeypatch, "viewer")
+    # Router-level operator on the Spotify integration.
+    assert anon.post("/api/spotify/play").status_code == 403
