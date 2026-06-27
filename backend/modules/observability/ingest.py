@@ -20,11 +20,31 @@ logger = logging.getLogger(__name__)
 
 _STATUS = {0: "UNSET", 1: "OK", 2: "ERROR"}
 
+# Markers of UTF-8-decoded-as-cp1252 mojibake (e.g. an em-dash "—" arriving as
+# "â€""). Some emitters double-encode text before exporting; we repair it on
+# ingest so names render correctly.
+_MOJIBAKE_MARKERS = ("Ã", "â€", "Â", "ð\x9f")
+
+
+def _fix_mojibake(s: str) -> str:
+    """Best-effort repair of double-encoded UTF-8 (cp1252 round-trip).
+
+    Only attempts a repair when the string carries a known mojibake marker and
+    the round-trip succeeds, so clean text is never touched.
+    """
+    if not s or not any(m in s for m in _MOJIBAKE_MARKERS):
+        return s
+    try:
+        repaired = s.encode("cp1252").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+    return repaired if repaired != s else s
+
 
 def _anyvalue(v):
     """Convert an OTLP AnyValue to a plain Python value."""
     if v.HasField("string_value"):
-        return v.string_value
+        return _fix_mojibake(v.string_value)
     if v.HasField("bool_value"):
         return v.bool_value
     if v.HasField("int_value"):

@@ -209,6 +209,18 @@ def test_pricing_bundled_and_normalize():
     assert pricing.price_for("totally-unknown-model-xyz") is None
 
 
+def test_fix_mojibake_repairs_double_encoded_names():
+    from backend.modules.observability.ingest import _fix_mojibake
+
+    # An em-dash that arrived double-encoded (UTF-8 bytes read as cp1252).
+    assert _fix_mojibake("Job Hunt â€” Build Packages") == "Job Hunt — Build Packages"
+    # A correctly-encoded em-dash carries no marker and is left untouched.
+    assert _fix_mojibake("A — B") == "A — B"
+    # Plain ASCII and empty strings are untouched.
+    assert _fix_mojibake("Email Assistant 4 - get many") == "Email Assistant 4 - get many"
+    assert _fix_mojibake("") == ""
+
+
 def _ai_request():
     """A trace with an AI language-model node (workflow root + one node span)."""
     req = ExportTraceServiceRequest()
