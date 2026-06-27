@@ -1,10 +1,10 @@
-"""Module manager API — list modules, surface nav, install/uninstall community."""
+"""Module manager API — list modules, surface nav, inspect/install/uninstall."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend import module_registry
-from backend.auth_gate import require_trusted_request
+from backend.auth_gate import current_user, require_trusted_request
 from backend.module_registry import APP_VERSION
 
 from . import installer
@@ -64,26 +64,58 @@ async def get_module(module_id: str):
 # ── Write endpoints (community modules only) ─────────────────────────────────
 
 
+class InspectPayload(BaseModel):
+    repo: str  # 'owner/repo' or GitHub URL
+    ref: str = "main"  # tag, branch, or commit SHA
+
+
+class Consent(BaseModel):
+    acknowledged: bool = False  # operator checked the HIGH-findings acknowledgement
+    typed_id: str | None = None  # operator typed the module id (CRITICAL findings)
+
+
 class InstallPayload(BaseModel):
     repo: str  # 'owner/repo' or GitHub URL
     ref: str = "main"  # tag, branch, or commit SHA
+    resolved_sha: str | None = None  # the sha returned by /inspect (swapped-tag guard)
+    consent: Consent = Consent()
     expected_id: str | None = None
 
 
-@router.post("/install")
-async def install_module(payload: InstallPayload):
-    """Install a community module from GitHub.
+@router.post("/inspect")
+async def inspect_module(payload: InspectPayload):
+    """Dry-run a community module: download, statically scan, and return the
+    manifest + declared capabilities + scan report + resolved sha WITHOUT
+    registering anything. The operator reviews this before consenting to install.
 
-    The installed module is NOT mounted until the app restarts; the response
-    includes `restart_required: true` so the UI can prompt for a reload.
-    We deliberately do not hot-import at install time: mounting a new router
-    on a live FastAPI app without a full restart is fragile, and the
-    restart path is the one we exercise in production anyway.
+    Heuristic review, not a sandbox: a static scan of code that runs in-process
+    cannot contain a determined author. The report documents its own limits.
     """
+    try:
+        return await installer.inspect(repo=payload.repo, ref=payload.ref)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/install")
+async def install_module(payload: InstallPayload, request: Request):
+    """Install a community module after inspection + consent.
+
+    Requires the `resolved_sha` from /inspect (rejected if the ref drifted) and
+    a consent block sufficient for the scan severity (CRITICAL -> typed id,
+    HIGH -> acknowledgement); the gate is enforced server-side. The module is
+    NOT mounted until the app restarts (`restart_required: true`): hot-importing
+    a new router onto a live app is fragile, and restart is the production path.
+    """
+    user = await current_user(request)
+    approved_by = (user or {}).get("username", "") if user else "anonymous"
     try:
         return await installer.install(
             repo=payload.repo,
             ref=payload.ref,
+            expected_sha=payload.resolved_sha,
+            consent=payload.consent.model_dump(),
+            approved_by=approved_by,
             expected_id=payload.expected_id,
         )
     except Exception as e:

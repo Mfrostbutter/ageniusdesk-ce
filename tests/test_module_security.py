@@ -1,0 +1,315 @@
+"""Community module security pipeline: AST scanner + two-phase inspect/install.
+
+The scanner tests are pure (build fixture dirs, scan, assert findings). The
+install-flow tests drive the HTTP surface with a synthetic GitHub-style tarball,
+monkeypatching the network download so no real repo is fetched.
+"""
+
+import io
+import sqlite3
+import tarfile
+
+from backend.module_registry import (
+    Capabilities,
+    FilesystemCapability,
+    ModuleManifest,
+    NetworkCapability,
+    SecretRequirement,
+)
+from backend.modules.modules import installer
+from backend.modules.modules.scanner import scan_module
+
+OWNER = {"email": "owner@example.com", "password": "Fro5tbutt3r!"}
+
+
+def _auth(client):
+    """Establish (or recover) the owner session so privileged routes are reachable."""
+    client.cookies.clear()
+    r = client.post("/api/auth/setup", json=OWNER)
+    if r.status_code == 409:
+        r = client.post("/api/auth/login", json={"username": OWNER["email"], "password": OWNER["password"]})
+    assert r.status_code in (200, 201), r.text
+    return client
+
+
+def _csrf(client) -> dict:
+    """Double-submit CSRF header echoing the agd_csrf cookie set at login."""
+    return {"x-agd-csrf": client.cookies.get("agd_csrf", "")}
+
+
+# ── Scanner unit tests (against fixtures) ─────────────────────────────────────
+
+
+def _write_module(tmp_path, manifest: ModuleManifest, code: str):
+    d = tmp_path
+    (d / "mod.py").write_text(code)
+    return d
+
+
+def test_scanner_benign_clean(tmp_path):
+    d = _write_module(tmp_path, ModuleManifest(id="benign", name="Benign"), "def add(a, b):\n    return a + b\n")
+    report = scan_module(d, ModuleManifest(id="benign", name="Benign"))
+    assert report.findings == []
+    assert report.max_severity is None
+    assert report.files_scanned == 1
+
+
+def test_scanner_obfuscated_exec_is_critical(tmp_path):
+    code = "import base64\n" "def run(blob):\n" "    exec(base64.b64decode(blob))\n"
+    d = _write_module(tmp_path, None, code)
+    report = scan_module(d, ModuleManifest(id="evil", name="Evil"))
+    assert report.has("CRITICAL")
+    assert any(f.category == "code-exec" for f in report.findings)
+
+
+def test_scanner_os_system_is_critical(tmp_path):
+    d = _write_module(tmp_path, None, "import os\ndef run():\n    os.system('rm -rf /')\n")
+    report = scan_module(d, ModuleManifest(id="sh", name="Sh"))
+    assert report.has("CRITICAL")
+    assert any(f.category == "shell-exec" for f in report.findings)
+
+
+def test_scanner_dynamic_import_is_critical(tmp_path):
+    d = _write_module(tmp_path, None, "import importlib\ndef run(name):\n    importlib.import_module(name)\n")
+    report = scan_module(d, ModuleManifest(id="di", name="DI"))
+    assert report.has("CRITICAL")
+    assert any(f.category == "dynamic-import" for f in report.findings)
+
+
+def test_scanner_undeclared_network_is_high(tmp_path):
+    code = "import httpx\ndef run():\n    return httpx.get('https://api.example.com/x')\n"
+    d = _write_module(tmp_path, None, code)
+    # No capabilities block -> declares nothing -> network use is undeclared.
+    report = scan_module(d, ModuleManifest(id="net", name="Net"))
+    assert report.has("HIGH")
+    diff = report.declared_vs_detected["network"]
+    assert diff["detected"] is True
+    assert diff["declared"] is False
+
+
+def test_scanner_declared_network_host_allowlist(tmp_path):
+    code = "import httpx\ndef run():\n    httpx.get('https://evil.example.com/x')\n"
+    d = _write_module(tmp_path, None, code)
+    caps = Capabilities(network=NetworkCapability(enabled=True, hosts=["*.youtube.com"]))
+    report = scan_module(d, ModuleManifest(id="net2", name="Net2", capabilities=caps))
+    # Network is declared, but the targeted host is not in the allowlist.
+    assert report.has("HIGH")
+    assert any("not in the declared host allowlist" in f.detail for f in report.findings)
+
+
+def test_scanner_allowed_host_passes(tmp_path):
+    code = "import httpx\ndef run():\n    httpx.get('https://www.youtube.com/watch')\n"
+    d = _write_module(tmp_path, None, code)
+    caps = Capabilities(network=NetworkCapability(enabled=True, hosts=["*.youtube.com"]))
+    report = scan_module(d, ModuleManifest(id="net3", name="Net3", capabilities=caps))
+    assert not report.has("HIGH")
+    assert report.declared_vs_detected["network"]["detected_hosts"] == ["www.youtube.com"]
+
+
+def test_scanner_out_of_dir_write_is_high(tmp_path):
+    code = "def run():\n    open('/etc/passwd', 'w').write('x')\n"
+    d = _write_module(tmp_path, None, code)
+    caps = Capabilities(filesystem=FilesystemCapability(write_paths=["research"]))
+    report = scan_module(d, ModuleManifest(id="fw", name="FW", capabilities=caps))
+    assert report.has("HIGH")
+    assert any(f.category == "filesystem" for f in report.findings)
+
+
+def test_scanner_declared_write_path_passes(tmp_path):
+    code = "def run():\n    open('data/research/out.json', 'w').write('{}')\n"
+    d = _write_module(tmp_path, None, code)
+    caps = Capabilities(filesystem=FilesystemCapability(write_paths=["research"]))
+    report = scan_module(d, ModuleManifest(id="fw2", name="FW2", capabilities=caps))
+    assert not report.has("HIGH")
+
+
+def test_scanner_undeclared_env_is_high(tmp_path):
+    code = "import os\ndef run():\n    return os.environ['SECRET_KEY']\n"
+    d = _write_module(tmp_path, None, code)
+    report = scan_module(d, ModuleManifest(id="env", name="Env"))
+    assert report.has("HIGH")
+    assert any(f.category == "env" for f in report.findings)
+
+
+def test_scanner_declared_env_and_secret_pass(tmp_path):
+    code = "import os\ndef run():\n    return os.environ['API_KEY'], os.getenv('WHISPER_URL')\n"
+    d = _write_module(tmp_path, None, code)
+    caps = Capabilities(env=["WHISPER_URL"])
+    mf = ModuleManifest(id="env2", name="Env2", capabilities=caps, secrets_required=[SecretRequirement(key="API_KEY")])
+    report = scan_module(d, mf)
+    assert not report.has("HIGH")
+
+
+def test_scanner_secret_path_access_is_high(tmp_path):
+    d = _write_module(tmp_path, None, "def run():\n    open('data/secrets.json').read()\n")
+    report = scan_module(d, ModuleManifest(id="sp", name="SP"))
+    assert report.has("HIGH")
+    assert any(f.category == "secret-access" for f in report.findings)
+
+
+def test_scanner_over_declaration_is_info(tmp_path):
+    d = _write_module(tmp_path, None, "def add(a, b):\n    return a + b\n")
+    caps = Capabilities(network=NetworkCapability(enabled=True, hosts=["x.com"]), subprocess=True)
+    report = scan_module(d, ModuleManifest(id="over", name="Over", capabilities=caps))
+    # Declared network + subprocess but uses neither.
+    assert not report.has("HIGH")
+    info = [f for f in report.findings if f.severity == "INFO"]
+    assert len(info) >= 2
+    assert all(f.category == "over-declared" for f in info)
+
+
+def test_scanner_reports_parse_errors(tmp_path):
+    (tmp_path / "broken.py").write_text("def f(:\n")
+    report = scan_module(tmp_path, ModuleManifest(id="b", name="B"))
+    assert report.parse_errors
+
+
+# ── Install-flow tests (synthetic tarball, no network) ────────────────────────
+
+
+def _tarball(manifest_json: str, code: str = "def noop():\n    return 1\n", top="pkg") -> bytes:
+    """Build a GitHub-style tar.gz: one top-level dir with manifest + a .py file."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, content in (("manifest.json", manifest_json), ("module.py", code)):
+            data = content.encode()
+            info = tarfile.TarInfo(name=f"{top}/{name}")
+            info.size = len(data)
+            info.mtime = 0
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _patch_download(monkeypatch, tarball: bytes, sha: str):
+    async def fake_dl(owner, repo, ref):
+        return tarball, sha
+
+    monkeypatch.setattr(installer, "_download_tarball", fake_dl)
+
+
+def _audit_rows(module_id: str):
+    from backend.config import DB_FILE
+
+    con = sqlite3.connect(str(DB_FILE))
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT * FROM module_installs WHERE module_id = ? ORDER BY id DESC", (module_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+BENIGN_MANIFEST = '{"id": "%s", "name": "%s", "min_app_version": "0.0.0"}'
+
+
+def test_inspect_returns_report_without_registering(client, monkeypatch):
+    _auth(client)
+    sha = "aaaa111122223333aaaa111122223333aaaa1111"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("insp1", "Inspect One")), sha)
+
+    r = client.post("/api/modules/inspect", json={"repo": "x/insp1", "ref": "main"}, headers=_csrf(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["resolved_sha"] == sha
+    assert body["manifest"]["id"] == "insp1"
+    assert "scan_report" in body and "declared_vs_detected" in body["scan_report"]
+
+    # Nothing was registered or written to disk.
+    assert client.get("/api/modules/insp1").status_code == 404
+    assert not (installer.COMMUNITY_MODULES_DIR / "insp1").exists()
+
+
+def test_install_benign_records_audit(client, monkeypatch):
+    _auth(client)
+    sha = "bbbb111122223333bbbb111122223333bbbb1111"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("inst1", "Install One")), sha)
+
+    r = client.post(
+        "/api/modules/install",
+        json={"repo": "x/inst1", "ref": "main", "resolved_sha": sha, "consent": {}},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["scan_max_severity"] == "none"
+    assert (installer.COMMUNITY_MODULES_DIR / "inst1").exists()
+
+    rows = _audit_rows("inst1")
+    assert len(rows) == 1
+    assert rows[0]["approved_by"] == OWNER["email"]
+    assert rows[0]["resolved_sha"] == sha
+
+
+def test_install_rejects_sha_mismatch(client, monkeypatch):
+    _auth(client)
+    sha = "cccc111122223333cccc111122223333cccc1111"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("inst2", "Install Two")), sha)
+
+    r = client.post(
+        "/api/modules/install",
+        json={"repo": "x/inst2", "ref": "main", "resolved_sha": "deadbeefdeadbeef", "consent": {}},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 400
+    assert "different commit" in r.json()["detail"]
+    assert not (installer.COMMUNITY_MODULES_DIR / "inst2").exists()
+
+
+def test_install_critical_requires_typed_confirmation(client, monkeypatch):
+    _auth(client)
+    sha = "dddd111122223333dddd111122223333dddd1111"
+    code = "def run():\n    exec('print(1)')\n"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("inst3", "Install Three"), code), sha)
+
+    # Without the typed id, a CRITICAL finding blocks install.
+    r = client.post(
+        "/api/modules/install",
+        json={"repo": "x/inst3", "ref": "main", "resolved_sha": sha, "consent": {}},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 400
+    assert "CRITICAL" in r.json()["detail"]
+    assert not (installer.COMMUNITY_MODULES_DIR / "inst3").exists()
+
+    # Typing the module id proceeds.
+    r = client.post(
+        "/api/modules/install",
+        json={"repo": "x/inst3", "ref": "main", "resolved_sha": sha, "consent": {"typed_id": "inst3"}},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["scan_max_severity"] == "CRITICAL"
+
+
+def test_install_high_requires_acknowledgement(client, monkeypatch):
+    _auth(client)
+    sha = "eeee111122223333eeee111122223333eeee1111"
+    code = "import httpx\ndef run():\n    return httpx.get('https://api.example.com')\n"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("inst4", "Install Four"), code), sha)
+
+    r = client.post(
+        "/api/modules/install",
+        json={"repo": "x/inst4", "ref": "main", "resolved_sha": sha, "consent": {}},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 400
+    assert "HIGH" in r.json()["detail"]
+
+    r = client.post(
+        "/api/modules/install",
+        json={"repo": "x/inst4", "ref": "main", "resolved_sha": sha, "consent": {"acknowledged": True}},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["scan_max_severity"] == "HIGH"
+
+
+def test_install_requires_auth(anon, monkeypatch):
+    sha = "ffff111122223333ffff111122223333ffff1111"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("inst5", "Install Five")), sha)
+    r = anon.post(
+        "/api/modules/install",
+        json={"repo": "x/inst5", "ref": "main", "resolved_sha": sha, "consent": {}},
+    )
+    assert r.status_code == 401

@@ -44,6 +44,28 @@ A manifest deserializes into the `ModuleManifest` pydantic model in `backend/mod
 | `frontend` | `FrontendDecl` or null | null | Nav entry + view/script contributions |
 | `builtin` | bool | `false` | Marks a built-in module |
 | `homepage` | string | `""` | Optional homepage link |
+| `capabilities` | `Capabilities` or null | null | Declared capability surface (network/filesystem/subprocess/env); the scanner reconciles it against the code. `null` means "declares nothing" |
+| `signature` | string | `""` | Optional detached manifest signature (base64). Field shape is reserved; verification is best-effort/additive and key distribution is out of scope for now. Absent = unsigned |
+
+`Capabilities` (all optional; an absent block declares nothing, so any detected capability is treated as undeclared):
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `network` | `{ enabled: bool, hosts: [string] }` | `enabled=false` | Whether the module makes outbound calls, and the host allowlist (globs like `*.youtube.com`). `enabled` with an empty `hosts` means "any host" and is itself a HIGH finding |
+| `filesystem` | `{ write_paths: [string] }` | `[]` | Paths under `data/` the module writes; writes elsewhere are findings |
+| `subprocess` | bool | `false` | Whether the module spawns child processes |
+| `env` | list of string | `[]` | Environment variable keys the module reads, beyond `secrets_required` |
+
+Example with capabilities (a YouTube research module):
+
+```json
+"capabilities": {
+  "network": { "enabled": true, "hosts": ["*.youtube.com", "api.openai.com"] },
+  "filesystem": { "write_paths": ["workspace/research"] },
+  "subprocess": false,
+  "env": ["WHISPER_URL"]
+}
+```
 
 `SecretRequirement`:
 
@@ -142,18 +164,39 @@ Within each pass, directories are processed in sorted order, and any whose name 
 
 The CE built-in set includes: `admin`, `assistant`, `auth`, `dashboard_mcp`, `docker_mgr`, `errors`, `health`, `insights`, `knowledge`, `messages`, `modules`, `n8n_credentials`, `n8n_proxy`, `notes`, `player`, `public_api`, `themes`, `webhooks`.
 
-## Community module installation
+## Community module installation (two-phase: inspect, then install)
 
-The installer (`backend/modules/modules/installer.py`, driven by `POST /api/modules/install` in `router.py`) installs from GitHub:
+Install is split into a dry-run **inspect** and a consented **install**, both driven by `backend/modules/modules/installer.py` through `router.py`.
+
+`POST /api/modules/inspect` `{ repo, ref }`:
 
 1. Parse the repo spec (`owner/repo` or a GitHub URL) and download the tarball for a tag, branch, or SHA via the GitHub tarball API, following the redirect to `codeload.github.com` and recording the resolved commit SHA.
-2. Extract to a temp dir under `data/modules/`. Extraction is defensive: it validates every tar member before writing anything, rejecting symlinks and hardlinks, non-regular members (devices, fifos), absolute paths, `..` traversal, and any member whose resolved target escapes the staging directory. On Python 3.12+ it additionally applies the stdlib `data` filter as a second layer.
-3. Read the extracted `manifest.json`; require it to be valid, optionally assert its `id` matches `expected_id`, and enforce `min_app_version` compatibility.
-4. Move the staged dir to `data/modules/{manifest.id}/` and record the install in `data/modules-lock.json` (repo, pinned ref, resolved SHA, timestamp, version).
+2. Extract to a staging dir under `data/modules/`. Extraction is defensive: it validates every tar member before writing anything, rejecting symlinks and hardlinks, non-regular members (devices, fifos), absolute paths, `..` traversal, and any member whose resolved target escapes the staging directory. On Python 3.12+ it additionally applies the stdlib `data` filter as a second layer.
+3. Read the `manifest.json` and run the **static AST scanner** (`scanner.py`) over every `.py` file (see below), then **discard the staging dir**. Nothing is registered or persisted.
+4. Return `{ manifest, capabilities, scan_report, resolved_sha, compatible }` for the operator to review.
+
+`POST /api/modules/install` `{ repo, ref, resolved_sha, consent }`:
+
+1. Re-download and re-extract, then reject the install if the ref now resolves to a different commit than the `resolved_sha` the operator inspected (swapped-tag guard).
+2. Re-validate the manifest and `min_app_version` compatibility, re-run the scanner (same commit, same code, same findings), and enforce **consent server-side**: a CRITICAL finding requires the operator to have typed the module id; a HIGH finding requires an explicit acknowledgement. The gate is never derived from client-submitted findings.
+3. Move the staged dir to `data/modules/{manifest.id}/`, record the install in `data/modules-lock.json` (repo, pinned ref, resolved SHA, timestamp, version, `approved_by`, `scan_max_severity`), and append an audit row to the `module_installs` SQLite table (`module_id`, `repo`, `ref`, `resolved_sha`, `capabilities_json`, `scan_summary`, `scan_max_severity`, `approved_by`, `approved_at`). The audit write is best-effort and never fails an already-completed install.
 
 The install returns `restart_required: True`; the new module is mounted on the next `register_modules` pass at app start. `uninstall(module_id)` removes the directory and the lock entry but leaves any secrets in the store for the operator to clean up separately.
 
-Security posture is explicit and limited: community modules run in-process with full Python access and no sandbox. Only `secrets_required` keys are surfaced for the operator to supply; the full `.env` is not auto-injected. Install only from trusted sources.
+### Static AST scanner
+
+`scanner.py` parses each `.py` file with the stdlib `ast` module and emits severity-ranked findings; it never imports or executes module code. The headline output is the **declared-vs-detected diff**: a capability the code uses but the manifest did not declare surfaces as a HIGH "undeclared capability."
+
+| Severity | Examples detected |
+|---|---|
+| CRITICAL | `eval`/`exec`/`compile`, `os.system`/`os.popen`, dynamic `__import__`/`importlib.import_module` with a non-literal name, `pickle`/`marshal` loads, `ctypes` |
+| HIGH | undeclared network imports/calls, calls to a host outside the declared allowlist, raw sockets, `subprocess` when undeclared or `shell=True`, writes outside declared `write_paths`, reads of undeclared env vars, references to the secret store |
+| MEDIUM | out-of-tree file reads, dynamic `getattr`/`setattr` on imported modules, cross-module references, large opaque base64/hex literals |
+| INFO | over-declaration (a declared capability the code never uses) |
+
+> **Heuristic review, not a sandbox.** A static scan of code that runs in-process cannot contain a determined author (`getattr(__import__('os'), 'system')`, base64-then-`exec`, runtime-fetched payloads all bypass it). The scan catches low-effort or accidental danger, forces an explicit consent moment, and records what was approved. Absence of findings is not a safety guarantee. The report carries its own limitations text, and every UI surface says the same. There is no "scanned and safe" badge.
+
+Security posture is explicit and limited: community modules run in-process with full Python access and no sandbox. Out-of-process isolation is the deferred real boundary (see [Security](security.md)). Only `secrets_required` keys are surfaced for the operator to supply; the full `.env` is not auto-injected. Install only from sources you trust.
 
 ## How a failed community module is recorded, not fatal
 

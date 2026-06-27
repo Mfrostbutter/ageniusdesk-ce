@@ -144,6 +144,30 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             await db.execute(f"ALTER TABLE otel_spans ADD COLUMN {col} {typ}")
     await db.commit()
 
+    # module_installs — tamper-light audit trail of community module installs.
+    # One row per confirmed install: what capabilities were declared, what the
+    # scan found, who approved it, and when. Makes "what did we agree to, and
+    # when" a query instead of a memory. Created here so it lands on both fresh
+    # and upgraded installs without ordering concerns.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS module_installs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            module_id         TEXT NOT NULL,
+            repo              TEXT NOT NULL DEFAULT '',
+            ref               TEXT NOT NULL DEFAULT '',
+            resolved_sha      TEXT NOT NULL DEFAULT '',
+            capabilities_json TEXT NOT NULL DEFAULT 'null',
+            scan_summary      TEXT NOT NULL DEFAULT '',
+            scan_max_severity TEXT NOT NULL DEFAULT '',
+            approved_by       TEXT NOT NULL DEFAULT '',
+            approved_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_module_installs_mod ON module_installs(module_id, approved_at DESC)"
+    )
+    await db.commit()
+
 
 async def close_db() -> None:
     global _db

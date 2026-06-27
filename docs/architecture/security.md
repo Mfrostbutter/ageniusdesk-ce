@@ -8,7 +8,7 @@ See also: [Architecture Overview](overview.md), [Authentication & RBAC](auth.md)
 
 - **In scope.** Anyone who can reach the listening port without credentials; a partially-trusted caller (e.g. one that can set request headers); leakage of secrets through API responses, logs, or stored files; path traversal in the static/theme file servers; server-side request forgery via operator-supplied probe URLs; CSRF against the cookie-authenticated browser session.
 - **Trusted.** An authenticated admin. Once a request resolves to an admin identity (session, edge, or admin token) it is allowed to do admin things, including operations that are root-equivalent when a Docker socket is mounted. RBAC adds coarse role tiers (viewer/operator/admin) but the console is not a least-privilege multi-tenant system.
-- **Out of scope.** Sandboxing community modules (they run in-process as trusted code) and constraining the Docker socket (root-equivalent by design). See accepted risks below.
+- **Out of scope.** Out-of-process isolation for community modules (they run in-process; the inspect/scan/consent flow is defense-in-depth, not containment) and constraining the Docker socket (root-equivalent by design). See accepted risks below.
 
 ## Implemented controls
 
@@ -88,7 +88,7 @@ Login policy knobs (`AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, the `
 | Risk | Posture |
 |---|---|
 | Docker socket access | Root-equivalent by design. Only mount the socket where every console user is a fully-trusted admin |
-| Community modules | Execute Python in-process; not a sandbox boundary. Install only from trusted sources (loaded from `data/modules/`). See [Module System](modules.md) |
+| Community modules | Execute Python in-process; accepted now, isolation planned. A two-phase inspect/install flow runs a static AST scan and requires consent proportional to severity (CRITICAL → type the id, HIGH → acknowledge) and records an audit row, but a static scan of in-process code is a heuristic, not a boundary — it cannot follow obfuscation, runtime-fetched code, or dynamic imports, and the module still runs with full access. Out-of-process isolation is the deferred real boundary. Install only from sources you trust. See [Module System](modules.md) |
 | No automated regression suite for auth paths | `pytest` collected 0 tests at review time; auth-middleware, edge-trust, webhook-token, and traversal tests are a noted follow-up |
 | Legacy `enc:` secret format | Unauthenticated XOR-stream, kept only for decryption/migration; re-save migrates to Fernet |
 

@@ -1,15 +1,24 @@
 """Community module installer.
 
-Downloads a module tarball from GitHub, validates the manifest, extracts to
-/data/modules/{id}/, and records the install in /data/modules-lock.json.
+Two-phase install: `inspect` downloads + scans a module and returns a report
+WITHOUT registering it; `install` re-downloads, verifies the resolved commit
+still matches what was inspected, enforces consent proportional to the scan
+findings, then extracts to /data/modules/{id}/ and records the install in both
+/data/modules-lock.json and the `module_installs` audit table.
 
-Security posture (per research report):
-  - No sandboxing; modules run in-process with full Python access
-  - Tarball pinned to a specific tag or SHA; we record the resolved commit
-  - manifest.secrets_required drives which keys the user is prompted for;
-    we do NOT auto-inject the full .env into community module env
-  - Uninstall removes the directory; secrets remain in the store (user
-    decides whether to delete them separately)
+Security posture (per spec 2026-06-26):
+  - No sandboxing; modules run in-process with full Python access. The
+    scan/consent flow is defense-in-depth and an informed-consent record, NOT
+    containment. Out-of-process isolation is the deferred real boundary.
+  - Tarball pinned to a specific tag or SHA; we record the resolved commit and
+    reject an install whose resolved sha drifted since inspection (swapped tag).
+  - A static AST scan (scanner.py) reconciles declared capabilities against
+    detected ones; the operator consents before registration, with friction
+    proportional to severity (CRITICAL -> type the id; HIGH -> acknowledge).
+  - manifest.secrets_required drives which keys the user is prompted for; we do
+    NOT auto-inject the full .env into community module env.
+  - Uninstall removes the directory; secrets remain in the store (user decides
+    whether to delete them separately).
 """
 
 from __future__ import annotations
@@ -33,6 +42,8 @@ from backend.module_registry import (
     is_compatible,
     load_manifest,
 )
+
+from .scanner import ScanReport, scan_module, scan_summary
 
 logger = logging.getLogger(__name__)
 
@@ -141,29 +152,124 @@ def _extract_tarball(data: bytes, dest: Path) -> Path:
     return dest
 
 
+async def _download_and_extract(repo: str, ref: str) -> tuple[Path, str, str, str]:
+    """Download a repo tarball and extract it to a staging dir.
+
+    Returns (staging_dir, resolved_sha, owner, repo_name). The caller owns the
+    staging dir lifecycle (discard on inspect, promote on install).
+    """
+    owner, repo_name = _parse_repo(repo)
+    data, resolved_sha = await _download_tarball(owner, repo_name, ref)
+    tmp_dir = COMMUNITY_MODULES_DIR / f".stage-{resolved_sha[:12]}-{int(time.time())}"
+    _extract_tarball(data, tmp_dir)
+    return tmp_dir, resolved_sha, owner, repo_name
+
+
+def _consent_satisfied(report: ScanReport, manifest: ModuleManifest, consent: dict[str, Any]) -> tuple[bool, str]:
+    """Enforce consent friction proportional to scan severity, server-side.
+
+    We never trust client-submitted findings: the scan is re-run on the freshly
+    downloaded code (same sha => same code) and the gate is checked here.
+    CRITICAL requires typing the module id; HIGH requires an acknowledgement.
+    """
+    if report.has("CRITICAL") and (consent.get("typed_id") or "") != manifest.id:
+        return False, (
+            f"This module has CRITICAL findings. Type the module id "
+            f"('{manifest.id}') to confirm you understand the risk."
+        )
+    if report.has("HIGH") and not consent.get("acknowledged"):
+        return False, "This module has HIGH findings. Acknowledge the elevated/undeclared capabilities to proceed."
+    return True, ""
+
+
+async def _record_install(
+    manifest: ModuleManifest, repo: str, ref: str, resolved_sha: str, report: ScanReport, approved_by: str
+) -> None:
+    """Append an audit row. Best-effort: an already-completed install must not
+    fail because the audit write failed, so we log instead of raising."""
+    try:
+        from backend.database import get_db
+
+        caps = manifest.capabilities.model_dump() if manifest.capabilities else None
+        db = await get_db()
+        await db.execute(
+            """INSERT INTO module_installs
+               (module_id, repo, ref, resolved_sha, capabilities_json, scan_summary, scan_max_severity, approved_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                manifest.id,
+                repo,
+                ref,
+                resolved_sha,
+                json.dumps(caps),
+                scan_summary(report),
+                report.max_severity or "none",
+                approved_by,
+            ),
+        )
+        await db.commit()
+    except Exception as e:  # pragma: no cover - audit must never break install
+        logger.warning("Failed to record install audit for %s: %s", manifest.id, e)
+
+
+async def inspect(repo: str, ref: str = "main") -> dict[str, Any]:
+    """Dry-run: download, scan, and report WITHOUT registering the module.
+
+    The staging dir is discarded before returning, so nothing persists until
+    the operator confirms install with the returned resolved_sha.
+    """
+    tmp_dir, resolved_sha, owner, repo_name = await _download_and_extract(repo, ref)
+    try:
+        manifest = load_manifest(tmp_dir)
+        if not manifest:
+            raise RuntimeError("Tarball has no valid manifest.json at its root")
+        report = scan_module(tmp_dir, manifest)
+        return {
+            "manifest": manifest.model_dump(),
+            "capabilities": manifest.capabilities.model_dump() if manifest.capabilities else None,
+            "scan_report": report.model_dump(),
+            "resolved_sha": resolved_sha,
+            "repo": f"{owner}/{repo_name}",
+            "ref": ref,
+            "compatible": is_compatible(manifest.min_app_version),
+            "min_app_version": manifest.min_app_version,
+        }
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 async def install(
     repo: str,
     ref: str = "main",
+    expected_sha: str | None = None,
+    consent: dict[str, Any] | None = None,
+    approved_by: str = "",
     expected_id: str | None = None,
 ) -> dict[str, Any]:
-    """Install a community module from GitHub.
+    """Install a community module from GitHub after inspection + consent.
 
     Args:
       repo: 'owner/repo' or 'https://github.com/owner/repo'
       ref: tag, branch, or commit SHA (default: 'main')
+      expected_sha: the resolved sha returned by inspect; install is rejected if
+        the ref now resolves to a different commit (swapped-tag guard)
+      consent: {'acknowledged': bool, 'typed_id': str|None} from the operator
+      approved_by: resolved identity of the operator (for the audit record)
       expected_id: if set, validates the downloaded manifest.id matches
 
     Returns a dict describing the installed module. Raises on failure.
     """
-    owner, repo_name = _parse_repo(repo)
-    data, resolved_sha = await _download_tarball(owner, repo_name, ref)
-
-    # Extract to a temp location first so we can read the manifest before
-    # committing to a final install path.
-    tmp_dir = COMMUNITY_MODULES_DIR / f".install-{int(time.time())}"
-    _extract_tarball(data, tmp_dir)
+    consent = consent or {}
+    tmp_dir, resolved_sha, owner, repo_name = await _download_and_extract(repo, ref)
 
     try:
+        if expected_sha and resolved_sha != expected_sha:
+            raise RuntimeError(
+                f"The ref resolved to a different commit since inspection "
+                f"({expected_sha[:12]} -> {resolved_sha[:12]}). Re-inspect before installing."
+            )
+
         manifest = load_manifest(tmp_dir)
         if not manifest:
             raise RuntimeError("Tarball has no valid manifest.json at its root")
@@ -172,9 +278,12 @@ async def install(
             raise RuntimeError(f"Manifest id {manifest.id!r} does not match expected {expected_id!r}")
 
         if not is_compatible(manifest.min_app_version):
-            raise RuntimeError(
-                f"Module requires app version >= {manifest.min_app_version}"
-            )
+            raise RuntimeError(f"Module requires app version >= {manifest.min_app_version}")
+
+        report = scan_module(tmp_dir, manifest)
+        ok, reason = _consent_satisfied(report, manifest, consent)
+        if not ok:
+            raise RuntimeError(reason)
 
         final_dir = COMMUNITY_MODULES_DIR / manifest.id
         if final_dir.exists():
@@ -188,8 +297,12 @@ async def install(
             "installed_sha": resolved_sha,
             "installed_at": int(time.time()),
             "version": manifest.version,
+            "approved_by": approved_by,
+            "scan_max_severity": report.max_severity or "none",
         }
         _save_lock(lock)
+
+        await _record_install(manifest, f"{owner}/{repo_name}", ref, resolved_sha, report, approved_by)
 
         return {
             "id": manifest.id,
@@ -198,6 +311,8 @@ async def install(
             "installed_sha": resolved_sha,
             "path": str(final_dir),
             "secrets_required": [s.model_dump() for s in manifest.secrets_required],
+            "scan_max_severity": report.max_severity or "none",
+            "scan_summary": scan_summary(report),
             "restart_required": True,
         }
     except Exception:

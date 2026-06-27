@@ -65,6 +65,36 @@ class FrontendDecl(BaseModel):
     scripts: list[str] = Field(default_factory=list)
 
 
+# ── Capability declaration ───────────────────────────────────────────────────
+#
+# A module author asserts intent here; the AST scanner (modules/scanner.py)
+# checks the code against the declaration and surfaces any gap. A manifest with
+# no `capabilities` block declares NOTHING, so any capability the scanner detects
+# becomes an undeclared finding. This is declaration + heuristic review, not a
+# sandbox; community modules still run in-process with full Python access.
+
+
+class NetworkCapability(BaseModel):
+    enabled: bool = False
+    # Allowlist of hostnames/domains the module may reach (glob allowed, e.g.
+    # "*.youtube.com"). Empty list with enabled=true means "any host" and is
+    # itself a HIGH finding.
+    hosts: list[str] = Field(default_factory=list)
+
+
+class FilesystemCapability(BaseModel):
+    # Paths under data/ the module writes. Anything outside is a finding.
+    write_paths: list[str] = Field(default_factory=list)
+
+
+class Capabilities(BaseModel):
+    network: NetworkCapability = Field(default_factory=NetworkCapability)
+    filesystem: FilesystemCapability = Field(default_factory=FilesystemCapability)
+    subprocess: bool = False
+    # Environment variable keys the module reads (beyond secrets_required).
+    env: list[str] = Field(default_factory=list)
+
+
 class ModuleManifest(BaseModel):
     id: str
     name: str
@@ -81,6 +111,14 @@ class ModuleManifest(BaseModel):
     frontend: FrontendDecl | None = None
     builtin: bool = False
     homepage: str = ""
+    # Declared capability surface. None means "declares nothing" (see above) —
+    # distinct from an explicit all-false Capabilities() which still declares the
+    # author looked at it. The scanner treats both as the empty declaration.
+    capabilities: Capabilities | None = None
+    # Optional detached signature over the manifest (base64). Key distribution is
+    # out of scope for now; verification is best-effort/additive, and the field
+    # shape is fixed here so authors can start signing. Absent = "unsigned".
+    signature: str = ""
 
 
 # ── Live registry ────────────────────────────────────────────────────────────
