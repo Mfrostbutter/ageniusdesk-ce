@@ -183,6 +183,15 @@ Install is split into a dry-run **inspect** and a consented **install**, both dr
 
 The install returns `restart_required: True`; the new module is mounted on the next `register_modules` pass at app start. `uninstall(module_id)` removes the directory and the lock entry but leaves any secrets in the store for the operator to clean up separately.
 
+### Monorepo support (discover + subdir install)
+
+A single repo can hold many modules (one repo, many modules), so the install flow starts with discovery:
+
+- `POST /api/modules/discover` `{ repo, ref }` downloads the repo and lists every installable module without registering anything. It recognizes both a single-module repo (a `manifest.json` at the repo root, `path: ""`) and a monorepo (`modules/<id>/manifest.json`, or any `<id>/manifest.json` one or two levels deep), returning `{ id, name, version, description, path, compatible }` per module.
+- `inspect` and `install` then take an optional `path` (the module's subdir within the repo, blank = root). The path is traversal-safe: it must stay inside the staged repo and contain a `manifest.json`. Only that subtree is scanned and, on install, lifted out to `data/modules/{id}/`; sibling modules in the same repo are left untouched, and the staging copy of the rest of the repo is discarded.
+
+The module manager UI reflects this: the install panel's **Discover** button lists the repo's modules, and each has its own **Inspect** button that runs the scan + consent + install for that one module. The recommended monorepo layout is `modules/<id>/` with each module self-contained (no imports from sibling modules or shared repo-root code, since only the one subdir is installed).
+
 ### Static AST scanner
 
 `scanner.py` parses each `.py` file with the stdlib `ast` module and emits severity-ranked findings; it never imports or executes module code. The headline output is the **declared-vs-detected diff**: a capability the code uses but the manifest did not declare surfaces as a HIGH "undeclared capability."

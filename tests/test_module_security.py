@@ -180,6 +180,20 @@ def _tarball(manifest_json: str, code: str = "def noop():\n    return 1\n", top=
     return buf.getvalue()
 
 
+def _files_tarball(files: dict, top="pkg") -> bytes:
+    """Build a GitHub-style tar.gz from a {relative_path: content} map under one
+    top-level dir. Lets a single tarball carry a monorepo of modules."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for rel, content in files.items():
+            data = content.encode()
+            info = tarfile.TarInfo(name=f"{top}/{rel}")
+            info.size = len(data)
+            info.mtime = 0
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
 def _patch_download(monkeypatch, tarball: bytes, sha: str):
     async def fake_dl(owner, repo, ref):
         return tarball, sha
@@ -313,3 +327,100 @@ def test_install_requires_auth(anon, monkeypatch):
         json={"repo": "x/inst5", "ref": "main", "resolved_sha": sha, "consent": {}},
     )
     assert r.status_code == 401
+
+
+# ── Monorepo discover + subdir install ────────────────────────────────────────
+
+CODE = "def noop():\n    return 1\n"
+
+
+def _monorepo_tarball():
+    """A repo with two modules under modules/, no root manifest."""
+    return _files_tarball(
+        {
+            "README.md": "# community modules\n",
+            "modules/youtube-research/manifest.json": BENIGN_MANIFEST % ("youtube-research", "YouTube Research"),
+            "modules/youtube-research/module.py": CODE,
+            "modules/widget/manifest.json": BENIGN_MANIFEST % ("widget", "Widget"),
+            "modules/widget/module.py": CODE,
+        }
+    )
+
+
+def test_discover_lists_monorepo_modules(client, monkeypatch):
+    _auth(client)
+    sha = "a0a0111122223333a0a0111122223333a0a01111"
+    _patch_download(monkeypatch, _monorepo_tarball(), sha)
+
+    r = client.post("/api/modules/discover", json={"repo": "x/community", "ref": "main"}, headers=_csrf(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["resolved_sha"] == sha
+    paths = {m["path"]: m["id"] for m in body["modules"]}
+    assert paths == {"modules/widget": "widget", "modules/youtube-research": "youtube-research"}
+
+
+def test_discover_single_root_module(client, monkeypatch):
+    _auth(client)
+    sha = "b0b0111122223333b0b0111122223333b0b01111"
+    _patch_download(monkeypatch, _tarball(BENIGN_MANIFEST % ("solo", "Solo")), sha)
+
+    r = client.post("/api/modules/discover", json={"repo": "x/solo", "ref": "main"}, headers=_csrf(client))
+    assert r.status_code == 200, r.text
+    mods = r.json()["modules"]
+    assert len(mods) == 1 and mods[0]["path"] == "" and mods[0]["id"] == "solo"
+
+
+def test_inspect_and_install_subdir(client, monkeypatch):
+    _auth(client)
+    sha = "c0c0111122223333c0c0111122223333c0c01111"
+    _patch_download(monkeypatch, _monorepo_tarball(), sha)
+
+    # Inspect a specific module by path.
+    r = client.post(
+        "/api/modules/inspect",
+        json={"repo": "x/community", "ref": "main", "path": "modules/youtube-research"},
+        headers=_csrf(client),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["manifest"]["id"] == "youtube-research"
+    assert r.json()["path"] == "modules/youtube-research"
+
+    # Install that subdir; only it lands on disk, the sibling does not.
+    r = client.post(
+        "/api/modules/install",
+        json={
+            "repo": "x/community",
+            "ref": "main",
+            "path": "modules/youtube-research",
+            "resolved_sha": sha,
+            "consent": {},
+        },
+        headers=_csrf(client),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == "youtube-research"
+    assert (installer.COMMUNITY_MODULES_DIR / "youtube-research").exists()
+    assert (installer.COMMUNITY_MODULES_DIR / "youtube-research" / "module.py").exists()
+    assert not (installer.COMMUNITY_MODULES_DIR / "widget").exists()
+    # Staging dir was cleaned up (no leftover .stage-* dirs).
+    assert not list(installer.COMMUNITY_MODULES_DIR.glob(".stage-*"))
+
+
+def test_install_rejects_path_traversal(client, monkeypatch):
+    _auth(client)
+    sha = "d0d0111122223333d0d0111122223333d0d01111"
+    _patch_download(monkeypatch, _monorepo_tarball(), sha)
+    r = client.post(
+        "/api/modules/install",
+        json={
+            "repo": "x/community",
+            "ref": "main",
+            "path": "../../../etc",
+            "resolved_sha": sha,
+            "consent": {},
+        },
+        headers=_csrf(client),
+    )
+    assert r.status_code == 400
+    assert "path" in r.json()["detail"].lower()

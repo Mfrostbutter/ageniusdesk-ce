@@ -64,9 +64,15 @@ async def get_module(module_id: str):
 # ── Write endpoints (community modules only) ─────────────────────────────────
 
 
+class DiscoverPayload(BaseModel):
+    repo: str  # 'owner/repo' or GitHub URL
+    ref: str = "main"  # tag, branch, or commit SHA
+
+
 class InspectPayload(BaseModel):
     repo: str  # 'owner/repo' or GitHub URL
     ref: str = "main"  # tag, branch, or commit SHA
+    path: str = ""  # module subdir for a monorepo (blank = repo root)
 
 
 class Consent(BaseModel):
@@ -77,9 +83,21 @@ class Consent(BaseModel):
 class InstallPayload(BaseModel):
     repo: str  # 'owner/repo' or GitHub URL
     ref: str = "main"  # tag, branch, or commit SHA
+    path: str = ""  # module subdir for a monorepo (blank = repo root)
     resolved_sha: str | None = None  # the sha returned by /inspect (swapped-tag guard)
     consent: Consent = Consent()
     expected_id: str | None = None
+
+
+@router.post("/discover")
+async def discover_modules(payload: DiscoverPayload):
+    """List every installable module in a repo (single-module or monorepo)
+    WITHOUT registering anything. The operator picks one to inspect.
+    """
+    try:
+        return await installer.discover(repo=payload.repo, ref=payload.ref)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/inspect")
@@ -92,7 +110,7 @@ async def inspect_module(payload: InspectPayload):
     cannot contain a determined author. The report documents its own limits.
     """
     try:
-        return await installer.inspect(repo=payload.repo, ref=payload.ref)
+        return await installer.inspect(repo=payload.repo, ref=payload.ref, path=payload.path)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -117,6 +135,7 @@ async def install_module(payload: InstallPayload, request: Request):
             consent=payload.consent.model_dump(),
             approved_by=approved_by,
             expected_id=payload.expected_id,
+            path=payload.path,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -163,9 +163,10 @@ export async function renderModules(el) {
           <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
             <input id="module-install-repo" class="input" placeholder="owner/repo or https://github.com/owner/repo" style="flex:2;min-width:260px">
             <input id="module-install-ref" class="input" placeholder="tag, branch, or SHA (default: main)" style="flex:1;min-width:180px">
-            <button id="module-install-btn" class="btn btn-primary">Inspect</button>
+            <button id="module-install-btn" class="btn btn-primary">Discover</button>
           </div>
           <div id="module-install-msg" style="margin-top:8px;font-size:12px"></div>
+          <div id="module-discover-results" style="margin-top:10px"></div>
         </div>
 
         ${community.length ? `
@@ -366,11 +367,84 @@ function consentModal(inspect) {
   });
 }
 
+// Run the inspect -> consent -> install flow for one module (by repo/ref/path).
+async function inspectAndInstall(el, repo, ref, path, msg) {
+  msg.style.color = 'var(--text-secondary)';
+  msg.textContent = 'Inspecting (downloading + scanning)…';
+  let inspect;
+  try {
+    inspect = await post('/api/modules/inspect', { repo, ref, path });
+  } catch (e) {
+    msg.style.color = '#ff6d5a';
+    msg.textContent = `Inspect failed: ${e.message}`;
+    return;
+  }
+  msg.textContent = '';
+
+  const consent = await consentModal(inspect);
+  if (!consent) {
+    msg.style.color = 'var(--text-secondary)';
+    msg.textContent = 'Install cancelled.';
+    return;
+  }
+
+  msg.style.color = 'var(--text-secondary)';
+  msg.textContent = 'Installing…';
+  try {
+    const result = await post('/api/modules/install', {
+      repo,
+      ref,
+      path,
+      resolved_sha: inspect.resolved_sha,
+      consent,
+    });
+    msg.style.color = '#34d399';
+    msg.innerHTML = `Installed <code>${esc(result.id)}</code> v${esc(result.version)} (sha ${esc(result.installed_sha.slice(0, 7))}, scan ${esc(result.scan_max_severity)}). <strong>Restart the app to activate.</strong>`;
+    toast.success(`Installed ${result.name}. Restart required.`);
+    renderModules(el.parentElement || el);
+  } catch (e) {
+    msg.style.color = '#ff6d5a';
+    msg.textContent = `Install failed: ${e.message}`;
+  }
+}
+
+function renderDiscovered(el, repo, ref, modules, results, msg) {
+  if (!modules.length) {
+    results.innerHTML = `<div style="font-size:12px;color:#ff6d5a">No installable modules found in this repo (no manifest.json at the root or under modules/).</div>`;
+    return;
+  }
+  results.innerHTML = `
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.55;margin-bottom:6px">Found ${modules.length} module${modules.length > 1 ? 's' : ''}</div>
+    ${modules.map((m, i) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--border-dim);border-radius:var(--radius);margin-bottom:6px">
+        <div style="min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:13px">${esc(m.name)}</strong>
+            <code style="font-size:11px;opacity:0.6">${esc(m.id)}</code>
+            <span style="opacity:0.6;font-size:11px">v${esc(m.version)}</span>
+            ${m.path ? `<code style="font-size:10px;opacity:0.45">${esc(m.path)}</code>` : ''}
+            ${m.compatible ? '' : `<span class="badge" style="background:#ff6d5a22;color:#ff6d5a;font-size:10px">incompatible</span>`}
+          </div>
+          ${m.description ? `<div style="font-size:11px;opacity:0.65;margin-top:2px">${esc(m.description)}</div>` : ''}
+        </div>
+        <button class="btn btn-sm btn-primary module-inspect-btn" data-idx="${i}">Inspect</button>
+      </div>
+    `).join('')}
+  `;
+  results.querySelectorAll('.module-inspect-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = modules[Number(btn.dataset.idx)];
+      inspectAndInstall(el, repo, ref, m.path || '', msg);
+    });
+  });
+}
+
 function wireInstall(el) {
   const btn = el.querySelector('#module-install-btn');
   const repoInput = el.querySelector('#module-install-repo');
   const refInput = el.querySelector('#module-install-ref');
   const msg = el.querySelector('#module-install-msg');
+  const results = el.querySelector('#module-discover-results');
 
   btn?.addEventListener('click', async () => {
     const repo = repoInput.value.trim();
@@ -381,44 +455,16 @@ function wireInstall(el) {
     }
     const ref = refInput.value.trim() || 'main';
     btn.disabled = true;
+    results.innerHTML = '';
     msg.style.color = 'var(--text-secondary)';
-    msg.textContent = 'Inspecting (downloading + scanning)…';
-    let inspect;
+    msg.textContent = 'Discovering modules (downloading repo)…';
     try {
-      inspect = await post('/api/modules/inspect', { repo, ref });
+      const data = await post('/api/modules/discover', { repo, ref });
+      msg.textContent = '';
+      renderDiscovered(el, data.repo || repo, data.ref || ref, data.modules || [], results, msg);
     } catch (e) {
       msg.style.color = '#ff6d5a';
-      msg.textContent = `Inspect failed: ${e.message}`;
-      btn.disabled = false;
-      return;
-    }
-    msg.textContent = '';
-    btn.disabled = false;
-
-    const consent = await consentModal(inspect);
-    if (!consent) {
-      msg.style.color = 'var(--text-secondary)';
-      msg.textContent = 'Install cancelled.';
-      return;
-    }
-
-    btn.disabled = true;
-    msg.style.color = 'var(--text-secondary)';
-    msg.textContent = 'Installing…';
-    try {
-      const result = await post('/api/modules/install', {
-        repo,
-        ref,
-        resolved_sha: inspect.resolved_sha,
-        consent,
-      });
-      msg.style.color = '#34d399';
-      msg.innerHTML = `Installed <code>${esc(result.id)}</code> v${esc(result.version)} (sha ${esc(result.installed_sha.slice(0, 7))}, scan ${esc(result.scan_max_severity)}). <strong>Restart the app to activate.</strong>`;
-      toast.success(`Installed ${result.name}. Restart required.`);
-      renderModules(el.parentElement || el);
-    } catch (e) {
-      msg.style.color = '#ff6d5a';
-      msg.textContent = `Install failed: ${e.message}`;
+      msg.textContent = `Discover failed: ${e.message}`;
     } finally {
       btn.disabled = false;
     }

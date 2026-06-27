@@ -165,6 +165,83 @@ async def _download_and_extract(repo: str, ref: str) -> tuple[Path, str, str, st
     return tmp_dir, resolved_sha, owner, repo_name
 
 
+def _module_root(staging: Path, path: str) -> Path:
+    """Resolve the module directory inside a staged repo, traversal-safe.
+
+    `path` is the relative subdir of the module within the repo (blank = repo
+    root, the single-module case). Must stay inside the staging dir and contain
+    a manifest.json.
+    """
+    path = (path or "").strip().strip("/")
+    if not path:
+        return staging
+    if ".." in Path(path).parts or Path(path).is_absolute():
+        raise RuntimeError(f"Unsafe module path: {path!r}")
+    base = staging.resolve()
+    target = (staging / path).resolve()
+    if target != base and base not in target.parents:
+        raise RuntimeError(f"Module path escapes the repo: {path!r}")
+    if not target.is_dir():
+        raise RuntimeError(f"Module path not found in repo: {path!r}")
+    return target
+
+
+def _find_modules(staging: Path) -> list[tuple[str, ModuleManifest]]:
+    """Find every installable module in a staged repo.
+
+    A root manifest.json means a single-module repo (path ""). Otherwise scan
+    one and two levels deep (`<id>/manifest.json` and `modules/<id>/manifest.json`,
+    the monorepo convention), returning (relative_path, manifest) for each valid
+    manifest, sorted by path.
+    """
+    root = load_manifest(staging)
+    if root:
+        return [("", root)]
+    dirs: set[Path] = set()
+    for pattern in ("*/manifest.json", "*/*/manifest.json"):
+        for mf_path in staging.glob(pattern):
+            dirs.add(mf_path.parent)
+    found: list[tuple[str, ModuleManifest]] = []
+    for d in sorted(dirs, key=lambda p: p.relative_to(staging).as_posix()):
+        manifest = load_manifest(d)
+        if manifest:
+            found.append((d.relative_to(staging).as_posix(), manifest))
+    return found
+
+
+async def discover(repo: str, ref: str = "main") -> dict[str, Any]:
+    """List every installable module in a repo without registering anything.
+
+    Returns the modules found (id/name/version/description/path/compatibility) so
+    the operator can pick one to inspect. Supports both a single-module repo (a
+    root manifest, path "") and a monorepo (`modules/<id>/manifest.json`).
+    """
+    tmp_dir, resolved_sha, owner, repo_name = await _download_and_extract(repo, ref)
+    try:
+        modules = [
+            {
+                "path": path,
+                "id": mf.id,
+                "name": mf.name,
+                "version": mf.version,
+                "description": mf.description,
+                "min_app_version": mf.min_app_version,
+                "compatible": is_compatible(mf.min_app_version),
+                "has_capabilities": mf.capabilities is not None,
+            }
+            for path, mf in _find_modules(tmp_dir)
+        ]
+        return {
+            "repo": f"{owner}/{repo_name}",
+            "ref": ref,
+            "resolved_sha": resolved_sha,
+            "modules": modules,
+        }
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _consent_satisfied(report: ScanReport, manifest: ModuleManifest, consent: dict[str, Any]) -> tuple[bool, str]:
     """Enforce consent friction proportional to scan severity, server-side.
 
@@ -212,18 +289,21 @@ async def _record_install(
         logger.warning("Failed to record install audit for %s: %s", manifest.id, e)
 
 
-async def inspect(repo: str, ref: str = "main") -> dict[str, Any]:
+async def inspect(repo: str, ref: str = "main", path: str = "") -> dict[str, Any]:
     """Dry-run: download, scan, and report WITHOUT registering the module.
 
-    The staging dir is discarded before returning, so nothing persists until
-    the operator confirms install with the returned resolved_sha.
+    `path` selects a module subdir for a monorepo (blank = repo root). The
+    staging dir is discarded before returning, so nothing persists until the
+    operator confirms install with the returned resolved_sha.
     """
     tmp_dir, resolved_sha, owner, repo_name = await _download_and_extract(repo, ref)
     try:
-        manifest = load_manifest(tmp_dir)
+        module_root = _module_root(tmp_dir, path)
+        manifest = load_manifest(module_root)
         if not manifest:
-            raise RuntimeError("Tarball has no valid manifest.json at its root")
-        report = scan_module(tmp_dir, manifest)
+            where = f"at '{path}'" if path else "at its root"
+            raise RuntimeError(f"No valid manifest.json {where}")
+        report = scan_module(module_root, manifest)
         return {
             "manifest": manifest.model_dump(),
             "capabilities": manifest.capabilities.model_dump() if manifest.capabilities else None,
@@ -231,6 +311,7 @@ async def inspect(repo: str, ref: str = "main") -> dict[str, Any]:
             "resolved_sha": resolved_sha,
             "repo": f"{owner}/{repo_name}",
             "ref": ref,
+            "path": path,
             "compatible": is_compatible(manifest.min_app_version),
             "min_app_version": manifest.min_app_version,
         }
@@ -246,6 +327,7 @@ async def install(
     consent: dict[str, Any] | None = None,
     approved_by: str = "",
     expected_id: str | None = None,
+    path: str = "",
 ) -> dict[str, Any]:
     """Install a community module from GitHub after inspection + consent.
 
@@ -257,6 +339,7 @@ async def install(
       consent: {'acknowledged': bool, 'typed_id': str|None} from the operator
       approved_by: resolved identity of the operator (for the audit record)
       expected_id: if set, validates the downloaded manifest.id matches
+      path: module subdir for a monorepo (blank = repo root)
 
     Returns a dict describing the installed module. Raises on failure.
     """
@@ -270,9 +353,11 @@ async def install(
                 f"({expected_sha[:12]} -> {resolved_sha[:12]}). Re-inspect before installing."
             )
 
-        manifest = load_manifest(tmp_dir)
+        module_root = _module_root(tmp_dir, path)
+        manifest = load_manifest(module_root)
         if not manifest:
-            raise RuntimeError("Tarball has no valid manifest.json at its root")
+            where = f"at '{path}'" if path else "at its root"
+            raise RuntimeError(f"No valid manifest.json {where}")
 
         if expected_id and manifest.id != expected_id:
             raise RuntimeError(f"Manifest id {manifest.id!r} does not match expected {expected_id!r}")
@@ -280,7 +365,7 @@ async def install(
         if not is_compatible(manifest.min_app_version):
             raise RuntimeError(f"Module requires app version >= {manifest.min_app_version}")
 
-        report = scan_module(tmp_dir, manifest)
+        report = scan_module(module_root, manifest)
         ok, reason = _consent_satisfied(report, manifest, consent)
         if not ok:
             raise RuntimeError(reason)
@@ -288,12 +373,16 @@ async def install(
         final_dir = COMMUNITY_MODULES_DIR / manifest.id
         if final_dir.exists():
             shutil.rmtree(final_dir)
-        shutil.move(str(tmp_dir), str(final_dir))
+        # Promote the module dir out of staging. For path="" this moves the whole
+        # repo (staging itself); for a monorepo subdir it lifts just that subtree
+        # and the now-stale staging dir is removed in the finally below.
+        shutil.move(str(module_root), str(final_dir))
 
         lock = _load_lock()
         lock[manifest.id] = {
             "repo": f"{owner}/{repo_name}",
             "pinned_ref": ref,
+            "path": path,
             "installed_sha": resolved_sha,
             "installed_at": int(time.time()),
             "version": manifest.version,
@@ -315,10 +404,9 @@ async def install(
             "scan_summary": scan_summary(report),
             "restart_required": True,
         }
-    except Exception:
+    finally:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
 
 
 def uninstall(module_id: str) -> dict[str, Any]:
