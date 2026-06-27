@@ -88,6 +88,26 @@ export async function render(container) {
   });
 
   await Promise.all([loadTree(), loadTags()]);
+
+  // Honor a deep-link requested before navigation (e.g. "View in Harness" from a
+  // community module). Open the note once the vault has rendered.
+  if (_pendingOpen) {
+    const p = _pendingOpen;
+    _pendingOpen = null;
+    openNote(p.endsWith('.md') ? p : p + '.md');
+  }
+}
+
+// Deep-link target set by window.__harnessOpenPath before navigating here.
+let _pendingOpen = null;
+
+if (typeof window !== 'undefined') {
+  // Open a vault path in the Harness from anywhere (navigates there first).
+  window.__harnessOpenPath = (relPath) => {
+    if (!relPath) return;
+    _pendingOpen = relPath;
+    if (window.__nav) window.__nav('knowledge');
+  };
 }
 
 // ── Tree + tags ─────────────────────────────────────────────────────────────

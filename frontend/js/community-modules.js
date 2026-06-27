@@ -35,6 +35,11 @@ export function installHostContext() {
       if (window.__nav) window.__nav(viewName);
     },
 
+    // Open a vault path in the Harness (navigates there and opens the note).
+    openInHarness: (relPath) => {
+      if (window.__harnessOpenPath) window.__harnessOpenPath(relPath);
+    },
+
     // Current app version (from /api/modules response). Populated on boot.
     version: null,
   };
