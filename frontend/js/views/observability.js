@@ -69,12 +69,12 @@ async function load(container) {
   body.innerHTML = `
     ${filterChip()}
     <div id="obs-metrics" style="margin-bottom:16px"></div>
-    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+    <div style="display:flex;gap:16px;align-items:stretch;flex-wrap:wrap">
       <div style="flex:1 1 340px;min-width:280px">
         <div id="obs-traces-list"><div class="spinner"></div></div>
       </div>
       <div style="flex:2 1 460px;min-width:320px">
-        <div id="obs-detail" style="padding:16px;border:1px solid var(--border-dim);border-radius:10px;background:var(--bg-elevated)">
+        <div id="obs-detail" style="position:sticky;top:12px;max-height:calc(100vh - 90px);overflow:auto;padding:16px;border:1px solid var(--border-dim);border-radius:10px;background:var(--bg-elevated)">
           <div class="empty-state"><p>Select a trace to see its waterfall.</p></div>
         </div>
       </div>
@@ -171,6 +171,9 @@ async function selectTrace(traceId) {
   const detail = document.getElementById('obs-detail');
   if (!detail) return;
   detail.innerHTML = '<div class="spinner"></div>';
+  // Bring the detail into view when a row low in a long list is clicked (the
+  // sticky panel may be scrolled out of view above the click point).
+  detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   try {
     const d = await get(`/api/otel/traces/${encodeURIComponent(traceId)}`);
     detail.innerHTML = '';
