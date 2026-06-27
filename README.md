@@ -72,6 +72,19 @@ One dashboard for every n8n instance: live stats, an execution timeline, and a r
 - Execution analytics: success rates, error trends, busiest workflows
 - Per-instance health status
 
+**Observability (OpenTelemetry)**
+- Embedded OTLP/HTTP receiver: point n8n's native OpenTelemetry exporter at AgeniusDesk, no external collector required
+- Observe view: a live trace list and parent/child execution waterfall, plus a metrics strip (executions, error rate, p50/p95, throughput)
+- LLM cost tracking folded into the trace layer: per-trace and per-call spend, enriched from token usage and a layered price book
+- Per-execution trace links from Errors and Insights
+
+**Community Modules**
+- Install third-party modules from a GitHub repo through a two-phase inspect then install flow
+- A static code scan surfaces each module's declared capabilities (network hosts, filesystem write paths, subprocess) and flags risky calls before you consent
+- Proportional consent, a per-install audit trail, and one-click restart to activate
+- First module: [YouTube Research](https://github.com/Mfrostbutter/ageniusdesk-community-modules) (paste a link, get a structured breakdown auto-filed into your notes vault)
+- Heuristic review, not a sandbox; install only from sources you trust
+
 **Themes and Music**
 - 3 built-in themes (Dark, Light, n8n) plus custom theme support
 - Integrated music player (Spotify, YouTube, SoundCloud, Apple Music, Tidal)

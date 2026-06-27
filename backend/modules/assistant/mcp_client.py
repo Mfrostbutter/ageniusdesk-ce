@@ -105,7 +105,7 @@ async def _mcp_initialize(client: httpx.AsyncClient, url: str, server: dict) -> 
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "ageniusdesk", "version": "0.1.0"},
+                "clientInfo": {"name": "ageniusdesk", "version": "0.2.0"},
             },
             "id": 1,
         },

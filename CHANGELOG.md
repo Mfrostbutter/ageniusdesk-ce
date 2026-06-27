@@ -4,7 +4,35 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+Targeting v0.3. Next: out-of-process and iframe isolation for community modules (the real boundaries the v0.2 scan/consent layer bridges).
+
+## [0.2.0] - 2026-06-27
+
 ### Added
+
+**OpenTelemetry observability**
+- Embedded OTLP/HTTP receiver for n8n traces, with token auth (`AGD_OTEL_TOKEN`) and request-body limits. n8n's native OTel exporter speaks HTTP/Protobuf, so the receiver decodes `ExportTraceServiceRequest` directly; no external collector required for the MVP.
+- Span storage with bounded retention (age + row cap), pruned on ingest so the trace store stays small on SQLite.
+- **Observe** view: a live-updating recent-traces list and a parent/child execution waterfall, plus a per-execution trace popup inside workflow detail.
+- Metrics strip (executions, error-rate, p50, p95, throughput) derived from spans, since n8n exports traces rather than OTLP metrics.
+- Cross-links: a per-execution **Trace** button in Errors, and a per-workflow "traces" deep-link from Insights into Observe.
+- **Cost observability**: LLM spend folded into the trace layer. n8n spans carry no token or cost data, so cost is enriched from n8n run-data (per-call token usage) times a layered price book (OpenRouter-fetched over bundled, estimate-flagged), stored per span and surfaced as a Spend card, a per-trace cost, and a per-AI-span cost in the waterfall.
+
+**Community modules**
+- Install third-party modules from a GitHub repo through a two-phase **inspect then install** flow. Inspect pins the exact commit, runs a static AST scan, and lists the module's declared capabilities (network hosts, filesystem write paths, subprocess, env) diffed against what the scan actually detected.
+- **Proportional consent**: CRITICAL findings require typing the module id to confirm, HIGH findings require an explicit acknowledgement, and every install records a row in a `module_installs` audit table (who, when, commit, consented capabilities).
+- **Monorepo support**: a `discover` endpoint lists every `modules/*/manifest.json` in a repo, and inspect/install take a traversal-safe `path` so one repo can ship many modules.
+- One-click **Restart** to activate an installed or removed module (`POST /api/admin/restart`, admin-gated; works under `restart: unless-stopped`).
+- Bundled `yt-dlp` so media and transcript modules can extract captions in-process (no GPU, no sidecar). First consumer: the **YouTube Research** community module, distributed from a separate repo and installed through this flow.
+
+**Harness**
+- Deep-link to open any vault path from anywhere in the app (`window.__harnessOpenPath` / `AgeniusDesk.openInHarness`); opening a note reveals it in the tree (expands ancestors, scrolls to and highlights the file) instead of dumping you at the root.
+
+**Release hygiene**
+- Logout control in the app chrome (sidebar account row).
+- Persistent Code Lab across instance switch: the editor buffer survives re-render, so authoring on one instance and deploying to another no longer loses work.
+- "Open" button per instance in the sidebar switcher: open an n8n instance's UI in a new tab.
+
 - New built-in **n8n** dark theme, styled after the n8n product (solid neutral-gray surfaces, orange accent, teal-green success). Brings the built-in theme count to three (Dark, Light, n8n).
 - Instances, Models, and MCP are now first-class sidebar views instead of deep-links into Settings. Clicking them shows a focused, single-purpose page (no Settings tab strip); the same panels still live under the Settings gear as tabs. This also fixes the wrong (Settings) coachmark firing on those pages.
 - Page coachmarks now cover every primary view: a single orienting bubble on Overview, Workflows, Executions/Errors, and Containers, plus dedicated tours for Instances, Models, and MCP. The Code Lab tour now calls out the Prompt Builder.
@@ -12,6 +40,9 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 - Test suite (`tests/`): first automated regression coverage, pinning the security-hardening behaviors that had no other safety net. Covers the fail-closed internal-API middleware (public allowlist passes, private routes 401 without identity and pass with an admin token), edge-auth trusted only when `AGD_TRUST_EDGE_AUTH=true`, legacy webhook token enforcement (bearer + `X-AGD-Webhook-Token`), theme- and JS-path traversal guards, and the no-account-enumeration property of password recovery. Run with `uv run pytest`.
 
 ### Fixed
+- Observe: the trace detail no longer stays pinned at the top when you select a workflow from far down a long list. The detail panel is sticky and the selected trace scrolls into view.
+- Observe: repaired double-encoded UTF-8 (mojibake) in span and workflow names on ingest (a cp1252 round-trip), so titles with em dashes and other punctuation read correctly; existing rows were backfilled.
+- Community modules: serve a module's static assets over `HEAD` as well as `GET`. The frontend loader probes `module.js` with `HEAD` before loading it, so a `GET`-only route silently left community views blank.
 - Models: each area (Code Lab / Error Triage / General Assistant) now has an **API key** dropdown listing your stored secrets, so a key saved under any name (e.g. `$OPEN_ROUTER_API_KEY`) can be selected directly. Previously the area only resolved a single hard-coded convention name (`$OPEN_ROUTER_KEY`) with no way to point at a differently-named secret. Leaving it on "Use provider default key" keeps the convention behavior. Key resolution at chat time honors the per-area selection.
 - Models: selecting an API key now **tests the connection and reloads the live model list using that key**, so you see every model the key can reach instead of the short hardcoded fallback (e.g. OpenRouter jumps from ~11 fallback entries to the full live catalog). The `/models` and `/test-creds` endpoints accept a secret ref and resolve it server-side (the plaintext key never returns to the browser); the model cache is keyed per-key so areas with different keys don't evict each other.
 - Models: each of the three areas (Code Lab, Error Triage, General Assistant) has its own **Test & load models** button, so every area/provider can be validated and its live model list pulled independently. The OpenRouter connection test now hits the key-validation endpoint (its model list is public and returned 200 even for bad keys), so an invalid key is correctly reported.

@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-app = FastAPI(title="AgeniusDesk", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AgeniusDesk", version="0.2.0", lifespan=lifespan)
 
 
 def _cors_origins() -> list[str]:
@@ -327,7 +327,7 @@ async def status():
             "color": active.get("color", ""),
         } if active else None,
         "theme": get_active_theme(),
-        "version": "0.1.0",
+        "version": "0.2.0",
         "websocket_clients": manager.count,
         "health_endpoints": config.get("health_endpoints", []),
     }

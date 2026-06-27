@@ -48,7 +48,7 @@ AgeniusDesk CE is a self-hosted control plane for managing one or more n8n insta
 The FastAPI object is created once in `backend/main.py`:
 
 ```python
-app = FastAPI(title="AgeniusDesk", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AgeniusDesk", version="0.2.0", lifespan=lifespan)
 ```
 
 ## Startup sequence (lifespan)

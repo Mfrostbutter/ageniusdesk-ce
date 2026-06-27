@@ -1472,7 +1472,7 @@ def _default_system_prompt() -> str:
 
 def _baseline_environment_line() -> str:
     """App + version line. Cheap, in-process."""
-    return "AgeniusDesk dashboard, version 0.1.0"
+    return "AgeniusDesk dashboard, version 0.2.0"
 
 
 def _baseline_instance_line() -> str:

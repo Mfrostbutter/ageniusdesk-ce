@@ -33,7 +33,7 @@ async def v1_status(_key: dict = Depends(require_scope("read"))):
     active = get_active_instance()
     return {
         "configured": is_setup_complete(),
-        "version": "0.1.0",
+        "version": "0.2.0",
         "active_instance": {
             "id": active["id"],
             "name": active["name"],

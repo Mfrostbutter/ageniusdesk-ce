@@ -62,7 +62,7 @@ async def build_ha_summary() -> dict:
         "error_count_24h": error_count_24h,
         "last_execution_at": last_execution_at,
         "health_status": health_status,
-        "version": "0.1.0",
+        "version": "0.2.0",
         "instance": {
             "id": active["id"],
             "name": active["name"],

@@ -4,7 +4,18 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
-## Current Release: v0.1.0 (2026-06-23)
+## Current Release: v0.2.0 (2026-06-27)
+
+v0.2 lands full execution observability, the community-module install pipeline and its first module, and the authentication and onboarding layer, all on top of the v0.1 core. Highlights:
+
+- **OpenTelemetry observability**: embedded OTLP receiver, the Observe trace waterfall, a metrics strip, and LLM cost enrichment folded into the trace layer
+- **Community-module pipeline**: inspect / scan / consent install flow, monorepo discovery, a per-install audit trail, and one-click restart
+- **YouTube Research module**: the first community module (captions to a structured breakdown, auto-filed into the notes vault)
+- **Authentication and onboarding**: owner account, session login, optional TOTP, password reset, RBAC, CSRF, and per-view coachmarks
+
+Full detail and checkboxes are under "What shipped in v0.2.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
+
+## Previous Release: v0.1.0 (2026-06-23)
 
 ### Completed Features
 
@@ -25,18 +36,11 @@ Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 - Docker Compose deployment with setup wizard
 - Comprehensive documentation and contributing guidelines
 
-### Shipped since v0.1.0
-
-- Authentication and accounts: owner account, session login, optional TOTP two-factor, password reset, login throttling/lockout, and CSRF protection ([spec](docs/specs/2026-06-24-authorization-and-accounts.md))
-- Role-based access control: viewer / operator / admin enforced per router group
-- Onboarding: derived-state Setup Journey ("Get started" card) plus per-view page coachmarks ([spec](docs/specs/2026-06-24-onboarding-and-coachmarks.md))
-- AgeniusDesk wordmark on the login splash
-
 ---
 
-## Next Release (v0.2) — In Progress
+## What shipped in v0.2.0
 
-Sequenced: observability first, then the community-module pipeline and its first module.
+Sequenced: observability first, then the community-module pipeline and its first module, on top of the authentication and onboarding layer.
 
 ### 1. OpenTelemetry observability ([spec](docs/specs/2026-06-26-opentelemetry-observability.md))
 
@@ -47,22 +51,32 @@ Push-based, per-node execution visibility. Hybrid design: an embedded OTLP/HTTP 
 - [x] Observe view: recent-traces list + parent/child waterfall, live-updating, plus a per-execution trace popup in workflow detail
 - [x] Metrics strip (executions / error-rate / p50 / p95 / throughput), span-derived (n8n exports traces, not OTLP metrics)
 - [x] Cross-links: per-execution Trace button in Errors; per-workflow "traces" deep-link from Insights into Observe
-- [ ] Optional external-stack one-click template + Grafana linking
+- [ ] Optional external-stack one-click template + Grafana linking (deferred)
 - [x] **Cost observability** ([spec](docs/specs/2026-06-27-cost-observability.md)): LLM spend folded into the trace layer. n8n's spans carry no token/cost data, so cost is enriched from n8n run-data (per-call token usage) x a layered price book (OpenRouter-fetched > bundled, est-flagged), stored per span, surfaced as a Spend card, per-trace cost, and per-AI-span cost in the waterfall. Verified live (a Sonnet agent run priced at ~$0.34). Subsumes the old "Cost tracking integration" item. Follow-ups: operator price overrides UI, the cost-aware gateway for exact cache-aware cost.
 
 ### 2. Community module security: scan + consent ([spec](docs/specs/2026-06-26-community-module-security-and-youtube-research.md))
 
-Make installing a community module a deliberate, informed act. Capability manifest, an AST static scanner, a two-phase inspect/install flow with proportional consent, and a tamper-evident audit trail. Heuristic review, not a sandbox; out-of-process isolation is the deferred real boundary (see Future Directions).
+Make installing a community module a deliberate, informed act. Capability manifest, an AST static scanner, a two-phase inspect/install flow with proportional consent, and a tamper-evident audit trail. Heuristic review, not a sandbox; out-of-process (backend) and iframe (frontend) isolation are the deferred real boundaries (see Future Directions).
 
 - [x] Capability manifest schema + validation
 - [x] AST static scanner + fixtures (declared-vs-detected diff)
 - [x] Two-phase inspect/install + consent + `module_installs` audit table
 - [x] Consent modal + per-module capability/scan surfacing
-- [ ] Optional manifest signature verification (field shape reserved + provenance display shipped; verification deferred)
+- [x] Monorepo support: `discover` endpoint + traversal-safe `path` (one repo, many modules)
+- [x] One-click restart to activate an installed or removed module
+- [ ] Optional manifest signature verification (field shape reserved + provenance display shipped; verification deferred to v0.3)
 
 ### 3. YouTube research module (first community module)
 
-Built against the pipeline above as its first consumer. Captions-only v1, Inbox -> classify + tag -> auto-file into the Harness research vault, with a scaffolded starter taxonomy. Distributed as its own GitHub repo and installed through the scan/consent flow. Whisper transcription fallback and out-of-process isolation are deferred (see Future Directions).
+Built against the pipeline above as its first consumer. Captions-only v1, Inbox -> classify + tag -> auto-file into the Harness research vault, with a scaffolded starter taxonomy. Distributed as its own GitHub repo and installed through the scan/consent flow. Whisper transcription fallback and isolation are deferred (see Future Directions).
+
+### 4. Authentication and onboarding
+
+- [x] Authentication and accounts: owner account, session login, optional TOTP two-factor, password reset, login throttling/lockout, and CSRF protection ([spec](docs/specs/2026-06-24-authorization-and-accounts.md))
+- [x] Role-based access control: viewer / operator / admin enforced per router group
+- [x] Onboarding: derived-state Setup Journey ("Get started" card) plus per-view page coachmarks ([spec](docs/specs/2026-06-24-onboarding-and-coachmarks.md))
+- [x] Security hardening: central internal-API auth gate, opt-in edge-auth, webhook and MCP tokens, traversal guards, and the first automated test suite
+- [x] AgeniusDesk wordmark on the login splash
 
 ### Release hygiene
 
@@ -88,7 +102,14 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 
 ---
 
-## Medium-Term (v0.3 Concept)
+## Next Release (v0.3) — In Progress
+
+The headline is real isolation for community modules, the boundary the v0.2 scan/consent layer bridges:
+
+- [ ] **Frontend iframe isolation**: render each community view in a sandboxed `iframe` (`allow-scripts`, no `allow-same-origin`) with a postMessage RPC bridge to a whitelisted host API (`fetch` / `notify` / `navigate` / `openInHarness`), plus theme propagation and auto-resize. Today a module's frontend is injected into the app page and can read, change, or break the host UI; the iframe removes that.
+- [ ] **Out-of-process backend isolation**: run a module's Python in a sandboxed subprocess behind an RPC contract, so a module no longer runs in-process with full data and credential access.
+
+## Medium-Term (v0.3+ Concept)
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
 - [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
@@ -100,7 +121,7 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 
 ## Future Directions
 
-- **Out-of-process module isolation**: run community modules in a sandboxed subprocess behind an RPC contract (the real security boundary the v0.2 scan/consent layer bridges until it lands)
+- Module isolation (frontend iframe + out-of-process backend) is the real security boundary; tracked under Next Release (v0.3) above
 - Whisper transcription fallback for the YouTube research module (videos without captions; never a bundled GPU dependency)
 - Workflow diff viewer (visual side-by-side comparison)
 - External secret sources (1Password, AWS Secrets Manager, Vault)
