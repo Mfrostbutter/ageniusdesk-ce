@@ -62,49 +62,59 @@ Primary, available today: **enrich from n8n run-data.**
 - Enrichment is keyed by `execution_id`, which every captured span already carries
   via the root `workflow.execute` span.
 
-### 4.2 Price book (staying current and accurate)
+### 4.2 Pricing (accuracy hierarchy, not one merged book)
 
-A model -> price map `{model: {input_per_mtok, output_per_mtok}}`. Prices drift, so
-the book is self-refreshing, layered, and snapshotted at compute time rather than
-hand-maintained.
+OpenRouter's listed price is NOT authoritative for direct-provider calls. It is
+near-parity for standard model variants (OpenRouter mostly passes the upstream rate
+through and monetizes on credit-purchase fees, not a per-token markup), but it is an
+estimate: it can diverge from what a provider bills directly, and it does not model
+prompt caching, batch, or tiered/long-context pricing. For Anthropic those matter a
+lot (cache reads ~0.1x input, cache writes ~1.25x). So pricing is tiered by accuracy,
+and every stored cost is labeled exact vs estimate (`cost_is_estimate`,
+`price_source`).
 
-**Source of truth: OpenRouter's models API.** `GET https://openrouter.ai/api/v1/models`
-is public (no key) and returns ~hundreds of models across every provider with
-`pricing.prompt` / `pricing.completion` as per-token USD. We pull from it instead of
-curating prices by hand.
+**Tier 1 - exact (returned cost).** Use the cost the provider/gateway actually
+returns when present (OpenRouter responses; the Section 4.5 gateway). Ground truth.
 
-**Layered resolution (highest wins):**
-1. Operator override (manual UI edit — private/self-hosted models, or to pin a number).
-2. Auto-fetched OpenRouter snapshot.
-3. Bundled default snapshot (shipped in the image so a fresh / offline / air-gapped
-   install still prices common models on day one).
+**Tier 2 - list-accurate (per-provider rates x usage breakdown).** Maintain a small
+**per-provider** rate table (Anthropic, OpenAI, Google - only the providers actually
+used), keyed by (provider, model, variant), with separate input / output /
+cache-read / cache-write rates. Multiply by the usage breakdown. This is list-accurate
+when the breakdown is available.
 
-All three live in `data/price_book.json` (fetched + overrides) plus the bundled
-default; resolution is override > fetched > bundled.
+**Tier 3 - estimate (breadth + offline).** OpenRouter `/models`
+(`GET https://openrouter.ai/api/v1/models`, public, ~hundreds of models, machine
+readable) for coverage and gap-fill, plus a bundled default snapshot so a fresh /
+offline / air-gapped install still prices common models. This tier is marked
+`cost_is_estimate=true`.
 
-**Refresh:** a scheduled background fetch on a TTL (`AGD_PRICEBOOK_REFRESH_HOURS`,
-default 24) pulls `/models`, parses pricing, rewrites the cache. Fail-safe: any fetch
-error keeps the last-good cache and never blocks enrichment. Per model we store
-`source` + `priced_at`; the UI shows "priced from OpenRouter, updated Nh ago", a
-**Refresh now** button, and a staleness flag past a threshold.
+**Layered resolution (highest wins):** operator override > Tier 1 returned cost >
+Tier 2 provider rates > Tier 3 OpenRouter/bundled. All non-default data lives in
+`data/price_book.json`.
 
-**Compute-time snapshot (do not retro-reprice).** Cost is computed when a trace is
-enriched, using the price *then in effect*, and the realized `cost_usd` **and the
-unit prices used** are stored on the span (Section 4.3). Later price changes affect
-only new enrichments; historical traces keep their real cost.
+**Refresh:** a scheduled fetch on a TTL (`AGD_PRICEBOOK_REFRESH_HOURS`, default 24)
+refreshes the OpenRouter feed and the per-provider tables where machine-readable;
+fail-safe keeps the last-good cache and never blocks enrichment. Per entry store
+`source` + `priced_at`; the UI shows the source, "updated Nh ago", a **Refresh now**
+button, and a staleness flag.
 
-**True cost where it is free.** If a call actually routed through OpenRouter, its
-response carries real cost — use that, not the book. The book is for direct-provider
-calls (e.g. `lmChatAnthropic` -> Anthropic), where OpenRouter's resale price is a
-close approximation, not always penny-identical; the operator override covers
-exactness.
+**Compute-time snapshot (do not retro-reprice).** Cost is computed at enrichment with
+the price then in effect; the realized `cost_usd`, the unit prices used, and
+`price_source` / `cost_is_estimate` are stored on the span (Section 4.3). Later price
+changes affect only new enrichments.
 
-**Model-id matching.** n8n run-data gives a model id (e.g. `claude-sonnet-4-...`)
-that may not match OpenRouter's namespaced id (`anthropic/claude-sonnet-4`). A small
-normalize/alias step maps them; an unmatched model stores tokens with `cost_usd=null`
-and surfaces "tokens known, price unknown" so the operator can map it once.
+**Model-id matching.** n8n run-data gives a model id (e.g. `claude-sonnet-4-...`) that
+may not match a table key; a normalize/alias step maps it. Unmatched => tokens stored,
+`cost_usd=null`, surfaced as "tokens known, price unknown" for one-time mapping.
 
-Formula: `cost_usd = prompt_tokens/1e6 * input_per_mtok + completion_tokens/1e6 * output_per_mtok`.
+**Honest limitation.** The n8n run-data `tokenUsage` captured is `prompt/completion/
+total` only - it does not break out cache reads. So Tier 2 cannot price prompt caching
+correctly from n8n alone, and cache-heavy Anthropic calls are overstated. Exact cache
+accounting needs the provider's returned cost or billing API, i.e. the Section 4.5
+gateway. The UI must show these as estimates, not exact.
+
+Formula (per rate class): `cost_usd = sum(tokens_class/1e6 * rate_class)` over input,
+output, and any cache classes available.
 
 ### 4.3 Storage
 
@@ -112,8 +122,9 @@ Add to `otel_spans` (or a sibling `otel_costs` keyed by span_id) the columns:
 `model TEXT`, `tokens_in INTEGER`, `tokens_out INTEGER`, `cost_usd REAL`,
 `cost_source TEXT` (`n8n-rundata` | `gateway` | `agd-assistant`), and the
 compute-time price snapshot `price_in_per_mtok REAL`, `price_out_per_mtok REAL`,
-`price_source TEXT`, `priced_at TEXT` (so a stored cost is auditable and never
-retro-repriced). Idempotent migration in `_migrate()`. Cost then rolls up per trace,
+`price_source TEXT` (`returned` | `provider-list` | `openrouter` | `bundled` |
+`override`), `cost_is_estimate INTEGER`, `priced_at TEXT` (so a stored cost is
+auditable, labeled exact vs estimate, and never retro-repriced). Idempotent migration in `_migrate()`. Cost then rolls up per trace,
 workflow, model, instance with plain SQL — no second store.
 
 ### 4.4 AgeniusDesk's own assistant spend (free add-on)
@@ -177,3 +188,9 @@ feature.
 - Whether to also estimate non-LLM cost (compute time) — out of scope for v1.
 - Whether a newer n8n adds `gen_ai` span attrs (revisit; would make 4.1 a pure
   ingest read and retire the enrichment call).
+- Cache accounting: n8n run-data `tokenUsage` lacks a cache-read/write breakdown, so
+  prompt-cached calls can't be priced accurately from n8n alone (overstated). Decide
+  whether that gap alone justifies the Section 4.5 gateway, or whether labeling those
+  costs "estimate" is acceptable for v1.
+- Which provider rate tables to maintain by hand for Tier 2 (start with the providers
+  actually in use), and how to keep them current vs leaning on the OpenRouter feed.
