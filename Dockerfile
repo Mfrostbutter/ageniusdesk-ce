@@ -2,13 +2,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies only. pyproject packages nothing, so this installs the
+# declared deps but NOT the `backend` package: the host runs backend from the
+# source tree below, keeping it out of site-packages so a sandboxed module
+# worker can exclude it from sys.path.
 COPY pyproject.toml .
 RUN pip install --no-cache-dir '.[assistant]'
 
-# Copy application
+# Copy application. backend/ runs from source (cwd /app is on sys.path).
+# agd_module_worker/ is launched by absolute path for out-of-process modules.
 COPY backend/ backend/
 COPY frontend/ frontend/
+COPY agd_module_worker/ agd_module_worker/
 
 # Create data directory for SQLite + config
 RUN mkdir -p /app/data/themes /app/data/templates

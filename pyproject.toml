@@ -69,8 +69,14 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
-[tool.setuptools.packages.find]
-include = ["backend*"]
+# Intentionally package NO Python modules: `pip install .` installs only the
+# declared dependencies. The host runs `backend` from the source tree (the
+# Dockerfile COPYs it; cwd is on sys.path), so `backend` is NOT placed in
+# site-packages. That is what lets a sandboxed community-module worker exclude
+# the host source from its sys.path and have `import backend` actually fail.
+# See docs/specs/2026-06-27-out-of-process-backend-isolation.md (Section 5.4).
+[tool.setuptools]
+packages = []
 
 [build-system]
 requires = ["setuptools>=68.0"]
