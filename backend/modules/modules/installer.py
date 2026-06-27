@@ -40,6 +40,7 @@ from backend.module_registry import (
     COMMUNITY_MODULES_DIR,
     ModuleManifest,
     is_compatible,
+    is_valid_module_id,
     load_manifest,
 )
 
@@ -63,6 +64,25 @@ def _load_lock() -> dict[str, Any]:
 def _save_lock(data: dict[str, Any]) -> None:
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _safe_community_dir(module_id: str) -> Path:
+    """Resolve data/modules/{module_id}, rejecting an unsafe id or any resolved
+    path that escapes COMMUNITY_MODULES_DIR.
+
+    Call before every destructive op (rmtree/move) so a crafted id (e.g. '..',
+    which would resolve to data/) can never delete or move a path outside the
+    community modules tree. The manifest validator already blocks bad ids on the
+    install path; this is the choke point for uninstall, which takes the id
+    straight from the request URL.
+    """
+    if not is_valid_module_id(module_id):
+        raise RuntimeError(f"Invalid module id: {module_id!r}")
+    base = COMMUNITY_MODULES_DIR.resolve()
+    target = (COMMUNITY_MODULES_DIR / module_id).resolve()
+    if base not in target.parents:
+        raise RuntimeError(f"Module path escapes the modules directory: {module_id!r}")
+    return target
 
 
 def _parse_repo(repo: str) -> tuple[str, str]:
@@ -370,7 +390,7 @@ async def install(
         if not ok:
             raise RuntimeError(reason)
 
-        final_dir = COMMUNITY_MODULES_DIR / manifest.id
+        final_dir = _safe_community_dir(manifest.id)
         if final_dir.exists():
             shutil.rmtree(final_dir)
         # Promote the module dir out of staging. For path="" this moves the whole
@@ -411,7 +431,7 @@ async def install(
 
 def uninstall(module_id: str) -> dict[str, Any]:
     """Remove a community module directory and lock entry."""
-    target = COMMUNITY_MODULES_DIR / module_id
+    target = _safe_community_dir(module_id)
     if not target.exists():
         raise RuntimeError(f"Module {module_id!r} not installed")
 

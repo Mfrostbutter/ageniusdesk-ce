@@ -9,12 +9,17 @@ import io
 import sqlite3
 import tarfile
 
+import pytest
+from pydantic import ValidationError
+
 from backend.module_registry import (
+    COMMUNITY_MODULES_DIR,
     Capabilities,
     FilesystemCapability,
     ModuleManifest,
     NetworkCapability,
     SecretRequirement,
+    is_valid_module_id,
 )
 from backend.modules.modules import installer
 from backend.modules.modules.scanner import scan_module
@@ -35,6 +40,55 @@ def _auth(client):
 def _csrf(client) -> dict:
     """Double-submit CSRF header echoing the agd_csrf cookie set at login."""
     return {"x-agd-csrf": client.cookies.get("agd_csrf", "")}
+
+
+# ── Module id validation (path-traversal hardening) ──────────────────────────
+
+_UNSAFE_IDS = ["..", "../evil", "a/b", "a\\b", ".hidden", "Uppercase", "", "foo..bar", "x" * 65]
+_SAFE_IDS = ["youtube-research", "n8n_proxy", "a", "mod.v2", "a1-b_2.3"]
+
+
+@pytest.mark.parametrize("bad", _UNSAFE_IDS)
+def test_is_valid_module_id_rejects_unsafe(bad):
+    assert is_valid_module_id(bad) is False
+
+
+@pytest.mark.parametrize("good", _SAFE_IDS)
+def test_is_valid_module_id_accepts_safe(good):
+    assert is_valid_module_id(good) is True
+
+
+@pytest.mark.parametrize("bad", _UNSAFE_IDS)
+def test_manifest_rejects_unsafe_id(bad):
+    with pytest.raises(ValidationError):
+        ModuleManifest(id=bad, name="X")
+
+
+@pytest.mark.parametrize("good", _SAFE_IDS)
+def test_manifest_accepts_safe_id(good):
+    assert ModuleManifest(id=good, name="X").id == good
+
+
+@pytest.mark.parametrize("bad", ["..", "../evil", "a/b", ".hidden", ""])
+def test_safe_community_dir_blocks_traversal(bad):
+    # The '..' case is the live bug: data/modules/.. == data/, whose rmtree would
+    # wipe the DB, secret store, and vault. The resolver must refuse it.
+    with pytest.raises(RuntimeError):
+        installer._safe_community_dir(bad)
+
+
+def test_safe_community_dir_returns_contained_path():
+    target = installer._safe_community_dir("youtube-research")
+    base = COMMUNITY_MODULES_DIR.resolve()
+    assert base in target.parents
+    assert target.name == "youtube-research"
+
+
+def test_uninstall_rejects_traversal_id():
+    # Reaches uninstall() with a crafted id and asserts it raises before any
+    # filesystem delete (the id never resolves to a path it could rmtree).
+    with pytest.raises(RuntimeError):
+        installer.uninstall("..")
 
 
 # ── Scanner unit tests (against fixtures) ─────────────────────────────────────

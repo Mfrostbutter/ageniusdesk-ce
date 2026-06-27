@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,28 @@ def _read_app_version() -> str:
 
 
 APP_VERSION = _read_app_version()
+
+
+# ── Module id validation ─────────────────────────────────────────────────────
+#
+# A module id is used as a filesystem path component (the install dir under
+# data/modules/, and under out-of-process isolation also a run-socket path and a
+# per-module data dir) and as a registry/token key. It must therefore never
+# contain a path separator, a parent-dir reference, or a leading dot. Enforce a
+# strict lowercase slug at every entry point: the manifest validator below (the
+# install path), and a containment-checked resolver in the installer (the
+# uninstall path, which takes the id straight from the URL).
+
+MODULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def is_valid_module_id(module_id: str) -> bool:
+    """True for a safe module id: a 1-64 char lowercase slug ([a-z0-9._-])
+    starting alphanumeric, with no '..' anywhere. Rejects path separators,
+    traversal, and leading dots."""
+    if not isinstance(module_id, str) or not MODULE_ID_RE.match(module_id):
+        return False
+    return ".." not in module_id
 
 
 # ── Manifest schema ──────────────────────────────────────────────────────────
@@ -119,6 +141,20 @@ class ModuleManifest(BaseModel):
     # out of scope for now; verification is best-effort/additive, and the field
     # shape is fixed here so authors can start signing. Absent = "unsigned".
     signature: str = ""
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        # The id becomes a filesystem path component and a registry key; reject
+        # anything that isn't a safe slug so a manifest can never drive a path
+        # outside data/modules/ (see is_valid_module_id). A bad id makes
+        # load_manifest() return None, so the module is skipped, not loaded.
+        if not is_valid_module_id(v):
+            raise ValueError(
+                f"invalid module id {v!r}: must be a lowercase slug [a-z0-9._-], "
+                "1-64 chars, starting alphanumeric, with no '..'"
+            )
+        return v
 
 
 # ── Live registry ────────────────────────────────────────────────────────────
