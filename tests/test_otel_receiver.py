@@ -199,6 +199,86 @@ def test_traces_workflow_filter(client, monkeypatch):
     assert all(t["trace_id"] != TRACE_HEX for t in miss)
 
 
+def test_pricing_bundled_and_normalize():
+    from backend.modules.observability import pricing
+    p = pricing.price_for("claude-sonnet-4-6")
+    assert p and p["in"] == 3.0 and p["out"] == 15.0 and p["source"] == "bundled" and p["estimate"]
+    # Vendor prefix + dotted variant should normalize to the same entry.
+    p2 = pricing.price_for("anthropic/claude-sonnet-4.6")
+    assert p2 and p2["in"] == 3.0
+    assert pricing.price_for("totally-unknown-model-xyz") is None
+
+
+def _ai_request():
+    """A trace with an AI language-model node (workflow root + one node span)."""
+    req = ExportTraceServiceRequest()
+    rs = req.resource_spans.add()
+    rs.resource.attributes.append(_kv("service.name", "n8n"))
+    ss = rs.scope_spans.add()
+    wf = ss.spans.add()
+    wf.trace_id = b"\x33" * 16
+    wf.span_id = b"\x01" * 8
+    wf.name = "workflow.execute"
+    wf.start_time_unix_nano = 1_000_000_000
+    wf.end_time_unix_nano = 2_000_000_000
+    wf.status.code = 1
+    wf.attributes.append(_kv("n8n.workflow.name", "Cost WF"))
+    wf.attributes.append(_kv("n8n.execution.id", "9001"))
+    node = ss.spans.add()
+    node.trace_id = b"\x33" * 16
+    node.span_id = b"\x02" * 8
+    node.parent_span_id = b"\x01" * 8
+    node.name = "node.execute"
+    node.start_time_unix_nano = 1_100_000_000
+    node.end_time_unix_nano = 1_900_000_000
+    node.status.code = 1
+    node.attributes.append(_kv("n8n.node.name", "Sonnet 4.6"))
+    node.attributes.append(_kv("n8n.node.type", "@n8n/n8n-nodes-langchain.lmChatAnthropic"))
+    return req
+
+
+COST_TRACE_HEX = "33" * 16
+
+
+def test_cost_enrichment_from_rundata(client, monkeypatch):
+    monkeypatch.setattr(settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(settings, "agd_otel_token", "")
+    _auth(client)
+
+    from backend.modules.observability import cost
+
+    async def fake_raw(execution_id):
+        assert execution_id == "9001"
+        return {"data": {"resultData": {"runData": {
+            "Sonnet 4.6": [{
+                "data": {"ai_languageModel": [[{"json": {
+                    "tokenUsage": {"promptTokens": 1000, "completionTokens": 200, "totalTokens": 1200},
+                    "options": {"model": "claude-sonnet-4-6"},
+                }}]]},
+            }],
+        }}}}
+
+    monkeypatch.setattr(cost.n8n_client, "get_execution_raw", fake_raw)
+
+    client.post(
+        "/api/otel/v1/traces",
+        content=_ai_request().SerializeToString(),
+        headers={"Content-Type": "application/x-protobuf"},
+    )
+    # GET the trace triggers lazy enrichment.
+    spans = client.get(f"/api/otel/traces/{COST_TRACE_HEX}").json()["spans"]
+    ai = next(s for s in spans if s["name"] == "node.execute")
+    assert ai["model"] == "claude-sonnet-4-6"
+    assert ai["tokens_in"] == 1000 and ai["tokens_out"] == 200
+    # 1000/1e6*3 + 200/1e6*15 = 0.003 + 0.003 = 0.006
+    assert abs(ai["cost_usd"] - 0.006) < 1e-9
+    assert ai["cost_source"] == "n8n-rundata"
+    # Trace list surfaces the rolled-up cost.
+    traces = client.get("/api/otel/traces").json()["traces"]
+    t = next(t for t in traces if t["trace_id"] == COST_TRACE_HEX)
+    assert abs(t["cost_usd"] - 0.006) < 1e-9 and t["has_cost"]
+
+
 def test_json_ingest_path(client, monkeypatch):
     monkeypatch.setattr(settings, "agd_otel_enabled", True)
     monkeypatch.setattr(settings, "agd_otel_token", "")

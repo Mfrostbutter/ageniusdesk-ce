@@ -67,6 +67,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("baseline ensure_baseline failed: %s", e)
 
+    # Cost observability: refresh the LLM price book from OpenRouter in the
+    # background (best-effort; bundled defaults + last-good cache cover failures).
+    try:
+        import asyncio as _asyncio
+
+        from backend.modules.observability import pricing as _pricing
+        _asyncio.create_task(_pricing.refresh())
+    except Exception as e:
+        logger.debug("price book refresh kickoff failed: %s", e)
+
     logger.info("AgeniusDesk started, database ready")
     # F2: warn when the in-app auth gate is off, so an operator on a naked-port
     # self-host knows privileged routes rely on an edge proxy for auth.

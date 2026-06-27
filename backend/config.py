@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     agd_otel_token: str = ""
     agd_otel_retention_hours: int = 72       # age-based span pruning
     agd_otel_max_spans: int = 500000         # hard row cap, oldest pruned first
+    # Cost observability: how often to refresh the LLM price book from OpenRouter's
+    # public models API. The fetched table is cached to data/price_book.json with a
+    # last-good fallback; operator overrides and a bundled default layer over it.
+    agd_pricebook_refresh_hours: int = 24
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

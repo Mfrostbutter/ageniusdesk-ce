@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import get_active_instance_id, settings
 
-from . import ingest, storage
+from . import cost, ingest, pricing, storage
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +80,18 @@ async def metrics(window_hours: int = 24, instance_id: str = "", workflow_id: st
     return await storage.metrics_summary(iid, window_hours, workflow_id)
 
 
+async def _enrich(trace_id: str) -> None:
+    """Best-effort lazy cost enrichment before returning a trace's spans."""
+    try:
+        await cost.enrich_trace(trace_id)
+    except Exception as e:
+        logger.debug("cost enrich skipped for %s: %s", trace_id, e)
+
+
 @router.get("/traces/{trace_id}")
 async def trace_detail(trace_id: str):
-    """All spans for one trace, ordered for the waterfall."""
+    """All spans for one trace, ordered for the waterfall. Lazily priced."""
+    await _enrich(trace_id)
     return {"trace_id": trace_id, "spans": await storage.get_trace(trace_id)}
 
 
@@ -92,4 +101,17 @@ async def trace_by_execution(execution_id: str):
     trace_id = await storage.trace_id_for_execution(execution_id)
     if not trace_id:
         return {"execution_id": execution_id, "trace_id": "", "spans": []}
+    await _enrich(trace_id)
     return {"execution_id": execution_id, "trace_id": trace_id, "spans": await storage.get_trace(trace_id)}
+
+
+@router.get("/pricing")
+async def pricing_status():
+    """Price-book status: how many models from each layer and when last refreshed."""
+    return pricing.status()
+
+
+@router.post("/pricing/refresh")
+async def pricing_refresh():
+    """Force a price-book refresh from OpenRouter's models API."""
+    return await pricing.refresh(force=True)

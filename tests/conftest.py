@@ -33,6 +33,10 @@ for _k in ("AGD_DISABLE_LOGIN", "AGD_REQUIRE_AUTH", "AGD_ADMIN_TOKEN",
            "AGD_TRUST_EDGE_AUTH", "AGD_TRUST_FORWARDED_FOR", "AGD_WEBHOOK_TOKEN"):
     os.environ.pop(_k, None)
 
+# Keep the price-book refresh offline in tests: no network to OpenRouter, so cost
+# pricing resolves deterministically from the bundled defaults.
+os.environ["AGD_PRICEBOOK_DISABLE_REFRESH"] = "1"
+
 
 @pytest.fixture(scope="session")
 def client():

@@ -109,12 +109,14 @@ async function renderMetrics() {
   try { m = await get(`/api/otel/metrics?window_hours=24${wfQuery()}`); } catch { return; }
   const errPct = `${((m.error_rate || 0) * 100).toFixed(1)}%`;
   const errColor = (m.error_rate || 0) > 0 ? 'var(--error)' : 'var(--text-primary)';
+  const spend = Number(m.spend_usd || 0);
   el.innerHTML = `
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       ${metricCard('Executions (24h)', m.executions ?? 0, `${(m.throughput_per_hr ?? 0)}/hr`)}
       ${metricCard('Error rate', `<span style="color:${errColor}">${errPct}</span>`, `${m.errors ?? 0} failed`)}
       ${metricCard('p50 latency', `${m.p50_ms ?? 0} ms`, 'median run')}
       ${metricCard('p95 latency', `${m.p95_ms ?? 0} ms`, 'slow tail')}
+      ${metricCard('Spend (24h)', `$${spend.toFixed(spend < 1 ? 4 : 2)}`, 'LLM cost (est)')}
     </div>`;
 }
 
@@ -150,7 +152,7 @@ async function refreshList() {
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">
         <span>exec ${esc(t.execution_id || '—')} · ${t.span_count} spans</span>
-        <span>${t.duration_ms}ms</span>
+        <span>${t.duration_ms}ms${t.cost_usd ? ` · <span style="color:var(--accent)">$${Number(t.cost_usd).toFixed(t.cost_usd < 1 ? 4 : 2)}</span>` : ''}</span>
       </div>
     </button>`).join('');
 

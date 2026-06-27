@@ -122,6 +122,28 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_otel_spans_unique ON otel_spans(trace_id, span_id)")
     await db.commit()
 
+    # Cost columns on otel_spans (cost observability). Added by ALTER so they land
+    # on existing OTel installs too. Populated lazily by the run-data enrichment
+    # (n8n spans carry no token/cost data; usage is pulled from the execution).
+    cursor = await db.execute("PRAGMA table_info(otel_spans)")
+    ocols = {row["name"] for row in await cursor.fetchall()}
+    _cost_cols = [
+        ("model", "TEXT"),
+        ("tokens_in", "INTEGER"),
+        ("tokens_out", "INTEGER"),
+        ("cost_usd", "REAL"),
+        ("cost_source", "TEXT"),
+        ("price_in_per_mtok", "REAL"),
+        ("price_out_per_mtok", "REAL"),
+        ("price_source", "TEXT"),
+        ("cost_is_estimate", "INTEGER"),
+        ("priced_at", "TEXT"),
+    ]
+    for col, typ in _cost_cols:
+        if col not in ocols:
+            await db.execute(f"ALTER TABLE otel_spans ADD COLUMN {col} {typ}")
+    await db.commit()
+
 
 async def close_db() -> None:
     global _db

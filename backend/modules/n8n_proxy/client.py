@@ -466,6 +466,14 @@ async def get_execution(execution_id: str) -> dict[str, Any]:
     return data
 
 
+async def get_execution_raw(execution_id: str) -> dict[str, Any]:
+    """Raw execution payload including un-flattened run data (for cost enrichment).
+
+    Unlike get_execution (which summarizes), this returns n8n's full object so the
+    caller can read per-node token usage under data.resultData.runData."""
+    return await _get(f"/api/v1/executions/{execution_id}?includeData=true") or {}
+
+
 async def trigger_workflow(workflow_id: str, payload: Optional[dict] = None) -> dict[str, Any]:
     """Trigger a workflow via its dashboard-owned webhook node."""
     payload = payload or {}

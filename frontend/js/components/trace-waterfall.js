@@ -15,6 +15,12 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function fmtUsd(n) {
+  if (n == null) return '';
+  const dp = n < 0.01 ? 5 : (n < 1 ? 4 : 2);
+  return '$' + Number(n).toFixed(dp);
+}
+
 function _depthMap(spans) {
   const byId = {};
   spans.forEach(s => { byId[s.span_id] = s; });
@@ -50,9 +56,14 @@ export function buildWaterfall(spans) {
   const dmap = _depthMap(spans);
   const ordered = [...spans].sort((a, b) => (a.start_ns - b.start_ns) || (dmap[a.span_id] - dmap[b.span_id]));
 
+  const totalCost = spans.reduce((a, s) => a + (s.cost_usd || 0), 0);
+  const anyEstimate = spans.some(s => s.cost_is_estimate);
   const head = document.createElement('div');
   head.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:10px';
-  head.innerHTML = `<span>${spans.length} spans</span><span>total ${((t1 - t0) / 1e6).toFixed(1)} ms</span>`;
+  const costHtml = totalCost > 0
+    ? ` · <span style="color:var(--accent)">${fmtUsd(totalCost)}${anyEstimate ? ' est' : ''}</span>`
+    : '';
+  head.innerHTML = `<span>${spans.length} spans</span><span>total ${((t1 - t0) / 1e6).toFixed(1)} ms${costHtml}</span>`;
   wrap.appendChild(head);
 
   ordered.forEach(s => {
@@ -77,7 +88,7 @@ export function buildWaterfall(spans) {
       <div style="flex:1;position:relative;height:16px;background:var(--bg-input,rgba(255,255,255,.04));border-radius:3px">
         <div style="position:absolute;left:${leftPct}%;width:${widthPct}%;top:2px;height:12px;background:${barColor};border-radius:3px;min-width:2px"></div>
       </div>
-      <div style="flex:0 0 70px;text-align:right;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">${(s.duration_ms || 0).toFixed(1)}ms</div>
+      <div style="flex:0 0 92px;text-align:right;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">${(s.duration_ms || 0).toFixed(1)}ms${s.cost_usd != null ? `<br><span style="color:var(--accent)">${fmtUsd(s.cost_usd)}</span>` : ''}</div>
     `;
 
     const detail = document.createElement('div');
@@ -87,7 +98,10 @@ export function buildWaterfall(spans) {
       const v = typeof attrs[k] === 'object' ? JSON.stringify(attrs[k]) : attrs[k];
       return `<div><span style="color:var(--text-dim)">${esc(k)}</span> = ${esc(v)}</div>`;
     }).join('') || '<div style="color:var(--text-dim)">no attributes</div>';
-    detail.innerHTML = `<div style="margin-bottom:6px">status <strong style="color:${isErr ? 'var(--error)' : 'var(--success,#34d399)'}">${esc(s.status || 'UNSET')}</strong> · span ${esc((s.span_id || '').slice(0, 8))} · parent ${esc((s.parent_id || '—').slice(0, 8))}</div>${attrRows}`;
+    const costLine = (s.cost_usd != null || s.tokens_in != null)
+      ? `<div style="margin-bottom:6px;color:var(--text-primary)">${esc(s.model || 'model ?')} · in ${s.tokens_in ?? '?'} / out ${s.tokens_out ?? '?'} tok · <strong style="color:var(--accent)">${s.cost_usd != null ? fmtUsd(s.cost_usd) : 'price unknown'}</strong>${s.cost_is_estimate ? ' (est)' : ''}</div>`
+      : '';
+    detail.innerHTML = `${costLine}<div style="margin-bottom:6px">status <strong style="color:${isErr ? 'var(--error)' : 'var(--success,#34d399)'}">${esc(s.status || 'UNSET')}</strong> · span ${esc((s.span_id || '').slice(0, 8))} · parent ${esc((s.parent_id || '—').slice(0, 8))}</div>${attrRows}`;
 
     row.addEventListener('click', () => { detail.style.display = detail.style.display === 'none' ? '' : 'none'; });
     wrap.appendChild(row);

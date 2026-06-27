@@ -75,7 +75,9 @@ async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") 
                MAX(workflow_name)                              AS workflow_name,
                MAX(workflow_id)                                AS workflow_id,
                MAX(execution_id)                               AS execution_id,
-               MAX(instance_id)                                AS instance_id
+               MAX(instance_id)                                AS instance_id,
+               COALESCE(SUM(cost_usd), 0)                      AS cost_total,
+               MAX(CASE WHEN cost_source IS NOT NULL THEN 1 ELSE 0 END) AS has_cost
         FROM otel_spans
         WHERE (? = '' OR instance_id = ?)
           AND (? = '' OR trace_id IN (SELECT trace_id FROM otel_spans WHERE workflow_id = ?))
@@ -99,6 +101,8 @@ async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") 
             "has_error": bool(r["has_error"]),
             "start_ns": start_ns,
             "duration_ms": round((end_ns - start_ns) / 1e6, 2) if end_ns > start_ns else 0.0,
+            "cost_usd": round(float(r["cost_total"]), 6) if r["cost_total"] else 0.0,
+            "has_cost": bool(r["has_cost"]),
         })
     return out
 
@@ -116,7 +120,8 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
         SELECT trace_id,
                MIN(start_ns) AS s,
                MAX(end_ns)   AS e,
-               MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS err
+               MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS err,
+               COALESCE(SUM(cost_usd), 0) AS cost
         FROM otel_spans
         WHERE (? = '' OR instance_id = ?)
           AND (? = '' OR trace_id IN (SELECT trace_id FROM otel_spans WHERE workflow_id = ?))
@@ -129,6 +134,7 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
     durs = sorted((int(r["e"]) - int(r["s"])) / 1e6 for r in rows if int(r["e"]) > int(r["s"]))
     n = len(rows)
     errs = sum(int(r["err"]) for r in rows)
+    spend = sum(float(r["cost"] or 0) for r in rows)
 
     def pct(p: int) -> float:
         if not durs:
@@ -144,6 +150,7 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
         "p50_ms": pct(50),
         "p95_ms": pct(95),
         "throughput_per_hr": round(n / window_hours, 2) if window_hours else 0.0,
+        "spend_usd": round(spend, 4),
     }
 
 
@@ -185,6 +192,42 @@ async def get_trace(trace_id: str) -> list[dict]:
             "end_ns": int(r["end_ns"] or 0),
             "duration_ms": round((int(r["end_ns"] or 0) - int(r["start_ns"] or 0)) / 1e6, 3),
             "status": r["status"] or "",
+            "model": r["model"] or "",
+            "tokens_in": int(r["tokens_in"]) if r["tokens_in"] is not None else None,
+            "tokens_out": int(r["tokens_out"]) if r["tokens_out"] is not None else None,
+            "cost_usd": float(r["cost_usd"]) if r["cost_usd"] is not None else None,
+            "cost_source": r["cost_source"] or "",
+            "cost_is_estimate": bool(r["cost_is_estimate"]) if r["cost_is_estimate"] is not None else None,
             "attributes": attrs,
         })
     return spans
+
+
+async def has_cost(trace_id: str) -> bool:
+    """True if any span in the trace already has a cost source (enrichment ran)."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT 1 FROM otel_spans WHERE trace_id = ? AND cost_source IS NOT NULL LIMIT 1", (trace_id,)
+    )
+    return (await cur.fetchone()) is not None
+
+
+async def set_costs(updates: list[dict]) -> int:
+    """Write per-span cost rows. Each update: span_id + cost fields. Idempotent."""
+    if not updates:
+        return 0
+    db = await get_db()
+    await db.executemany(
+        """
+        UPDATE otel_spans SET
+            model = :model, tokens_in = :tokens_in, tokens_out = :tokens_out,
+            cost_usd = :cost_usd, cost_source = :cost_source,
+            price_in_per_mtok = :price_in_per_mtok, price_out_per_mtok = :price_out_per_mtok,
+            price_source = :price_source, cost_is_estimate = :cost_is_estimate,
+            priced_at = :priced_at
+        WHERE span_id = :span_id
+        """,
+        updates,
+    )
+    await db.commit()
+    return len(updates)
