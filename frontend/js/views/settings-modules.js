@@ -157,7 +157,7 @@ export async function renderModules(el) {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div>
               <strong style="font-size:14px">Install a community module</strong>
-              <div style="font-size:12px;opacity:0.6;margin-top:4px">Inspect runs a static scan and shows what the module declares vs what its code does. Heuristic review, not a sandbox — only install modules you trust.</div>
+              <div style="font-size:12px;opacity:0.6;margin-top:4px">Inspect runs a static scan and shows what the module declares vs what its code does. Heuristic review, not a sandbox: an installed module runs in-process with full data access and its frontend runs in this app's page (it can break the UI). Only install modules you trust.</div>
             </div>
           </div>
           <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
@@ -312,7 +312,7 @@ function consentModal(inspect) {
         </div>
 
         <div style="background:${SEV_COLOR.MEDIUM}11;border:1px solid ${SEV_COLOR.MEDIUM}44;border-radius:var(--radius);padding:10px 12px;font-size:12px;line-height:1.5;margin-bottom:14px">
-          <strong>Heuristic review, not a sandbox.</strong> This is a static scan of the module's code. It cannot follow obfuscation, runtime-fetched code, or dynamic imports, and community modules run in-process with full access to your data. Absence of findings is not a safety guarantee. <strong>Only install modules you trust.</strong>
+          <strong>Heuristic review, not a sandbox.</strong> This is a static scan of the module's code. It cannot follow obfuscation, runtime-fetched code, or dynamic imports. Once installed, a community module's backend runs <strong>in-process with full access to your data and credentials</strong>, and its frontend runs <strong>inside this app's page</strong>, so it can read, change, or break the UI. Absence of findings is not a safety guarantee. <strong>Only install modules you trust.</strong>
         </div>
 
         ${incompatHtml}

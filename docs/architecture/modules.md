@@ -205,7 +205,7 @@ The module manager UI reflects this: the install panel's **Discover** button lis
 
 > **Heuristic review, not a sandbox.** A static scan of code that runs in-process cannot contain a determined author (`getattr(__import__('os'), 'system')`, base64-then-`exec`, runtime-fetched payloads all bypass it). The scan catches low-effort or accidental danger, forces an explicit consent moment, and records what was approved. Absence of findings is not a safety guarantee. The report carries its own limitations text, and every UI surface says the same. There is no "scanned and safe" badge.
 
-Security posture is explicit and limited: community modules run in-process with full Python access and no sandbox. Out-of-process isolation is the deferred real boundary (see [Security](security.md)). Only `secrets_required` keys are surfaced for the operator to supply; the full `.env` is not auto-injected. Install only from sources you trust.
+Security posture is explicit and limited: a community module's backend runs in-process with full Python access and no sandbox, and its frontend (`static/` view) is loaded into the app's own page, so it shares the DOM and `window` and can read, change, or break the host UI. Out-of-process isolation (backend) and iframe isolation (frontend) are the deferred real boundaries (see [Security](security.md)). Only `secrets_required` keys are surfaced for the operator to supply; the full `.env` is not auto-injected. Install only from sources you trust.
 
 ## How a failed community module is recorded, not fatal
 

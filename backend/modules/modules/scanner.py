@@ -78,7 +78,9 @@ _HEX_RE = re.compile(r"^[0-9a-fA-F\s]+$")
 _LIMITATIONS = (
     "This is a heuristic AST scan, not a sandbox. It cannot follow obfuscation "
     "(getattr/base64/exec), runtime-fetched code, or dynamic imports with "
-    "computed names. Absence of findings is not a safety guarantee. Only install "
+    "computed names. Once installed, the module's backend runs in-process with "
+    "full data/credential access and its frontend runs in the app page (it can "
+    "break the UI). Absence of findings is not a safety guarantee. Only install "
     "modules you trust."
 )
 
