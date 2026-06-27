@@ -42,12 +42,13 @@ Sequenced: observability first, then the community-module pipeline and its first
 
 Push-based, per-node execution visibility. Hybrid design: an embedded OTLP/HTTP receiver MVP (spans/metrics to SQLite with bounded retention and a trace-waterfall Observability view) plus an optional one-click external stack (OpenTelemetry Collector + Tempo + Prometheus + Grafana). Additive to Insights, not a replacement.
 
-- [ ] OTLP/HTTP receiver (traces) with token auth (`AGD_OTEL_TOKEN`) and body limits
-- [ ] Span storage with bounded retention (age + row cap) and a pruning task
-- [ ] Observability view: recent-traces list + parent/child trace waterfall
+- [x] OTLP/HTTP receiver (traces) with token auth (`AGD_OTEL_TOKEN`) and body limits
+- [x] Span storage with bounded retention (age + row cap), pruned on ingest
+- [x] Observe view: recent-traces list + parent/child waterfall, live-updating, plus a per-execution trace popup in workflow detail
 - [ ] Metrics ingest + the throughput / error-rate / latency strip
-- [ ] Live WebSocket updates + cross-links from Insights and Errors
+- [ ] Cross-links from Insights and Errors into a trace
 - [ ] Optional external-stack one-click template + Grafana linking
+- [ ] **Cost observability** ([spec](docs/specs/2026-06-27-cost-observability.md)): fold LLM spend into the trace layer. n8n's OTel spans carry no token/cost data, so cost is enriched from n8n run-data (token usage) x a model price book, stored per span, surfaced as cost badges + a trace total + a spend rollup. Subsumes the old "Cost tracking integration" item.
 
 ### 2. Community module security: scan + consent ([spec](docs/specs/2026-06-26-community-module-security-and-youtube-research.md))
 
@@ -90,7 +91,7 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
 - [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
-- [ ] **Cost tracking integration**: aggregate LLM spend and n8n execution metrics
+- [ ] **Cost tracking** — folded into Observability ([cost-observability spec](docs/specs/2026-06-27-cost-observability.md)); LLM spend is the cost dimension of the trace store, not a standalone feature
 - [ ] **Workflow promotion**: promote workflows across dev, staging, production instances
 - [ ] **Public API hardening**: expand and stabilize the existing versioned `/api/v1` (X-API-Key) surface
 
