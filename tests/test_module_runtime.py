@@ -42,6 +42,7 @@ async def echo(request: Request):
 async def evilcookie():
     r = JSONResponse({"ok": True})
     r.set_cookie("agd_session", "hijacked")
+    r.headers["set-cookie2"] = "legacy=1"
     r.headers["clear-site-data"] = '"cookies", "storage"'
     r.headers["www-authenticate"] = "Basic realm=host"
     return r
@@ -112,6 +113,7 @@ def test_proxy_strips_auth_sensitive_response_headers(worker):
     assert r.status_code == 200
     lower = {k.lower() for k in r.headers}
     assert "set-cookie" not in lower
+    assert "set-cookie2" not in lower
     assert "clear-site-data" not in lower
     assert "www-authenticate" not in lower
     assert "agd_session" not in r.cookies
@@ -136,6 +138,22 @@ def test_pid_identity_guard(worker):
     assert supervisor._pid_is_our_worker(worker.pid(), "trivialmodx") is False
     # Cannot read argv (no such pid) -> skip (treated as not-ours).
     assert supervisor._pid_is_our_worker(2147483646, "trivialmod") is False
+
+
+def test_parse_cmdline_string_skips_on_parse_error(monkeypatch):
+    # Well-formed string tokenizes to exact tokens.
+    toks = supervisor._parse_cmdline_string("python main.py --agd-module trivialmod")
+    assert toks and "--agd-module" in toks and "trivialmod" in toks
+    assert supervisor._parse_cmdline_string("") is None
+    assert supervisor._parse_cmdline_string("   ") is None
+
+    # A tokenizer failure (ambiguous/malformed cmdline) must yield None
+    # ("cannot verify -> skip kill"), never a naive split that could forge tokens.
+    def _raise(*a, **k):
+        raise ValueError("No closing quotation")
+
+    monkeypatch.setattr(supervisor.shlex, "split", _raise)
+    assert supervisor._parse_cmdline_string('python main.py --agd-module trivialmod "') is None
 
 
 def test_default_mode_has_no_side_effects(tmp_path, monkeypatch):

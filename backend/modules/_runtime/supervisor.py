@@ -282,11 +282,27 @@ def _save_pidfile() -> None:
         logger.warning("could not write worker pidfile: %s", e)
 
 
+def _parse_cmdline_string(s: str) -> list[str] | None:
+    """Tokenize a command-line STRING (the ps/PowerShell fallback form).
+
+    Returns None on empty or unparseable input: an ambiguous/malformed command
+    line counts as "cannot verify", so the orphan sweep skips the kill rather than
+    trusting a naive split. (The /proc path needs no parsing; it has exact tokens.)
+    """
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return shlex.split(s, posix=(os.name == "posix")) or None
+    except ValueError:
+        return None
+
+
 def _process_argv(pid: int) -> list[str] | None:
     """Best-effort argv token list for a pid, or None if it can't be read.
 
     /proc/<pid>/cmdline gives exact NUL-separated tokens (no quoting ambiguity);
-    the ps/PowerShell fallbacks return a string we shlex-split.
+    the ps/PowerShell fallbacks return a string we tokenize conservatively.
     """
     proc = f"/proc/{pid}/cmdline"
     if os.path.exists(proc):
@@ -306,13 +322,7 @@ def _process_argv(pid: int) -> list[str] | None:
                 ["powershell", "-NoProfile", "-Command",
                  f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
                 capture_output=True, text=True, timeout=10)
-        s = out.stdout.strip()
-        if not s:
-            return None
-        try:
-            return shlex.split(s, posix=(os.name == "posix")) or None
-        except ValueError:
-            return s.split() or None
+        return _parse_cmdline_string(out.stdout)
     except Exception:
         return None
 
