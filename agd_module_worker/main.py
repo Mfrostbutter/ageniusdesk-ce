@@ -21,6 +21,7 @@ reverse proxy land in phase 2.
 
 from __future__ import annotations
 
+import hmac
 import importlib
 import os
 import sys
@@ -55,7 +56,8 @@ def build_app(module_id: str, module_parent: str, proxy_secret: str):
     async def _require_proxy_secret(request: Request, call_next):
         # The host always sends the secret; a direct hit (another local process)
         # has no way to know it. Rejects before any module routing runs.
-        if proxy_secret and request.headers.get("x-agd-proxy-secret") != proxy_secret:
+        got = request.headers.get("x-agd-proxy-secret", "")
+        if proxy_secret and not hmac.compare_digest(got, proxy_secret):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         return await call_next(request)
 

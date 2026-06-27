@@ -18,7 +18,7 @@ from backend.modules._runtime import proxy, supervisor
 # and echoes the headers it received so the test can assert what the proxy passed.
 _FIXTURE = '''
 from fastapi import APIRouter, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 router = APIRouter(prefix="/api/trivialmod")
 
@@ -31,6 +31,18 @@ async def ping(request: Request):
 @router.get("/big")
 async def big():
     return PlainTextResponse("x" * 100000)
+
+
+@router.post("/echo")
+async def echo(request: Request):
+    return {"len": len(await request.body())}
+
+
+@router.get("/evilcookie")
+async def evilcookie():
+    r = JSONResponse({"ok": True})
+    r.set_cookie("agd_session", "hijacked")
+    return r
 '''
 
 
@@ -89,6 +101,45 @@ def test_direct_hit_requires_proxy_secret(worker):
         assert c.get("/api/trivialmod/ping").status_code == 403
         ok = c.get("/api/trivialmod/ping", headers={"x-agd-proxy-secret": worker.proxy_secret})
         assert ok.status_code == 200
+
+
+def test_proxy_strips_worker_set_cookie(worker):
+    # A community module must not be able to set/clear cookies on the host origin.
+    with TestClient(_proxy_app()) as client:
+        r = client.get("/api/trivialmod/evilcookie")
+    assert r.status_code == 200
+    assert "set-cookie" not in {k.lower() for k in r.headers}
+    assert "agd_session" not in r.cookies
+
+
+def test_proxy_streams_request_body(worker):
+    with TestClient(_proxy_app()) as client:
+        r = client.post("/api/trivialmod/echo", content=b"a" * 5000)
+    assert r.status_code == 200
+    assert r.json()["len"] == 5000
+
+
+def test_pid_identity_guard(worker):
+    import os as _os
+
+    # The live worker is provably ours; an unrelated pid (this test process) is not.
+    assert supervisor._pid_is_our_worker(worker.pid(), "trivialmod") is True
+    assert supervisor._pid_is_our_worker(worker.pid(), "someothermod") is False
+    assert supervisor._pid_is_our_worker(_os.getpid(), "trivialmod") is False
+
+
+def test_default_mode_has_no_side_effects(tmp_path, monkeypatch):
+    # stop_all() with nothing started must not create data/run or the pidfile
+    # (this is what the unconditional lifespan shutdown hits in default mode).
+    monkeypatch.chdir(tmp_path)
+    saved = dict(supervisor._workers)
+    supervisor._workers.clear()
+    try:
+        supervisor.stop_all()
+        assert not (tmp_path / "data" / "run").exists()
+    finally:
+        supervisor._workers.clear()
+        supervisor._workers.update(saved)
 
 
 def test_proxy_502_when_worker_absent():

@@ -166,9 +166,11 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
     """
     from backend.modules._runtime import proxy, supervisor
 
-    declared_env = manifest.capabilities.env if manifest.capabilities else []
+    # Do NOT source the worker env from the module's declared capabilities.env: a
+    # module could name a host secret and have it forwarded. The worker gets only
+    # the base allowlist; config/credentials come via the host bridge (later phase).
     try:
-        supervisor.start_worker(manifest.id, child.parent, declared_env)
+        supervisor.start_worker(manifest.id, child.parent, forward_env=[])
         proxy.register_proxy_route(app, manifest.id)
         missing = check_secrets(manifest)
         status = "missing_secrets" if missing else "loaded"

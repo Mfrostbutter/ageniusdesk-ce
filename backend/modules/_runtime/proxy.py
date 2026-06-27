@@ -28,7 +28,10 @@ _HOP_BY_HOP = {
     "te", "trailers", "transfer-encoding", "upgrade",
 }
 _STRIP_REQUEST = _HOP_BY_HOP | {"cookie", "authorization", "host", "content-length"}
-_STRIP_RESPONSE = _HOP_BY_HOP | {"content-length", "content-encoding"}
+# Strip Set-Cookie so a community module can't set/clear cookies on the host
+# origin (session/CSRF poisoning, forced logout); also drop length/encoding that
+# no longer match a streamed body.
+_STRIP_RESPONSE = _HOP_BY_HOP | {"content-length", "content-encoding", "set-cookie"}
 
 
 def _forward_request_headers(headers) -> dict[str, str]:
@@ -51,8 +54,8 @@ async def _proxy(module_id: str, request: Request) -> StreamingResponse | JSONRe
     headers = _forward_request_headers(request.headers)
     headers["x-agd-proxy-secret"] = worker.proxy_secret
 
-    body = await request.body()
-    req = worker.client.build_request(request.method, rel, headers=headers, content=body)
+    # Stream the request body to the worker (no full buffering in host memory).
+    req = worker.client.build_request(request.method, rel, headers=headers, content=request.stream())
     try:
         resp = await worker.client.send(req, stream=True)
     except Exception as e:

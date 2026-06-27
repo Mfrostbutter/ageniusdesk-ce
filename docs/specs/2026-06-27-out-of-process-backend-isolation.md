@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, revised after adversarial review passes 1 and 2 (Codex, 2026-06-27). Prerequisite id fix LANDED; isolation runtime not yet built.
+Status: DRAFT, revised after adversarial review passes 1-3 (Codex, 2026-06-27). LANDED (local, unpushed): prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy, default-off behind AGD_MODULE_ISOLATION). PENDING: supervised crash-restart watchdog (Section 5.7), host bridge + namespaces (phases 3-4), capability/scanner additions (5), youtube-research re-port (6), dual-mode UI + container tier.
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -397,6 +397,11 @@ shared schema, no name collisions with host tables.
   today's import-failure behavior).
 - **Restart:** on crash, host restarts with capped exponential backoff and a
   circuit breaker (N failures in a window -> `status=failed`, stop hammering).
+  **STATUS: not yet implemented (phase 2 landed without it).** Today a dead worker
+  returns 502 on the next proxied request; orphan sweep + manual replace
+  (`start_worker`) exist, but supervised auto-restart is a tracked follow-up
+  before isolated modules ship (phase 6). It needs a non-blocking respawn (the
+  current `spawn` health-poll is synchronous) plus the breaker state.
 - **Uninstall / disable:** host SIGTERMs the worker, removes the proxy route,
   revokes the token, optionally purges `_data/`.
 - **Orphans:** host records worker PIDs; on boot it kills any stale workers from a
@@ -548,7 +553,10 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
    not module-set. Confirm the module cannot inject an arbitrary base URL.
 9. **LLM cost abuse.** Accepted (consented install); optional per-module budget
    cap is a follow-up.
-10. **Crash-loop DoS on the host.** Mitigated by backoff + circuit breaker.
+10. **Crash-loop DoS on the host.** Backoff + circuit breaker are SPECIFIED but
+    NOT YET IMPLEMENTED (Section 5.7); current behavior is 502-on-dead, no
+    auto-restart, so there is no crash loop to rate-limit yet. To resolve before
+    isolated modules ship.
 11. **Orphan workers / port/socket leakage across restarts.** Mitigated by PID
     tracking + boot cleanup + UDS unlink.
 12. **Env allowlist regression.** A future code change reverts to passing
@@ -609,17 +617,23 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
 - Worker env: asserts none of `{SECRET_KEY, *_KEY, *_TOKEN, QDRANT_*}` present;
   `import backend` raises; third-party import works; the bootstrap module's
   import does not pull in `backend`.
-- Proxy: auth enforced host-side (unauth `/api/{id}/*` blocked before forward);
-  CSRF on mutations; direct worker hit without `X-AGD-Proxy-Secret` rejected;
-  streaming a large body round-trips; timeout + body-size limits fire.
+- Proxy (LANDED, phase 2): round-trip; host Cookie/Authorization + hop-by-hop
+  stripped both ways; worker `Set-Cookie` stripped (no host-origin cookie
+  poisoning); `X-AGD-Proxy-Secret` injected and a direct worker hit without it
+  rejected (403); request body streamed; large response streamed; 502 when the
+  worker is absent. Pending: host-side auth/CSRF on the proxied route (wired when
+  isolated modules ship), timeout + body-size limits.
 - Bridge: token required; cookie-bearing request rejected; `notes.write` (note
   validator) and `notes.make_folder`/`move` (dir validator) reject traversal +
   out-of-declared-scope (`..`, absolute, backslash, symlink target);
   `assistant.complete` is tool-free (no `tools` in the provider payload) and
   cannot set the base URL; unknown method denied. (`broadcast` namespace tests
   land with that phase, not v1.)
-- Lifecycle: crash -> restart with backoff; circuit breaker trips; uninstall
-  stops worker + revokes token; orphan killed on boot.
+- Lifecycle (LANDED): orphan sweep is PID-reuse safe (kills only a pid whose
+  command line still carries the worker marker + module id; skips otherwise);
+  default mode (`in_process`) produces no `data/run`/pidfile side effects.
+  Pending: crash -> auto-restart with backoff; circuit breaker trips (watchdog
+  not yet implemented, Section 5.7); uninstall stops worker + revokes token.
 - youtube-research end-to-end under isolation on 3066: discover -> inspect ->
   consent -> install -> restart -> run -> captions -> breakdown (via bridge LLM)
   -> classify -> vault write (via bridge) -> live progress (via iframe polling

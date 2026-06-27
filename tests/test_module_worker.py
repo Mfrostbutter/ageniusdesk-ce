@@ -45,15 +45,15 @@ def test_build_worker_env_drops_all_host_secrets():
     assert env["AGD_MODULE_ID"] == "m"
 
 
-def test_build_worker_env_forwards_declared_nonsecret_only():
+def test_build_worker_env_extra_allow_nonsecret_only():
     parent = {"PATH": "/b", "WHISPER_URL": "http://w", "OPEN_AI_KEY": "sk", "EXTRA_TOKEN": "t"}
     env = sandbox.build_worker_env(
-        parent, injected={}, declared_env=["WHISPER_URL", "OPEN_AI_KEY", "EXTRA_TOKEN", "MISSING"]
+        parent, injected={}, extra_allow=["WHISPER_URL", "OPEN_AI_KEY", "EXTRA_TOKEN", "MISSING"]
     )
-    assert env["WHISPER_URL"] == "http://w"      # declared, non-secret, present
-    assert "OPEN_AI_KEY" not in env               # declared but secret-like -> refused
-    assert "EXTRA_TOKEN" not in env               # declared but secret-like -> refused
-    assert "MISSING" not in env                   # declared but absent in parent
+    assert env["WHISPER_URL"] == "http://w"      # allowed, non-secret, present
+    assert "OPEN_AI_KEY" not in env               # secret-like -> refused even if allowed
+    assert "EXTRA_TOKEN" not in env               # secret-like -> refused
+    assert "MISSING" not in env                   # absent in parent
 
 
 def test_build_worker_env_injected_wins():

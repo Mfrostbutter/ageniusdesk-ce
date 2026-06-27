@@ -58,21 +58,26 @@ def is_secret_like(name: str) -> bool:
 def build_worker_env(
     parent_env: dict[str, str],
     injected: dict[str, str],
-    declared_env: list[str] | None = None,
+    extra_allow: list[str] | None = None,
 ) -> dict[str, str]:
     """Build the allowlisted environment for a worker subprocess.
 
-    Starts empty; copies only allowlisted names from `parent_env`, then any
-    declared (non-secret) env the module asked for, then the `injected` worker
-    vars (authoritative, applied last). Host secrets in `parent_env` never
+    Starts empty; copies only allowlisted names from `parent_env`, then any names
+    in `extra_allow` that are present and not secret-like, then the `injected`
+    worker vars (authoritative, applied last). Host secrets in `parent_env` never
     appear in the result.
+
+    `extra_allow` is a HOST-controlled allowlist, never the module's own declared
+    env: a module must not be able to name a host secret and have it forwarded.
+    The loader passes [] today; is_secret_like is a secondary guard on whatever
+    an operator might later allowlist.
     """
     out: dict[str, str] = {}
     for k, v in parent_env.items():
         ku = k.upper()
         if ku in _ENV_ALLOW or any(ku.startswith(p) for p in _ENV_ALLOW_PREFIXES):
             out[k] = v
-    for k in declared_env or []:
+    for k in extra_allow or []:
         if k in out or is_secret_like(k):
             continue
         if k in parent_env:

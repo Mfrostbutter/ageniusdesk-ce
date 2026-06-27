@@ -37,6 +37,10 @@ COMMUNITY_MODULES_DIR = Path("data/modules")
 RUN_DIR = Path("data/run")
 PIDFILE = RUN_DIR / "workers.json"
 
+# Marker passed in the worker's argv so the orphan sweep can confirm a recorded
+# PID is still OUR worker (and not a reused PID) before killing it.
+WORKER_MARKER = "--agd-module"
+
 # UDS on POSIX; loopback TCP on Windows (uvicorn UDS support there is unreliable).
 USE_UDS = os.name == "posix"
 
@@ -88,7 +92,7 @@ class ModuleWorker:
 
     # -- env + spawn -----------------------------------------------------------
 
-    def _build_env(self, declared_env: list[str] | None) -> dict[str, str]:
+    def _build_env(self, forward_env: list[str] | None) -> dict[str, str]:
         # Reuse the worker's own allowlist so host + worker agree on what leaks.
         from agd_module_worker.sandbox import build_worker_env
 
@@ -101,22 +105,23 @@ class ModuleWorker:
             "AGD_PROXY_SECRET": self.proxy_secret,
             "AGD_WORKER_BIND": bind,
         }
-        return build_worker_env(dict(os.environ), injected, declared_env)
+        return build_worker_env(dict(os.environ), injected, forward_env)
 
-    def spawn(self, declared_env: list[str] | None = None) -> None:
+    def spawn(self, forward_env: list[str] | None = None) -> None:
         RUN_DIR.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         if USE_UDS and self.uds_path and os.path.exists(self.uds_path):
             os.unlink(self.uds_path)
 
-        env = self._build_env(declared_env)
+        env = self._build_env(forward_env)
         # Capture worker stdout+stderr to a per-module log (visible for debugging
         # and surfaced on a failed health check).
         self._log_fh = open(self.log_path, "wb")
         # cwd = the module's own data dir, so any stray relative path the module
-        # uses resolves inside its sandbox, not the host tree.
+        # uses resolves inside its sandbox, not the host tree. The marker args
+        # make the process identifiable to the orphan sweep (PID-reuse safety).
         self.proc = subprocess.Popen(
-            [sys.executable, str(WORKER_MAIN)],
+            [sys.executable, str(WORKER_MAIN), WORKER_MARKER, self.module_id],
             env=env,
             cwd=str(self.data_dir.resolve()),
             stdout=self._log_fh,
@@ -235,20 +240,22 @@ def get(module_id: str) -> ModuleWorker | None:
     return _workers.get(module_id)
 
 
-def start_worker(module_id: str, module_parent: Path, declared_env: list[str] | None = None) -> ModuleWorker:
+def start_worker(module_id: str, module_parent: Path, forward_env: list[str] | None = None) -> ModuleWorker:
     """Spawn (or replace) the worker for a module and block until it is healthy."""
     existing = _workers.pop(module_id, None)
     if existing:
         existing.stop()
     data_dir = COMMUNITY_MODULES_DIR / module_id / "_data"
     worker = ModuleWorker(module_id, module_parent, data_dir)
-    worker.spawn(declared_env)
+    worker.spawn(forward_env)
     _workers[module_id] = worker
     _save_pidfile()
     return worker
 
 
 def stop_all() -> None:
+    if not _workers:
+        return  # nothing was started: no side effects in default (in_process) mode
     for worker in list(_workers.values()):
         try:
             worker.stop()
@@ -274,11 +281,48 @@ def _save_pidfile() -> None:
         logger.warning("could not write worker pidfile: %s", e)
 
 
+def _process_cmdline(pid: int) -> str | None:
+    """Best-effort command line for a pid, or None if it can't be read."""
+    proc = f"/proc/{pid}/cmdline"
+    if os.path.exists(proc):
+        try:
+            with open(proc, "rb") as f:
+                return f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+        except OSError:
+            return None
+    try:
+        if os.name == "posix":
+            out = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                                 capture_output=True, text=True, timeout=5)
+        else:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+                capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _pid_is_our_worker(pid: int, module_id: str) -> bool:
+    """True only if the live pid is provably one of our module workers.
+
+    Guards against PID reuse after a host restart: we confirm the process command
+    line still carries the worker marker AND this module id. If the command line
+    cannot be read, we return False (skip the kill) rather than risk killing an
+    unrelated process.
+    """
+    cmd = _process_cmdline(pid)
+    if not cmd:
+        return False
+    return WORKER_MARKER in cmd and str(module_id) in cmd
+
+
 def sweep_orphans() -> None:
     """Kill workers left running by a previous host process and clear their sockets.
 
-    Best-effort: a stale PID may have been recycled, so we only signal PIDs we
-    recorded and tolerate failures.
+    PID-reuse safe: a recorded pid is only signalled when we can prove it is still
+    our worker (see _pid_is_our_worker); otherwise it is skipped and logged.
     """
     if not PIDFILE.exists():
         return
@@ -289,14 +333,18 @@ def sweep_orphans() -> None:
     for module_id, info in data.items():
         pid = info.get("pid")
         if pid:
-            try:
-                if os.name == "posix":
-                    os.kill(pid, 15)  # SIGTERM
-                else:
-                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
-                logger.info("swept orphan worker '%s' (pid %s)", module_id, pid)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+            if _pid_is_our_worker(pid, module_id):
+                try:
+                    if os.name == "posix":
+                        os.kill(pid, 15)  # SIGTERM
+                    else:
+                        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+                    logger.info("swept orphan worker '%s' (pid %s)", module_id, pid)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            else:
+                logger.info("orphan sweep: pid %s is not the '%s' worker (gone or reused); skipping kill",
+                            pid, module_id)
         uds = info.get("uds")
         if uds and os.path.exists(uds):
             try:
