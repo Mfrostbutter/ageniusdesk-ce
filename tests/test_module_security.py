@@ -44,8 +44,12 @@ def _csrf(client) -> dict:
 
 # ── Module id validation (path-traversal hardening) ──────────────────────────
 
-_UNSAFE_IDS = ["..", "../evil", "a/b", "a\\b", ".hidden", "Uppercase", "", "foo..bar", "x" * 65]
-_SAFE_IDS = ["youtube-research", "n8n_proxy", "a", "mod.v2", "a1-b_2.3"]
+_UNSAFE_IDS = [
+    "..", "../evil", "a/b", "a\\b", ".hidden", "Uppercase", "", "foo..bar", "x" * 65,
+    "mod.v2", "a.",  # dots are banned (no '..', no Windows trailing-dot alias)
+    "nul", "con", "aux", "prn", "com1", "com9", "lpt1", "lpt9",  # Windows reserved
+]
+_SAFE_IDS = ["youtube-research", "n8n_proxy", "a", "modv2", "a1-b_2", "com", "lpt", "con1"]
 
 
 @pytest.mark.parametrize("bad", _UNSAFE_IDS)

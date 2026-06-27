@@ -45,22 +45,34 @@ APP_VERSION = _read_app_version()
 #
 # A module id is used as a filesystem path component (the install dir under
 # data/modules/, and under out-of-process isolation also a run-socket path and a
-# per-module data dir) and as a registry/token key. It must therefore never
-# contain a path separator, a parent-dir reference, or a leading dot. Enforce a
-# strict lowercase slug at every entry point: the manifest validator below (the
-# install path), and a containment-checked resolver in the installer (the
+# per-module data dir) and as a registry/token key. It must be a strict,
+# cross-platform-safe slug. We forbid dots entirely: that removes '..' traversal
+# AND the Windows trailing-dot alias (`a.` resolves to `a` on Windows, so two
+# distinct ids could target one directory). We also reject Windows reserved
+# device names. Enforced at every entry point: the manifest validator below (the
+# install path) and a containment-checked resolver in the installer (the
 # uninstall path, which takes the id straight from the URL).
 
-MODULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+MODULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+# Windows reserved device names. A directory named for one of these aliases the
+# device on Windows, so reject them on every platform for portable installs. The
+# slug regex already forces lowercase, so a lowercase set suffices.
+_WIN_RESERVED = (
+    frozenset({"con", "prn", "aux", "nul"})
+    | frozenset(f"com{i}" for i in range(10))
+    | frozenset(f"lpt{i}" for i in range(10))
+)
 
 
 def is_valid_module_id(module_id: str) -> bool:
-    """True for a safe module id: a 1-64 char lowercase slug ([a-z0-9._-])
-    starting alphanumeric, with no '..' anywhere. Rejects path separators,
-    traversal, and leading dots."""
+    """True for a safe, cross-platform module id: a 1-64 char lowercase slug
+    ([a-z0-9_-]) starting alphanumeric, with no dots (so no '..' and no Windows
+    trailing-dot alias), no path separators, and not a Windows reserved device
+    name."""
     if not isinstance(module_id, str) or not MODULE_ID_RE.match(module_id):
         return False
-    return ".." not in module_id
+    return module_id not in _WIN_RESERVED
 
 
 # ── Manifest schema ──────────────────────────────────────────────────────────
@@ -151,8 +163,8 @@ class ModuleManifest(BaseModel):
         # load_manifest() return None, so the module is skipped, not loaded.
         if not is_valid_module_id(v):
             raise ValueError(
-                f"invalid module id {v!r}: must be a lowercase slug [a-z0-9._-], "
-                "1-64 chars, starting alphanumeric, with no '..'"
+                f"invalid module id {v!r}: must be a lowercase slug [a-z0-9_-], "
+                "1-64 chars, starting alphanumeric, no dots, not a reserved device name"
             )
         return v
 
