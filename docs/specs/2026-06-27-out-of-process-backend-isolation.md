@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, revised after adversarial review pass 1 (Codex, 2026-06-27). No code written.
+Status: DRAFT, revised after adversarial review passes 1 and 2 (Codex, 2026-06-27). Prerequisite id fix LANDED; isolation runtime not yet built.
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -16,6 +16,18 @@ outside the `backend` namespace (HIGH, Section 5.4), `broadcast` downgraded to
 optional/future with the missing host->iframe WS relay called out (Section 5.5c,
 coupling #3), corrected scanner-severity wording (Section 2), dir-safe notes
 validators (Section 5.5a), and version-prose fixes (this block, Section 8).
+
+### Revision note (review pass 2)
+
+Pass 2 reviewed the landed id fix + the revised spec. Addressed all 3 findings:
+the landed id policy was hardened for Windows (HIGH: dots forbidden entirely to
+kill the `a.` trailing-dot alias, and Windows reserved device names rejected;
+code + tests updated, Section 4.1); the `broadcast` scope was made one consistent
+v1 truth (MEDIUM: removed the "replace with bridge.broadcast" instruction from
+the re-port and proxy sections and moved it out of the main phase plan into a
+later phase, Sections 5.1/7/13); and the id-regex prose was aligned to the
+enforced rule (LOW, Section 4.1). The only pass-2 blocker (the Windows id gap) is
+fixed.
 
 > This document is written to be attacked. Section 3 (enforcement matrix) and
 > Section 11 (attack surface) state what is and is NOT a boundary on purpose.
@@ -92,7 +104,7 @@ means accidental/low-effort is stopped but a determined same-uid process is not.
 |---|---|---|
 | In-process access to host objects (`get_db`, `decrypt_value`, `manager`, `settings`) | **Enforced** (separate process; not the same interpreter) | Enforced |
 | Crash/hang/segfault takes down the host | **Enforced** (worker is a separate process) | Enforced |
-| Host actions are mediated + audited (vault, LLM, broadcast) | **Enforced** (only the bridge is reachable) | Enforced |
+| Host actions are mediated + audited (vault, LLM; broadcast when added) | **Enforced** (only the bridge is reachable) | Enforced |
 | Credentials in the worker's own env | **Enforced** (allowlist env, Section 5.3) | Enforced |
 | `import backend.*` | **Guardrail** (curated sys.path + meta-path blocker + packaging change, Section 5.4). A determined module can still read host source off disk and exec it | **Enforced** (host source not in the container) |
 | Reading host secrets/DB **off disk** (`open("data/secrets.json")`) | **NOT enforced** same-uid. Becomes an overt, scanner-flagged act, not a sanctioned API | **Enforced** (no host files mounted; distinct uid) |
@@ -166,13 +178,17 @@ traversal, data-dir escape, and channel spoofing on top of the delete bug.
 
 Required fix (gates everything else):
 
-- Enforce a strict slug at manifest parse time with a pydantic validator on
-  `ModuleManifest.id`: `^[a-z0-9][a-z0-9._-]{1,63}$`, no `..`, no leading dot.
+- Enforce a strict, cross-platform-safe slug at manifest parse time with a
+  pydantic validator on `ModuleManifest.id`: `^[a-z0-9][a-z0-9_-]{0,63}$` (1-64
+  chars). Dots are forbidden entirely, which removes both `..` traversal and the
+  Windows trailing-dot alias (`a.` resolves to `a`, so two ids could target one
+  dir). Reject Windows reserved device names (`con`, `prn`, `aux`, `nul`,
+  `com0-9`, `lpt0-9`) on every platform for portable installs.
 - At every write/move/delete/spawn entry point, resolve the target and re-check
   `target.resolve().relative_to(COMMUNITY_MODULES_DIR.resolve())` before acting;
   raise on escape. Same containment check for the run dir and data dir.
-- Treat this as phase 0 (Section 13); it is also worth landing as a standalone
-  patch immediately, ahead of the isolation work.
+- Treat this as phase 0 (Section 13); LANDED as a standalone patch ahead of the
+  isolation work (commit `2865246` + the Windows hardening from review pass 2).
 
 ## 5. Design
 
@@ -205,8 +221,9 @@ Mechanics the implementation must get right (each is a review checkpoint):
 - **Streaming + WebSockets.** Proxy must stream request and response bodies
   (no full buffering; youtube-research writes large transcripts). If a module
   declares its own WebSocket route, the proxy must support the upgrade; v1 MAY
-  defer module-owned WS and document it (youtube-research needs only the *host*
-  WS via the broadcast bridge, not its own).
+  defer module-owned WS and document it. youtube-research needs no WebSocket at
+  all in v1: its iframe polls `/api/{id}/jobs` through the proxy. The host->iframe
+  WS relay (the `broadcast` capability) is deferred (5.5c).
 - **Limits.** Per-request timeout, max body size, and max concurrent in-flight
   requests per worker, all configurable, all enforced host-side at the proxy.
 - **Built-in modules stay in-process.** Isolation applies to `source=community`
@@ -433,8 +450,10 @@ finding once the contract flips.
 Port once, against the bridge. Concrete diff:
 
 - `router.py`: drop `Depends(require_trusted_request)` (host gates at the proxy).
-  Replace `manager.broadcast(...)` with `bridge.broadcast("job", payload)`.
-  `asyncio.create_task` unchanged (own loop).
+  Remove the `manager.broadcast(...)` call entirely; the iframe already polls
+  `/api/{id}/jobs` through the proxy, so live progress works with no host WS in
+  v1 (the `broadcast` capability is deferred, 5.5c). `asyncio.create_task`
+  unchanged (own loop).
 - `llm.py`: delete `get_assistant_config`/`decrypt_value`/`PROVIDER_KEY_MAP` and
   the provider dispatch; replace `complete()` with a single
   `bridge.assistant.complete(system, user, model, max_tokens)`. The max_tokens
@@ -574,11 +593,13 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
    module through it.
 3. Host bridge (loopback listener, token store, dispatcher) + `notes.*` namespace
    with server-side path scoping.
-4. `assistant.complete` + `broadcast` namespaces.
+4. `assistant.complete` namespace (tool-free executor).
 5. Capability model + scanner additions (read_paths, host.*, host-import HIGH).
-6. Re-port youtube-research onto the bridge + private store + data importer.
+6. Re-port youtube-research onto the bridge + private store + data importer
+   (polling for progress; no broadcast).
 7. Dual-mode flag, docs (honest matrix), CHANGELOG/ROADMAP, tests.
-8. (Later) container tier under the same bridge.
+8. (Later) `broadcast` namespace + the host->iframe WS relay (5.5c), then the
+   container tier under the same bridge.
 
 ## 14. Testing
 
