@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -281,13 +282,19 @@ def _save_pidfile() -> None:
         logger.warning("could not write worker pidfile: %s", e)
 
 
-def _process_cmdline(pid: int) -> str | None:
-    """Best-effort command line for a pid, or None if it can't be read."""
+def _process_argv(pid: int) -> list[str] | None:
+    """Best-effort argv token list for a pid, or None if it can't be read.
+
+    /proc/<pid>/cmdline gives exact NUL-separated tokens (no quoting ambiguity);
+    the ps/PowerShell fallbacks return a string we shlex-split.
+    """
     proc = f"/proc/{pid}/cmdline"
     if os.path.exists(proc):
         try:
             with open(proc, "rb") as f:
-                return f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+                raw = f.read()
+            toks = [t.decode("utf-8", "replace") for t in raw.split(b"\x00") if t]
+            return toks or None
         except OSError:
             return None
     try:
@@ -299,7 +306,13 @@ def _process_cmdline(pid: int) -> str | None:
                 ["powershell", "-NoProfile", "-Command",
                  f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
                 capture_output=True, text=True, timeout=10)
-        return out.stdout.strip() or None
+        s = out.stdout.strip()
+        if not s:
+            return None
+        try:
+            return shlex.split(s, posix=(os.name == "posix")) or None
+        except ValueError:
+            return s.split() or None
     except Exception:
         return None
 
@@ -307,15 +320,16 @@ def _process_cmdline(pid: int) -> str | None:
 def _pid_is_our_worker(pid: int, module_id: str) -> bool:
     """True only if the live pid is provably one of our module workers.
 
-    Guards against PID reuse after a host restart: we confirm the process command
-    line still carries the worker marker AND this module id. If the command line
-    cannot be read, we return False (skip the kill) rather than risk killing an
-    unrelated process.
+    Guards against PID reuse after a host restart: the argv must contain an EXACT
+    `--agd-module <module_id>` token pair (not a substring, so module id
+    "trivial" never matches a "trivialmod" worker). If argv cannot be read we
+    return False (skip the kill) rather than risk killing an unrelated process.
     """
-    cmd = _process_cmdline(pid)
-    if not cmd:
+    argv = _process_argv(pid)
+    if not argv:
         return False
-    return WORKER_MARKER in cmd and str(module_id) in cmd
+    mid = str(module_id)
+    return any(argv[i] == WORKER_MARKER and argv[i + 1] == mid for i in range(len(argv) - 1))
 
 
 def sweep_orphans() -> None:

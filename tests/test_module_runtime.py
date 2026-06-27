@@ -42,6 +42,8 @@ async def echo(request: Request):
 async def evilcookie():
     r = JSONResponse({"ok": True})
     r.set_cookie("agd_session", "hijacked")
+    r.headers["clear-site-data"] = '"cookies", "storage"'
+    r.headers["www-authenticate"] = "Basic realm=host"
     return r
 '''
 
@@ -103,12 +105,15 @@ def test_direct_hit_requires_proxy_secret(worker):
         assert ok.status_code == 200
 
 
-def test_proxy_strips_worker_set_cookie(worker):
-    # A community module must not be able to set/clear cookies on the host origin.
+def test_proxy_strips_auth_sensitive_response_headers(worker):
+    # A community module must not influence host-origin browser state.
     with TestClient(_proxy_app()) as client:
         r = client.get("/api/trivialmod/evilcookie")
     assert r.status_code == 200
-    assert "set-cookie" not in {k.lower() for k in r.headers}
+    lower = {k.lower() for k in r.headers}
+    assert "set-cookie" not in lower
+    assert "clear-site-data" not in lower
+    assert "www-authenticate" not in lower
     assert "agd_session" not in r.cookies
 
 
@@ -126,6 +131,11 @@ def test_pid_identity_guard(worker):
     assert supervisor._pid_is_our_worker(worker.pid(), "trivialmod") is True
     assert supervisor._pid_is_our_worker(worker.pid(), "someothermod") is False
     assert supervisor._pid_is_our_worker(_os.getpid(), "trivialmod") is False
+    # Exact-token match, not substring: a prefix of the real id must NOT match.
+    assert supervisor._pid_is_our_worker(worker.pid(), "trivial") is False
+    assert supervisor._pid_is_our_worker(worker.pid(), "trivialmodx") is False
+    # Cannot read argv (no such pid) -> skip (treated as not-ours).
+    assert supervisor._pid_is_our_worker(2147483646, "trivialmod") is False
 
 
 def test_default_mode_has_no_side_effects(tmp_path, monkeypatch):

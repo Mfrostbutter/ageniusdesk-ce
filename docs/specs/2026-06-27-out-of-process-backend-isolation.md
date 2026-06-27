@@ -245,12 +245,17 @@ The worker is spawned with an **allowlist** environment, not the inherited
 `os.environ` minus a blocklist (a blocklist silently leaks the next secret
 someone adds). The worker gets only:
 
-- `PATH`, `LANG`/`LC_*`, `TMPDIR`/`TEMP`, `PYTHONHASHSEED` (minimal runtime).
-- `PYTHONPATH` set explicitly by the host (5.4).
-- The injected `AGD_MODULE_ID`, `AGD_BRIDGE_URL`, `AGD_BRIDGE_TOKEN`,
-  `AGD_PROXY_SECRET`, `AGD_MODULE_DATA_DIR`.
-- Any keys the module **declared** in `capabilities.env` AND that are non-secret
-  (a declared env key that collides with a known secret name is refused).
+- `PATH`, `LANG`/`LC_*`, `TMPDIR`/`TEMP`, `PYTHONHASHSEED`, and the home-dir vars
+  (`USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`) that `Path.home()` needs (minimal runtime).
+- The injected `AGD_MODULE_ID`, `AGD_MODULE_PARENT`, `AGD_MODULE_DATA_DIR`,
+  `AGD_HOST_ROOT`, `AGD_PROXY_SECRET`, `AGD_WORKER_BIND` (and the bridge URL/token
+  in a later phase).
+- **NOT** the module's declared `capabilities.env`. Implemented behavior (phase 2):
+  the loader forwards NO module-named env, so a module cannot name a host secret
+  and have it forwarded (`build_worker_env`'s `extra_allow` is a host-controlled
+  allowlist, empty today; `is_secret_like` is a secondary guard on it).
+  `capabilities.env` remains an informational declaration the scanner checks, not
+  an inheritance request.
 
 Explicitly absent: `SECRET_KEY`, every `*_KEY`/`*_TOKEN`, `QDRANT_*`,
 `DASHBOARD_MCP_TOKEN`, `AGD_ADMIN_TOKEN`, `AGD_WEBHOOK_TOKEN`, DB paths, edge-auth

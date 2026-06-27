@@ -28,10 +28,15 @@ _HOP_BY_HOP = {
     "te", "trailers", "transfer-encoding", "upgrade",
 }
 _STRIP_REQUEST = _HOP_BY_HOP | {"cookie", "authorization", "host", "content-length"}
-# Strip Set-Cookie so a community module can't set/clear cookies on the host
-# origin (session/CSRF poisoning, forced logout); also drop length/encoding that
-# no longer match a streamed body.
-_STRIP_RESPONSE = _HOP_BY_HOP | {"content-length", "content-encoding", "set-cookie"}
+# Strip auth/origin-sensitive response headers so a community module can't
+# influence host-origin browser state: Set-Cookie (session/CSRF poisoning, forced
+# logout), Clear-Site-Data (wipe host storage/cookies), WWW-Authenticate (force a
+# browser auth prompt). Also drop length/encoding that no longer match a streamed
+# body. A denylist is sufficient here; module responses are otherwise data.
+_STRIP_RESPONSE = _HOP_BY_HOP | {
+    "content-length", "content-encoding",
+    "set-cookie", "set-cookie2", "clear-site-data", "www-authenticate",
+}
 
 
 def _forward_request_headers(headers) -> dict[str, str]:
