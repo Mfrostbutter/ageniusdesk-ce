@@ -12,6 +12,10 @@ One dashboard for every n8n instance: live stats, an execution timeline, and a r
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
+Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metrics, and LLM cost folded into the trace layer.
+
+![Observe](docs/screenshots/observe.png)
+
 | Executions & errors | Insights |
 |:---:|:---:|
 | ![Executions and errors grouped by workflow, node, and type](docs/screenshots/executions-errors.png) | ![Execution analytics: success rate, timeline, top workflows](docs/screenshots/insights.png) |
@@ -19,6 +23,8 @@ One dashboard for every n8n instance: live stats, an execution timeline, and a r
 | ![Monaco editor with AI code assistant and Send to n8n](docs/screenshots/code-lab.png) | ![Per-area provider and model configuration](docs/screenshots/models.png) |
 | **The Harness** | **Containers** |
 | ![Agent knowledge workspace: notes vault, sources, and instructions](docs/screenshots/harness.png) | ![Deploy and manage Docker services from the dashboard](docs/screenshots/containers.png) |
+| **YouTube Research (community module)** | **The Harness, populated** |
+| ![Research console: paste a YouTube link, get a structured breakdown filed into the vault](docs/screenshots/research.png) | ![The notes vault with research auto-filed under research/ai-assisted-coding](docs/screenshots/harness-populated.png) |
 
 ## What's Included
 
