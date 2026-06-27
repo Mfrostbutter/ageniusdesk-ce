@@ -26,15 +26,22 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import DATA_DIR
 from backend.modules.knowledge import backends, storage
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+# Operator floor: source/connector/instructions writes are config mutations and
+# the source `test` probe fetches an operator-supplied backend URL. Not for viewers.
+router = APIRouter(
+    prefix="/api/knowledge",
+    tags=["knowledge"],
+    dependencies=[Depends(require_role("operator"))],
+)
 
 
 class SourceIn(BaseModel):

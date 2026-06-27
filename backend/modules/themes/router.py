@@ -4,12 +4,17 @@ import json
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import load_config, save_config
 
 router = APIRouter(prefix="/api/themes", tags=["themes"])
+
+# Operator floor for theme writes (save custom theme, set active theme = a write
+# to config.json). Reads stay open to any authenticated user.
+_operator = Depends(require_role("operator"))
 
 # Built-in themes ship with the frontend; custom themes go in data/themes/
 BUILTIN_THEMES_DIR = Path(__file__).parent.parent.parent.parent / "frontend" / "themes"
@@ -93,7 +98,7 @@ async def get_theme(theme_id: str):
     raise HTTPException(status_code=404, detail="Theme not found")
 
 
-@router.post("")
+@router.post("", dependencies=[_operator])
 async def save_theme(theme: ThemeData):
     """Save a custom theme."""
     CUSTOM_THEMES_DIR.mkdir(parents=True, exist_ok=True)
@@ -103,7 +108,7 @@ async def save_theme(theme: ThemeData):
     return {"id": theme_id, "name": theme.name}
 
 
-@router.post("/active/{theme_id}")
+@router.post("/active/{theme_id}", dependencies=[_operator])
 async def set_active_theme(theme_id: str):
     """Set the active theme."""
     if _find_theme_path(theme_id) is None:

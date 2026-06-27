@@ -1,11 +1,16 @@
 """Messages API routes — generic notification webhook for n8n workflows."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.modules.messages import collector
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
+
+# Operator floor for deletes (the webhook is token-gated by the middleware and
+# reads are fine for any authenticated user).
+_operator = Depends(require_role("operator"))
 
 
 class MessagePayload(BaseModel):
@@ -31,12 +36,12 @@ async def list_messages(limit: int = 50, offset: int = 0):
     return {"messages": await collector.get_messages(limit, offset)}
 
 
-@router.delete("/{message_id}")
+@router.delete("/{message_id}", dependencies=[_operator])
 async def delete_message(message_id: int):
     deleted = await collector.delete_message(message_id)
     return {"deleted": deleted}
 
 
-@router.delete("")
+@router.delete("", dependencies=[_operator])
 async def clear_messages(before_date: str = ""):
     return {"deleted": await collector.clear_messages(before_date)}

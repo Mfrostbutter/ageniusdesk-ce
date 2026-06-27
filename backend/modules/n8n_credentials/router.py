@@ -22,9 +22,10 @@ import logging
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import (
     DATA_DIR,
     decrypt_value,
@@ -32,11 +33,19 @@ from backend.config import (
     is_secret_allowed_on_instance,
     load_secrets,
 )
+
 from .mappings import build_credential_payload, build_types_list_for_ui, fetch_live_schemas
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/n8n-credentials", tags=["n8n-credentials"])
+# Operator floor: mirroring resolves stored secrets to their decrypted values and
+# POSTs them to a caller-chosen n8n instance, and the schema/mapping reads are
+# recon into the n8n API. A viewer must not reach any of it.
+router = APIRouter(
+    prefix="/api/n8n-credentials",
+    tags=["n8n-credentials"],
+    dependencies=[Depends(require_role("operator"))],
+)
 
 MIRRORS_FILE = DATA_DIR / "credential_mirrors.json"
 
