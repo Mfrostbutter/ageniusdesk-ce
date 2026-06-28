@@ -33,6 +33,7 @@ import * as containersView from './views/containers.js';
 import * as instancesView from './views/instances.js';
 import * as modelsView from './views/models.js';
 import * as mcpView from './views/mcp.js';
+import * as agentFleetView from './views/agent-fleet.js';
 
 import { loadCommunityModules } from './community-modules.js';
 import * as onboarding from './onboarding/index.js';
@@ -62,6 +63,7 @@ const views = {
   insights: insightsView,
   observe: observabilityView,
   fleet: fleetHealthView,
+  'agent-fleet': agentFleetView,
   knowledge: knowledgeView,
   'knowledge-connectors': knowledgeConnectorsView,
   'knowledge-instructions': knowledgeInstructionsView,

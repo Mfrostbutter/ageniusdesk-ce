@@ -22,10 +22,14 @@ Two families: an **agent runtime** (LangGraph + PydanticAI), an **infra
 integration** (Proxmox), and **secret-backend integrations** (Infisical /
 agent-vault).
 
-**Distribution (locked): all three ship as COMMUNITY modules** — installed via
-the GitHub inspect / scan / consent pipeline, opt-in, none built into CE core.
-People install what they want. See "Isolation & credentials" for the one thing
-this forces us to design.
+**Distribution (UPDATED 2026-06-28):** Agent Fleet now ships as a **CORE built-in
+module**, not community. It weaves into Code Lab (build), the vault (store), and the
+OTel waterfall (monitor), so it cannot be a community module without inverting the
+module model; its LangGraph/PydanticAI deps stay opt-in via the `langgraph` extra
+with graceful degrade. See the Agent Fleet spec's "Distribution: core, not
+community". **Proxmox + the secret backends remain COMMUNITY** (opt-in, installed
+via the GitHub inspect / scan / consent pipeline); see "Isolation & credentials"
+for the credential-handling those two still force.
 
 ---
 

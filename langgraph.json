@@ -1,0 +1,9 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "ops_triage": "backend.modules.agent_fleet.agent.studio:graph",
+    "fix_proposer": "backend.modules.agent_fleet.agent.studio:fix_proposer",
+    "health_reporter": "backend.modules.agent_fleet.agent.studio:health_reporter"
+  },
+  "env": ".env"
+}

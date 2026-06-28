@@ -1,11 +1,18 @@
-# Spec: Agent Fleet community module (LangGraph adapter, v1)
+# Spec: Agent Fleet (core module, LangGraph + PydanticAI)
 
-Status: SPEC / approved. The credential fork is decided: **Option A (in_process
-v1)**, chosen 2026-06-28. Build proceeds per "Build order" below.
+Status: SPEC / approved. **Distribution decided 2026-06-28: Agent Fleet ships as a
+CORE built-in module, not a community module** (see "Distribution: core, not
+community" at the end). The LangGraph/PydanticAI deps stay opt-in via the
+`langgraph` extra with graceful degradation. This reverses the roadmap's "all three
+integration modules are community" lock for Agent Fleet only (Proxmox + secret
+backends stay community). The credential fork below is now moot: a core module runs
+in the host process by definition.
+
+The sections up to "Authoring + management direction" describe the original v1
+community-module port (historical, already built + dogfooded); they are superseded
+on distribution + authoring by the two dated decision sections at the end.
 
 Date: 2026-06-28
-Supersedes the Agent Fleet section of `2026-06-28-integration-modules-roadmap.md`
-on one point: this module is NOT credential-free (see below).
 
 ## What this is
 
@@ -301,3 +308,43 @@ the three shipped agents are just bundled examples. Two surfaces, mirroring n8n:
 
 Dependency: `pydantic-ai` joins the `langgraph`/`agent-fleet` extra (pin a
 clean-venv resolution against the existing langchain/anthropic pins).
+
+---
+
+# Distribution: core, not community (decided 2026-06-28)
+
+The roadmap locked all three integration modules as community (opt-in install).
+That holds for Proxmox + the secret backends (self-contained, hold their own
+creds). It does NOT survive the agreed Agent Fleet design, so **Agent Fleet ships
+as a core built-in module** instead.
+
+Why core:
+- The design weaves agents into **Code Lab** (build), the **vault** (store), and
+  the **OTel waterfall** (monitor) — all core. A community module is meant to call
+  core, never the reverse; if the build logic lives in Code Lab, core would depend
+  on a community module, which inverts the model.
+- Going core also removes the community-iframe constraint that forced the run view
+  to **poll** (the sandboxed iframe's `AgeniusDesk.fetch` is buffered). A core
+  same-origin view streams over the dashboard WebSocket and reuses the waterfall
+  component directly. The run view is genuinely live again.
+
+How leanness is preserved (same shape as the `assistant` module):
+- The module **code** ships in core (`backend/modules/agent_fleet/`); the heavy
+  LangGraph/PydanticAI **deps** stay opt-in behind the `langgraph` extra
+  (`AGD_EXTRAS=...,langgraph`). The default image stays lean.
+- **Graceful degrade** when the extra is absent: the module imports at boot
+  (lazy heavy imports), a run returns "LangGraph dependencies not installed", and
+  Code Lab's Agent mode shows an "install the agent extra" nudge.
+
+What "community" becomes for agents:
+- **Agents are shareable as vault files** (export/import `vault/agents/<name>/`),
+  no module install needed.
+- **Community modules EXTEND the platform** (extra framework adapters, tool packs,
+  prebuilt agent bundles) on top of the core runtime, not being it.
+
+Migration (done 2026-06-28): the community `agent-fleet` module became
+`backend/modules/agent_fleet/` (builtin manifest, eager router, core auth, the
+runner re-broadcasts `langgraph:run` over the WebSocket); the frontend became a
+core view (`frontend/js/views/agent-fleet.js` + `agent-fleet-graph.js`, wired in
+`app.js` + the index.html nav); `langgraph.json` + `studio.py` use dotted module
+paths. The community copy is removed.

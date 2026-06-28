@@ -1,0 +1,15 @@
+{
+  "id": "agent_fleet",
+  "name": "Agent Fleet",
+  "version": "0.1.0",
+  "min_app_version": "0.3.0",
+  "description": "A managed fleet of LangGraph agents (ops-triage, fix-proposer, health-reporter): catalog, run with a live graph + timeline, human-in-the-loop approve/resume, and LangSmith tracing. Built-in; needs the langgraph extra installed plus an Anthropic key.",
+  "author": "Agenius AI Labs",
+  "license": "MIT",
+  "builtin": true,
+  "routes_prefix": "/api/agent-fleet",
+  "secrets_required": [
+    { "key": "ANTHROPIC_KEY", "description": "Anthropic API key the agents run on. The assistant may already hold it.", "required": false },
+    { "key": "LANGSMITH_API_KEY", "description": "Optional. Set with LANGSMITH_TRACING=true to trace runs in LangSmith.", "required": false }
+  ]
+}
