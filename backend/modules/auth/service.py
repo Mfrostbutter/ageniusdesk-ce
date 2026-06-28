@@ -333,6 +333,25 @@ def _is_https(request: Request) -> bool:
     return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
 
+def issue_csrf_cookie(response: Response, request: Request) -> str:
+    """Set (or refresh) just the readable CSRF cookie, leaving the session alone.
+
+    The CSRF token is a pure double-submit value (not bound to the session), so
+    re-minting it is always safe. Used to self-heal a still-valid session whose
+    agd_csrf cookie was cleared out from under it, e.g. another AgeniusDesk on a
+    different localhost port clearing the shared-domain cookie (cookies are not
+    isolated by port). Without this, the session stays logged in but every
+    mutation 403s because the double-submit token is gone."""
+    secure = _is_https(request)
+    max_age = settings.agd_session_ttl_days * 86400
+    csrf = secrets.token_urlsafe(24)
+    response.set_cookie(
+        CSRF_COOKIE, csrf, max_age=max_age, httponly=False,
+        samesite="strict", secure=secure, path="/",
+    )
+    return csrf
+
+
 def set_session_cookies(response: Response, request: Request, raw: str) -> str:
     """Set the HttpOnly session cookie + a readable CSRF cookie. Returns csrf."""
     secure = _is_https(request)
@@ -341,12 +360,7 @@ def set_session_cookies(response: Response, request: Request, raw: str) -> str:
         SESSION_COOKIE, raw, max_age=max_age, httponly=True,
         samesite="strict", secure=secure, path="/",
     )
-    csrf = secrets.token_urlsafe(24)
-    response.set_cookie(
-        CSRF_COOKIE, csrf, max_age=max_age, httponly=False,
-        samesite="strict", secure=secure, path="/",
-    )
-    return csrf
+    return issue_csrf_cookie(response, request)
 
 
 def clear_session_cookies(response: Response) -> None:

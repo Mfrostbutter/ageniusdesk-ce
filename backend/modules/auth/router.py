@@ -120,9 +120,15 @@ def _validate_email(email: str) -> str:
 
 
 @router.get("/status")
-async def auth_status(request: Request):
+async def auth_status(request: Request, response: Response):
     user = await current_user(request)
     edge = edge_identity(request)
+    # CSRF self-heal: a valid session whose readable agd_csrf cookie was cleared
+    # (e.g. another AgeniusDesk on a different localhost port clears the
+    # shared-domain cookie) would 403 every mutation. Re-mint the double-submit
+    # token on this safe GET so the session stays usable without a re-login.
+    if user is not None and not request.cookies.get(service.CSRF_COOKIE):
+        service.issue_csrf_cookie(response, request)
     return {
         "accounts_exist": service.accounts_exist(),
         "authenticated": user is not None,
@@ -248,7 +254,12 @@ async def logout(request: Request, response: Response, _u: dict = Depends(requir
 
 
 @router.get("/me")
-async def me(user: dict = Depends(require_session)):
+async def me(request: Request, response: Response, user: dict = Depends(require_session)):
+    # Reaching here means the session is valid; re-mint the CSRF cookie if it was
+    # cleared from under it (see auth_status). Keeps mutations working without a
+    # reload when another localhost-port instance clobbered the shared cookie.
+    if not request.cookies.get(service.CSRF_COOKIE):
+        service.issue_csrf_cookie(response, request)
     full = service.find_user(user["username"])
     return {"user": service.public_user(full)} if full else {"user": None}
 

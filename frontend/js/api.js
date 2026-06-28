@@ -41,7 +41,7 @@ function readCookie(name) {
 
 let _authRedirecting = false;
 
-export async function api(path, options = {}) {
+export async function api(path, options = {}, _retried = false) {
   const method = (options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   // Double-submit CSRF: echo the readable agd_csrf cookie on mutations.
@@ -51,6 +51,20 @@ export async function api(path, options = {}) {
   }
   const resp = await fetch(`${BASE}${path}`, { headers, ...options });
   if (!resp.ok) {
+    // CSRF self-heal: a mutation 403s when the readable agd_csrf cookie was cleared
+    // from under a still-valid session (e.g. another AgeniusDesk on a different
+    // localhost port clears the shared-domain cookie). Hit /status once (the server
+    // re-issues the cookie for a valid session), then retry the original call once.
+    if (
+      resp.status === 403 && !_retried &&
+      method !== 'GET' && method !== 'HEAD' && !path.startsWith('/api/auth/')
+    ) {
+      const probe = await resp.clone().json().catch(() => ({}));
+      if ((probe.detail || '') === 'CSRF check failed') {
+        try { await fetch(`${BASE}/api/auth/status`); } catch { /* best effort */ }
+        if (readCookie('agd_csrf')) return api(path, options, true);
+      }
+    }
     // Session EXPIRY mid-use: bounce to the auth gate by reloading. Gated on the
     // readable agd_csrf cookie, which only exists once a session was issued — so
     // pre-login boot (where many background calls 401 by design) never reloads,
