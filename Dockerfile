@@ -6,8 +6,13 @@ WORKDIR /app
 # declared deps but NOT the `backend` package: the host runs backend from the
 # source tree below, keeping it out of site-packages so a sandboxed module
 # worker can exclude it from sys.path.
+#
+# AGD_EXTRAS selects optional-dependency extras. Default is lean (assistant only);
+# build with --build-arg AGD_EXTRAS="assistant,langgraph" to include the LangGraph
+# stack the agent-fleet community module needs.
+ARG AGD_EXTRAS=assistant
 COPY pyproject.toml .
-RUN pip install --no-cache-dir '.[assistant]'
+RUN pip install --no-cache-dir ".[${AGD_EXTRAS}]"
 
 # Copy application. backend/ runs from source (cwd /app is on sys.path).
 # agd_module_worker/ is launched by absolute path for out-of-process modules.

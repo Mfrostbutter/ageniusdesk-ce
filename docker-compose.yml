@@ -2,7 +2,12 @@ name: ageniusdesk-ce
 
 services:
   dashboard:
-    build: .
+    build:
+      context: .
+      # AGD_EXTRAS selects pip extras baked into the image. Default lean (assistant);
+      # set AGD_EXTRAS=assistant,langgraph to include the agent-fleet LangGraph stack.
+      args:
+        AGD_EXTRAS: "${AGD_EXTRAS:-assistant}"
     ports:
       - "${PORT:-3000}:3000"
     # Optional: copy .env.example to .env to set provider keys and toggles.
