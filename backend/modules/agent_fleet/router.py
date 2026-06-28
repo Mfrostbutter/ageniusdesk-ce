@@ -16,7 +16,10 @@ it resolves an AgentDef by id and the runner dispatches to that agent's graph.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
+import shutil
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +28,13 @@ from pydantic import BaseModel, Field
 from backend.auth_gate import require_trusted_request
 
 from . import registry, runner, storage
+
+_AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")[:64]
+
 
 router = APIRouter(
     prefix="/api/agent-fleet",
@@ -46,9 +56,97 @@ class ResumeRequest(BaseModel):
     choice: int | None = Field(default=None, description="1-based pick when the gate offers choices.")
 
 
+class RegisterAgentRequest(BaseModel):
+    name: str = Field(..., description="Display name; the id is derived from it unless `id` is set.")
+    id: str = Field(default="", description="Optional explicit slug id (else derived from name).")
+    framework: str = Field(default="langgraph", description="langgraph | pydantic-ai")
+    code: str = Field(..., description="The agent's graph.py source (pure factory: build(llm, tools, checkpointer)).")
+    model: str = Field(default="claude-haiku-4-5")
+    model_env: str = Field(default="")
+    max_tokens: int = Field(default=2048)
+    tools: list[str] = Field(default_factory=list)
+    hitl: bool = Field(default=False)
+    badges: list[str] = Field(default_factory=list)
+    tagline: str = Field(default="")
+    description: str = Field(default="")
+    run_hint: str = Field(default="")
+    uses_errors: bool = Field(default=True)
+
+
 @router.get("/agents")
 async def list_agents():
     return {"agents": [a.card() for a in registry.all_agents()], "default": registry.DEFAULT_AGENT_ID}
+
+
+@router.get("/tools")
+async def list_tools():
+    """The tool catalog a vault agent can declare in its manifest (for the builder).
+    Empty when the langgraph extra is absent (the @tool objects can't be imported)."""
+    try:
+        from . import tools_local
+
+        return {"tools": tools_local.tool_catalog()}
+    except Exception:  # noqa: BLE001 - extra not installed: nothing to offer
+        return {"tools": []}
+
+
+@router.post("/agents")
+async def register_agent(req: RegisterAgentRequest):
+    """Register (create or update) an operator-authored agent in the vault.
+
+    Writes vault/agents/<id>/{agent.json, graph.py}; the registry re-discovers vault
+    agents on every read, so it appears in the catalog immediately, no restart. This
+    is the target of Code Lab's "Register to Agent Fleet"."""
+    from . import vault_agents
+
+    agent_id = (req.id or _slugify(req.name)).strip()
+    if not _AGENT_ID_RE.match(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent id: use a lowercase slug, e.g. 'my-agent'.")
+    if agent_id in registry.builtin_ids():
+        raise HTTPException(status_code=409, detail=f"'{agent_id}' is a built-in agent; choose a different name.")
+    # Validate the code parses before writing a broken agent.
+    try:
+        compile(req.code, f"<{agent_id}/graph.py>", "exec")
+    except SyntaxError as e:
+        raise HTTPException(status_code=400, detail=f"graph.py has a syntax error: {e}")
+    try:
+        manifest = vault_agents.AgentManifest(
+            id=agent_id, name=req.name, framework=req.framework, model=req.model,
+            model_env=req.model_env, max_tokens=req.max_tokens, tools=req.tools, hitl=req.hitl,
+            badges=req.badges, tagline=req.tagline, description=req.description,
+            run_hint=req.run_hint, uses_errors=req.uses_errors, enabled=True,
+        )
+    except Exception as e:  # noqa: BLE001 - surface validation errors to the UI
+        raise HTTPException(status_code=400, detail=f"Invalid manifest: {e}")
+
+    agent_dir = vault_agents._agents_dir() / agent_id
+    try:
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "graph.py").write_text(req.code, encoding="utf-8")
+        (agent_dir / "agent.json").write_text(
+            json.dumps(manifest.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write agent files: {e}")
+    return {"ok": True, "id": agent_id, "name": req.name}
+
+
+@router.delete("/agents/{agent_id}")
+async def delete_agent(agent_id: str):
+    """Remove an operator-authored (vault) agent. Built-ins cannot be deleted."""
+    from . import vault_agents
+
+    if agent_id in registry.builtin_ids():
+        raise HTTPException(status_code=400, detail="Built-in agents cannot be deleted.")
+    if not _AGENT_ID_RE.match(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent id.")
+    if runner.is_live():
+        raise HTTPException(status_code=409, detail="A run is in progress.")
+    agent_dir = vault_agents._agents_dir() / agent_id
+    if not agent_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    shutil.rmtree(agent_dir, ignore_errors=True)
+    return {"ok": True, "id": agent_id}
 
 
 @router.get("/agents/{agent_id}/graph")

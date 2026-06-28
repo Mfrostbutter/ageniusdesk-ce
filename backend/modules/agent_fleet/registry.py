@@ -249,6 +249,11 @@ def get_agent(agent_id: str) -> Optional[AgentDef]:
     return None
 
 
+def builtin_ids() -> set[str]:
+    """Ids of the built-in (code) agents, which a vault agent may not shadow."""
+    return set(_REGISTRY)
+
+
 def register(agent: AgentDef) -> None:
     """Add (or replace) an agent. Lets a future agent's graph + def live together."""
     _REGISTRY[agent.id] = agent

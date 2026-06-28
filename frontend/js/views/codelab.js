@@ -25,7 +25,20 @@ export async function render(container) {
             <div style="display:flex;border:1px solid var(--border-dim);border-radius:4px;overflow:hidden">
               <button id="mode-code" class="btn btn-sm btn-primary" style="border-radius:0;font-size:11px" title="Write n8n Code-node code">Code Node</button>
               <button id="mode-workflow" class="btn btn-sm" style="border-radius:0;font-size:11px" title="Describe a workflow and generate its JSON">Workflow Builder</button>
+              <button id="mode-agent" class="btn btn-sm" style="border-radius:0;font-size:11px" title="Build a LangGraph / PydanticAI agent for the Agent Fleet">Agent</button>
             </div>
+            <span id="agent-mode-tools" style="display:none;align-items:center;gap:8px">
+              <select id="agent-framework" title="Agent framework" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:4px 8px;font-family:var(--font-mono);width:auto;margin:0">
+                <option value="langgraph">LangGraph</option>
+                <option value="pydantic-ai">PydanticAI</option>
+              </select>
+              <select id="agent-template" title="Agent starter" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:4px 8px;font-family:var(--font-mono);width:auto;margin:0">
+                <option value="react">ReAct tool-loop</option>
+                <option value="hitl">Human-in-the-loop</option>
+                <option value="fanout">Parallel fan-out</option>
+                <option value="blank">Blank</option>
+              </select>
+            </span>
             <span id="code-mode-tools" style="display:flex;align-items:center;gap:8px">
               <select id="code-template" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:4px 8px;font-family:var(--font-mono);width:auto;margin:0">
                 <option value="blank">Blank</option>
@@ -701,6 +714,183 @@ return [{
   return templates[name] || templates.blank;
 }
 
+// Agent starters. A vault agent's graph.py is a PURE factory: it imports only
+// langgraph/langchain; the host injects the model + the tools declared at register
+// time. (build is required; initial_state/kickoff are optional overrides.)
+function getAgentTemplate(framework, pattern) {
+  if ((framework || 'langgraph') === 'pydantic-ai') {
+    return `# PydanticAI agent. The Agent Fleet adapter is coming soon — this registers
+# now and runs once the adapter lands.
+from pydantic_ai import Agent
+
+
+def build(llm, tools, checkpointer=None):
+    # The Agent Fleet PydanticAI adapter will wire the host model + tools here.
+    return Agent(model="anthropic:claude-haiku-4-5", system_prompt="You are a helpful agent.")
+`;
+  }
+  const lg = {
+    react: `from langchain_core.messages import SystemMessage
+from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
+
+PROMPT = "You are a helpful agent. Investigate with the tools, then answer concisely."
+
+
+class State(MessagesState):
+    triage_target: str
+
+
+def build(llm, tools, checkpointer=None):
+    bound = llm.bind_tools(list(tools))
+
+    async def agent(state):
+        return {"messages": [await bound.ainvoke([SystemMessage(content=PROMPT), *state["messages"]])]}
+
+    g = StateGraph(State)
+    g.add_node("agent", agent)
+    g.add_node("tools", ToolNode(list(tools)))
+    g.add_edge(START, "agent")
+    g.add_conditional_edges("agent", tools_condition)
+    g.add_edge("tools", "agent")
+    return g.compile(checkpointer=checkpointer)
+`,
+    hitl: `from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.types import interrupt
+
+INVESTIGATE = "Investigate with the tools, then stop and state your diagnosis briefly."
+PROPOSE = "Draft ONE concrete, reversible proposal for the human to approve."
+
+
+class State(MessagesState):
+    triage_target: str
+    proposal: str
+    decision: dict
+
+
+# Mark this agent human-in-the-loop when you Register it, so the runtime gives it a checkpointer.
+def build(llm, tools, checkpointer=None):
+    bound = llm.bind_tools(list(tools))
+
+    async def investigate(state):
+        return {"messages": [await bound.ainvoke([SystemMessage(content=INVESTIGATE), *state["messages"]])]}
+
+    async def propose(state):
+        ai = await llm.ainvoke([SystemMessage(content=PROPOSE), HumanMessage(content="Draft the proposal now.")])
+        text = ai.content if isinstance(ai.content, str) else str(ai.content)
+        return {"messages": [AIMessage(content=text)], "proposal": text}
+
+    def approval(state):
+        decision = interrupt({"proposal": state.get("proposal", "")})
+        return {"decision": decision or {}}
+
+    def finalize(state):
+        action = ((state.get("decision") or {}).get("action") or "approve").lower()
+        return {"messages": [AIMessage(content="## Decision: " + action + "\\n\\n" + state.get("proposal", ""))]}
+
+    g = StateGraph(State)
+    g.add_node("investigate", investigate)
+    g.add_node("tools", ToolNode(list(tools)))
+    g.add_node("propose", propose)
+    g.add_node("approval", approval)
+    g.add_node("finalize", finalize)
+    g.add_edge(START, "investigate")
+    g.add_conditional_edges("investigate", tools_condition, {"tools": "tools", END: "propose"})
+    g.add_edge("tools", "investigate")
+    g.add_edge("propose", "approval")
+    g.add_edge("approval", "finalize")
+    g.add_edge("finalize", END)
+    return g.compile(checkpointer=checkpointer)
+`,
+    fanout: `import operator
+from typing import Annotated
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+
+LENS = "Summarize what this lens's data shows in 2-3 tight sentences."
+SYNTH = "Reconcile the parallel findings into one short report."
+
+
+class State(MessagesState):
+    triage_target: str
+    findings: Annotated[list, operator.add]
+
+
+def initial_state(task, target):
+    return {"messages": [HumanMessage(content=task)], "triage_target": target, "findings": []}
+
+
+def build(llm, tools, checkpointer=None):
+    tmap = {getattr(t, "name", ""): t for t in tools}
+
+    async def run_tool(name, args):
+        t = tmap.get(name)
+        if t is None:
+            return "(tool " + name + " unavailable)"
+        try:
+            return await t.ainvoke(args)
+        except Exception as e:
+            return "(tool " + name + " errored: " + str(e) + ")"
+
+    async def summarize(data):
+        ai = await llm.ainvoke([SystemMessage(content=LENS), HumanMessage(content=str(data)[:4000])])
+        return ai.content if isinstance(ai.content, str) else str(ai.content)
+
+    def plan(state):
+        return {"messages": [AIMessage(content="Planning a parallel sweep.", name="plan")]}
+
+    async def lens_a(state):
+        s = await summarize(await run_tool("list_recent_errors", {"limit": 10}))
+        return {"messages": [AIMessage(content=s, name="lens_a")], "findings": [s]}
+
+    async def lens_b(state):
+        s = await summarize(await run_tool("fleet_health", {}))
+        return {"messages": [AIMessage(content=s, name="lens_b")], "findings": [s]}
+
+    async def synthesize(state):
+        body = "\\n".join("- " + f for f in state.get("findings", []))
+        ai = await llm.ainvoke([SystemMessage(content=SYNTH), HumanMessage(content=body or "(none)")])
+        text = ai.content if isinstance(ai.content, str) else str(ai.content)
+        return {"messages": [AIMessage(content="Synthesized.", name="synthesize"), AIMessage(content=text)]}
+
+    g = StateGraph(State)
+    g.add_node("plan", plan)
+    g.add_node("lens_a", lens_a)
+    g.add_node("lens_b", lens_b)
+    g.add_node("synthesize", synthesize)
+    g.add_edge(START, "plan")
+    g.add_edge("plan", "lens_a")
+    g.add_edge("plan", "lens_b")
+    g.add_edge("lens_a", "synthesize")
+    g.add_edge("lens_b", "synthesize")
+    g.add_edge("synthesize", END)
+    return g.compile(checkpointer=checkpointer)
+`,
+    blank: `from langchain_core.messages import SystemMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+
+
+class State(MessagesState):
+    triage_target: str
+
+
+def build(llm, tools, checkpointer=None):
+    async def agent(state):
+        return {"messages": [await llm.ainvoke([SystemMessage(content="You are an agent."), *state["messages"]])]}
+
+    g = StateGraph(State)
+    g.add_node("agent", agent)
+    g.add_edge(START, "agent")
+    g.add_edge("agent", END)
+    return g.compile(checkpointer=checkpointer)
+`,
+  };
+  return lg[pattern] || lg.react;
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 function setupHandlers() {
@@ -714,6 +904,16 @@ function setupHandlers() {
 
   document.getElementById('mode-code')?.addEventListener('click', () => applyMode('code'));
   document.getElementById('mode-workflow')?.addEventListener('click', () => applyMode('workflow'));
+  document.getElementById('mode-agent')?.addEventListener('click', () => applyMode('agent'));
+
+  const setAgentTpl = () => {
+    if (!editor) return;
+    editor.setValue(getAgentTemplate(
+      document.getElementById('agent-framework')?.value || 'langgraph',
+      document.getElementById('agent-template')?.value || 'react'));
+  };
+  document.getElementById('agent-framework')?.addEventListener('change', setAgentTpl);
+  document.getElementById('agent-template')?.addEventListener('change', setAgentTpl);
 
   document.getElementById('code-ai-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -752,10 +952,19 @@ const CODE_QUICK_PROMPTS = [
   ['Fix n8n Syntax', 'Convert this to use $input.all() properly'],
 ];
 
-function renderQuickActions(isWorkflow) {
+const AGENT_QUICK_PROMPTS = [
+  ['Explain', 'Explain this agent graph'],
+  ['Add a tool', 'Add a tool call step to this agent'],
+  ['Make it HITL', 'Add a human-in-the-loop approval interrupt to this agent'],
+  ['Fix', 'Find and fix bugs in this agent'],
+];
+
+function renderQuickActions(mode) {
   const el = document.getElementById('code-quick-actions');
   if (!el) return;
-  const set = isWorkflow ? WORKFLOW_QUICK_PROMPTS : CODE_QUICK_PROMPTS;
+  const set = mode === 'agent'
+    ? AGENT_QUICK_PROMPTS
+    : (mode === 'workflow' ? WORKFLOW_QUICK_PROMPTS : CODE_QUICK_PROMPTS);
   el.innerHTML = set.map(([label, prompt]) =>
     `<button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="window.__codeAsk('${prompt.replace(/'/g, "\\'")}')">${label}</button>`
   ).join('');
@@ -764,35 +973,56 @@ function renderQuickActions(isWorkflow) {
 function applyMode(mode) {
   _mode = mode;
   const isWf = mode === 'workflow';
+  const isAgent = mode === 'agent';
   const tools = document.getElementById('code-mode-tools');
+  const agentTools = document.getElementById('agent-mode-tools');
   const sendBtn = document.getElementById('code-send-btn');
   const input = document.getElementById('code-ai-input');
   const mc = document.getElementById('mode-code');
   const mw = document.getElementById('mode-workflow');
+  const ma = document.getElementById('mode-agent');
 
-  if (tools) tools.style.display = isWf ? 'none' : 'flex';
+  if (tools) tools.style.display = (mode === 'code') ? 'flex' : 'none';
+  if (agentTools) agentTools.style.display = isAgent ? 'flex' : 'none';
   if (sendBtn) {
-    sendBtn.textContent = isWf ? 'Import to n8n' : 'Send to n8n';
-    sendBtn.title = isWf ? 'Import this workflow JSON into n8n' : 'Create a workflow with this code';
+    sendBtn.textContent = isAgent ? 'Register to Agent Fleet' : (isWf ? 'Import to n8n' : 'Send to n8n');
+    sendBtn.title = isAgent
+      ? 'Save this agent into the Agent Fleet'
+      : (isWf ? 'Import this workflow JSON into n8n' : 'Create a workflow with this code');
   }
-  if (input) input.placeholder = isWf ? 'Describe the workflow to build…' : 'Ask about this code...';
-  if (mc) mc.classList.toggle('btn-primary', !isWf);
+  if (input) {
+    input.placeholder = isAgent
+      ? 'Ask about building this agent…'
+      : (isWf ? 'Describe the workflow to build…' : 'Ask about this code...');
+  }
+  if (mc) mc.classList.toggle('btn-primary', mode === 'code');
   if (mw) mw.classList.toggle('btn-primary', isWf);
+  if (ma) ma.classList.toggle('btn-primary', isAgent);
 
   if (editor) {
     const cur = editor.getValue().trim();
-    if (isWf) {
+    if (isAgent) {
+      monaco.editor.setModelLanguage(editor.getModel(), 'python');
+      // Swap a leftover n8n snippet / workflow JSON for an agent scaffold.
+      if (!cur || cur.startsWith('{') || cur.startsWith('//')) {
+        editor.setValue(getAgentTemplate(
+          document.getElementById('agent-framework')?.value || 'langgraph',
+          document.getElementById('agent-template')?.value || 'react'));
+      }
+    } else if (isWf) {
       monaco.editor.setModelLanguage(editor.getModel(), 'json');
       // Swap a leftover code snippet for a scaffold; keep JSON the user is editing.
       if (!cur || !cur.startsWith('{')) editor.setValue(getWorkflowScaffold());
     } else {
       const lang = document.getElementById('code-lang')?.value || 'javascript';
       monaco.editor.setModelLanguage(editor.getModel(), lang);
-      // Swap leftover JSON back to a code template.
-      if (!cur || cur.startsWith('{')) editor.setValue(getTemplate(document.getElementById('code-template')?.value || 'blank'));
+      // Swap leftover JSON / agent code back to a code template.
+      if (!cur || cur.startsWith('{') || cur.startsWith('from ') || cur.startsWith('import ')) {
+        editor.setValue(getTemplate(document.getElementById('code-template')?.value || 'blank'));
+      }
     }
   }
-  renderQuickActions(isWf);
+  renderQuickActions(mode);
 }
 
 window.__codeFormat = () => {
@@ -805,8 +1035,87 @@ window.__codeCopy = () => {
   toast.success('Code copied to clipboard');
 };
 
+// Register the editor's agent code into the Agent Fleet (writes vault/agents/<id>/).
+window.__codeRegisterAgent = async () => {
+  if (!editor) return;
+  const code = editor.getValue();
+  if (!code.trim()) { toast.error('Nothing to register — the editor is empty.'); return; }
+  const framework = document.getElementById('agent-framework')?.value || 'langgraph';
+
+  let tools = [];
+  try { tools = (await get('/api/agent-fleet/tools')).tools || []; } catch { tools = []; }
+
+  const lbl = 'font-size:11px;font-weight:600;color:var(--text-secondary);display:block;margin-bottom:3px';
+  const toolRows = tools.length
+    ? tools.map((t) =>
+        `<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;padding:3px 0">
+           <input type="checkbox" class="reg-tool" value="${esc(t.name)}" style="margin-top:3px">
+           <span><span style="font-family:var(--font-mono);color:var(--text-primary)">${esc(t.name)}</span><span style="color:var(--text-muted)"> — ${esc((t.description || '').split('\n')[0])}</span></span>
+         </label>`).join('')
+    : '<div style="color:var(--text-muted);font-size:12px">No tools available (install the langgraph extra to run agents).</div>';
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
+  overlay.innerHTML = `
+    <div style="background-color:var(--bg-void);background-image:linear-gradient(var(--bg-panel),var(--bg-panel));border:1px solid var(--border-dim);border-radius:var(--radius);max-width:560px;width:100%;max-height:86vh;overflow-y:auto;padding:20px 22px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:16px;font-weight:700">Register to Agent Fleet</div>
+        <button id="reg-close" class="btn btn-sm">Close</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">Framework <b style="color:var(--text-secondary)">${esc(framework)}</b> · saved to your vault under <code>agents/</code>, runnable from the Agent Fleet.</div>
+      <label style="${lbl}">Name</label>
+      <input id="reg-name" class="input" placeholder="My Agent" style="width:100%;margin-bottom:10px">
+      <label style="${lbl}">Tagline</label>
+      <input id="reg-tagline" class="input" placeholder="What it does, in one line" style="width:100%;margin-bottom:10px">
+      <div style="display:flex;gap:10px;margin-bottom:10px">
+        <div style="flex:1"><label style="${lbl}">Model</label><input id="reg-model" class="input" value="claude-haiku-4-5" style="width:100%"></div>
+        <div style="width:120px"><label style="${lbl}">Max tokens</label><input id="reg-maxtok" class="input" value="2048" style="width:100%"></div>
+      </div>
+      <label style="${lbl}">Tools the agent can call</label>
+      <div style="border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;margin-bottom:12px;max-height:170px;overflow-y:auto">${toolRows}</div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" id="reg-hitl"> Human-in-the-loop (pauses for your approval)</label>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:16px"><input type="checkbox" id="reg-errors" checked> Operates on an n8n error (show the error picker)</label>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="reg-cancel" class="btn btn-sm">Cancel</button>
+        <button id="reg-go" class="btn btn-sm btn-primary">Register</button>
+      </div>
+    </div>`;
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#reg-close').onclick = close;
+  overlay.querySelector('#reg-cancel').onclick = close;
+  overlay.querySelector('#reg-go').onclick = async () => {
+    const name = overlay.querySelector('#reg-name').value.trim();
+    if (!name) { toast.error('Give the agent a name.'); return; }
+    const body = {
+      name, framework, code,
+      model: overlay.querySelector('#reg-model').value.trim() || 'claude-haiku-4-5',
+      max_tokens: parseInt(overlay.querySelector('#reg-maxtok').value, 10) || 2048,
+      tools: Array.from(overlay.querySelectorAll('.reg-tool:checked')).map((c) => c.value),
+      hitl: overlay.querySelector('#reg-hitl').checked,
+      uses_errors: overlay.querySelector('#reg-errors').checked,
+      tagline: overlay.querySelector('#reg-tagline').value.trim(),
+    };
+    const go = overlay.querySelector('#reg-go');
+    go.disabled = true; go.textContent = 'Registering…';
+    try {
+      await post('/api/agent-fleet/agents', body);
+      toast.success(`Registered "${name}".`);
+      close();
+      if (window.__nav) window.__nav('agent-fleet');
+    } catch (e) {
+      toast.error(e.message || 'Register failed.');
+      go.disabled = false; go.textContent = 'Register';
+    }
+  };
+  document.body.appendChild(overlay);
+};
+
 window.__codeSendToN8n = async () => {
   if (!editor) return;
+
+  // Agent mode: register the agent into the Agent Fleet instead of importing to n8n.
+  if (_mode === 'agent') return window.__codeRegisterAgent();
 
   // Workflow Builder mode: the editor holds a full workflow JSON; import as-is.
   if (_mode === 'workflow') {
@@ -902,12 +1211,19 @@ async function askAI(question) {
   codeAiHistory.push({ role: 'user', content: question });
 
   const isWf = _mode === 'workflow';
+  const isAgent = _mode === 'agent';
   try {
     const override = getCurrentOverride();
     const fallback = getCurrentFallback();
-    const context = isWf
-      ? `## Current workflow JSON in editor\n\`\`\`json\n${code}\n\`\`\`\n\nThe user is building an n8n workflow. Produce a COMPLETE, importable n8n workflow as JSON with top-level keys "name", "nodes" (array), "connections" (object), and "settings". Use real n8n node types and typeVersions and wire the connections correctly. Return ONLY the workflow JSON in a single \`\`\`json code block, with no prose. If MCP tools for n8n node knowledge or workflow validation are available, use them so the node types and parameters are valid.`
-      : `## Current Code in Editor\n\`\`\`javascript\n${code}\n\`\`\`\n\nThe user is writing code for an n8n Code node. Help them write, fix, or understand the code. When suggesting code changes, provide the complete updated code so they can copy it directly.`;
+    let context;
+    if (isAgent) {
+      const fw = document.getElementById('agent-framework')?.value || 'langgraph';
+      context = `## Current agent code in editor\n\`\`\`python\n${code}\n\`\`\`\n\nThe user is building a ${fw} agent for AgeniusDesk's Agent Fleet. The agent is a PURE factory: \`build(llm, tools, checkpointer=None)\` returning a compiled graph, importing ONLY langgraph/langchain (the host injects the model + tools; never import backend code). It may optionally export \`initial_state(task, target)\` and \`kickoff(error_id, prompt)\`. For LangGraph use StateGraph + MessagesState, ToolNode + tools_condition for tool loops, a parallel fan-out + reduce, or interrupt() + a checkpointer for human-in-the-loop. Help write, fix, or explain the agent; when suggesting changes, provide the COMPLETE updated graph.py so they can copy it directly.`;
+    } else if (isWf) {
+      context = `## Current workflow JSON in editor\n\`\`\`json\n${code}\n\`\`\`\n\nThe user is building an n8n workflow. Produce a COMPLETE, importable n8n workflow as JSON with top-level keys "name", "nodes" (array), "connections" (object), and "settings". Use real n8n node types and typeVersions and wire the connections correctly. Return ONLY the workflow JSON in a single \`\`\`json code block, with no prose. If MCP tools for n8n node knowledge or workflow validation are available, use them so the node types and parameters are valid.`;
+    } else {
+      context = `## Current Code in Editor\n\`\`\`javascript\n${code}\n\`\`\`\n\nThe user is writing code for an n8n Code node. Help them write, fix, or understand the code. When suggesting code changes, provide the complete updated code so they can copy it directly.`;
+    }
     const result = await post('/api/assistant/chat', {
       messages: codeAiHistory,
       context,
@@ -952,7 +1268,7 @@ async function askAI(question) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
 
       // If the response contains a code block, offer to apply it
-      const codeMatch = response.match(/```(?:javascript|js|typescript|ts)?\n([\s\S]*?)```/);
+      const codeMatch = response.match(/```(?:python|py|javascript|js|typescript|ts)?\n([\s\S]*?)```/);
       if (codeMatch) {
         messagesEl.innerHTML += `<div style="padding:2px 0"><button class="btn btn-sm btn-primary" style="font-size:10px" onclick="window.__applyCode(\`${btoa(codeMatch[1])}\`)">Apply Code to Editor</button></div>`;
         messagesEl.scrollTop = messagesEl.scrollHeight;
