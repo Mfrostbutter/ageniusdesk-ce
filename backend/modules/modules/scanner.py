@@ -421,6 +421,12 @@ class _FileScanner(ast.NodeVisitor):
             self._add("MEDIUM", "env", line, "dynamic os.environ access with a non-literal key")
             return
         self.detected_env.add(key)
+        # AGD_* are the host's own handshake vars injected into an isolated worker
+        # (bridge URL/token, module id, data dir, proxy secret). Reading them IS
+        # the isolation contract, not an undeclared-secret read, so an isolated
+        # module needs no env declaration for them.
+        if key.startswith("AGD_"):
+            return
         if key not in self.declared_env:
             self._add("HIGH", "env", line, f"reads undeclared environment variable {key!r}")
 

@@ -227,6 +227,15 @@ def test_scanner_host_import_is_high(tmp_path):
     assert any(f.category == "host-import" and f.severity == "HIGH" for f in report.findings)
 
 
+def test_scanner_agd_framework_env_not_flagged(tmp_path):
+    # AGD_* handshake vars (bridge url/token, data dir) are the isolation contract
+    # the host injects, not undeclared-secret reads -> no env finding.
+    code = 'import os\nU = os.environ["AGD_BRIDGE_URL"]\nT = os.environ.get("AGD_MODULE_DATA_DIR")\n'
+    d = _write_module(tmp_path, None, code)
+    report = scan_module(d, ModuleManifest(id="agd", name="AGD"))
+    assert not any(f.category == "env" for f in report.findings)
+
+
 def test_scanner_literal_dynamic_import_backend_is_high(tmp_path):
     # MEDIUM-3: a literal dynamic import of the host must raise host-import HIGH.
     # The non-literal CRITICAL guard previously let __import__("backend") through
