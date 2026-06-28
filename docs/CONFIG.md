@@ -62,6 +62,26 @@ All of the above except Ollama are OpenAI-compatible and route through the same 
 
 > **Security:** the Containers tab requires mounting the Docker socket (see `docker-compose.yml`). That grants the dashboard root-equivalent control of the host. Only run it mounted when the dashboard is not exposed unauthenticated: keep it on a trusted LAN, front it with an auth proxy, or set `AGD_REQUIRE_AUTH=true`. Remove the socket mount to disable the Containers tab.
 
+## Community Module Isolation
+
+How a community module's BACKEND runs. Set in **Settings > Modules**, or via the
+env var below (env overrides the saved setting). Changing it restarts the app.
+Privileged actions in the isolated tiers go through a loopback capability bridge
+(vault access scoped to declared paths; a tool-free `assistant.complete` that
+keeps the provider key host-side). See `docs/architecture/modules.md` for the
+full comparison.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGD_MODULE_ISOLATION` | `in_process` | `in_process` (no isolation; modules run in the app process), `subprocess` (sandboxed child process: blocked host imports, scrubbed env, reverse proxy), or `container` (own hardened Docker container per module: read-only rootfs, dropped capabilities, no socket, resource limits, isolated network). `container` requires the Docker socket mounted (see Containers tab). |
+
+> **Trade-off:** strength is `in_process` < `subprocess` < `container`, and so is
+> overhead. `in_process` has no runtime boundary (the install scan/consent is a
+> heuristic, not containment). `subprocess` raises the bar but shares the host OS
+> user. `container` is the real boundary but needs Docker. v1 container caveats:
+> the worker runs as root inside the cap-dropped container, and a module that
+> declares network can reach any host (per-host enforcement is on the roadmap).
+
 ## Observability (OpenTelemetry)
 
 The dashboard can receive per-execution, per-node spans from n8n's native OTel

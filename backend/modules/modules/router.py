@@ -57,6 +57,53 @@ async def nav_entries():
     return {"entries": entries}
 
 
+_ISOLATION_MODES = ("in_process", "subprocess", "container")
+
+
+@router.get("/isolation")
+async def get_isolation():
+    """Current community-module isolation tier + how it is resolved (env override
+    wins over the persisted operator setting)."""
+    import os
+
+    from backend.config import load_config
+    from backend.modules import _isolation_mode
+
+    env = os.environ.get("AGD_MODULE_ISOLATION", "").strip().lower()
+    configured = (load_config().get("module_isolation") or "").strip().lower()
+    docker_ok = False
+    try:
+        from backend.modules.docker_mgr import client as _dk
+        docker_ok = await _dk.ping()
+    except Exception:
+        docker_ok = False
+    return {
+        "effective": _isolation_mode(),
+        "configured": configured if configured in _ISOLATION_MODES else "in_process",
+        "env_override": env if env in _ISOLATION_MODES else "",
+        "docker_available": docker_ok,
+        "modes": list(_ISOLATION_MODES),
+    }
+
+
+class IsolationPayload(BaseModel):
+    mode: str
+
+
+@router.post("/isolation")
+async def set_isolation(payload: IsolationPayload):
+    """Persist the isolation tier (applied on the next app restart). The
+    AGD_MODULE_ISOLATION env var, if set, still overrides this at runtime."""
+    mode = (payload.mode or "").strip().lower()
+    if mode not in _ISOLATION_MODES:
+        raise HTTPException(status_code=400, detail="mode must be in_process, subprocess, or container")
+    from backend.config import load_config, save_config
+    cfg = load_config()
+    cfg["module_isolation"] = mode
+    save_config(cfg)
+    return {"ok": True, "configured": mode, "restart_required": True}
+
+
 @router.get("/{module_id}")
 async def get_module(module_id: str):
     entry = module_registry.get_registry().get(module_id)

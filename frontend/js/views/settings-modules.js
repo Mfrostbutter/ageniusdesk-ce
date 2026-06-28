@@ -138,13 +138,69 @@ async function fetchKnownRefs() {
   }
 }
 
+const ISO_META = {
+  in_process: { label: 'In-process', blurb: 'No isolation (default). Module backends run inside the app process with full data access.' },
+  subprocess: { label: 'Subprocess', blurb: 'Sandboxed child process: blocked host imports, scrubbed env, capability bridge. Raises the bar.' },
+  container: { label: 'Container', blurb: 'Own hardened Docker container per module: read-only rootfs, dropped capabilities, isolated network. The real boundary.' },
+};
+
+function isolationPanel(iso) {
+  const modes = iso.modes || ['in_process', 'subprocess', 'container'];
+  const effective = iso.effective || 'in_process';
+  const envLocked = !!iso.env_override;
+  const noDocker = !iso.docker_available;
+
+  const btns = modes.map(m => {
+    const active = m === effective;
+    const meta = ISO_META[m] || { label: m };
+    const disabled = envLocked || (m === 'container' && noDocker);
+    return `<button class="iso-btn btn btn-sm ${active ? 'btn-primary' : ''}" data-iso="${esc(m)}"
+      ${disabled ? 'disabled' : ''} title="${esc((ISO_META[m] || {}).blurb || '')}"
+      style="${active ? '' : 'opacity:0.85'}">${esc(meta.label)}${active ? ' ✓' : ''}</button>`;
+  }).join('');
+
+  const note = envLocked
+    ? `<div style="font-size:12px;color:${SEV_COLOR.MEDIUM};margin-top:8px">Set by the <code>AGD_MODULE_ISOLATION=${esc(iso.env_override)}</code> environment variable, which overrides this setting. Unset it to control isolation from here.</div>`
+    : (noDocker
+        ? `<div style="font-size:12px;color:${SEV_COLOR.MEDIUM};margin-top:8px">Container mode needs the Docker socket mounted on this service; it is currently unavailable.</div>`
+        : `<div style="font-size:12px;opacity:0.6;margin-top:8px">Changing this restarts AgeniusDesk to apply.</div>`);
+
+  return `
+    <div style="margin-bottom:20px;padding:14px;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius)">
+      <strong style="font-size:14px">Community module isolation</strong>
+      <div style="font-size:12px;opacity:0.6;margin-top:4px">How a community module's BACKEND runs. ${esc((ISO_META[effective] || {}).blurb || '')}</div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">${btns}</div>
+      ${note}
+      <div id="iso-msg" style="margin-top:8px;font-size:12px"></div>
+    </div>`;
+}
+
+function wireIsolation(el) {
+  el.querySelectorAll('.iso-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const mode = btn.dataset.iso;
+      const meta = ISO_META[mode] || { label: mode };
+      if (!confirm(`Switch community-module isolation to "${meta.label}"? This restarts AgeniusDesk to apply.`)) return;
+      const msg = el.querySelector('#iso-msg');
+      try {
+        await post('/api/modules/isolation', { mode });
+        if (msg) { msg.style.color = '#34d399'; msg.textContent = 'Saved. Restarting to apply…'; }
+        restartApp();
+      } catch (e) {
+        if (msg) { msg.style.color = '#ff6d5a'; msg.textContent = `Failed: ${e.message}`; }
+      }
+    });
+  });
+}
+
 export async function renderModules(el) {
   el.innerHTML = `<div class="spinner"></div>`;
 
   try {
-    const [data, knownRefs] = await Promise.all([
+    const [data, knownRefs, iso] = await Promise.all([
       get('/api/modules'),
       fetchKnownRefs(),
+      get('/api/modules/isolation').catch(() => ({ effective: 'in_process', modes: ['in_process', 'subprocess', 'container'] })),
     ]);
 
     const builtins = data.modules.filter(m => m.source === 'builtin');
@@ -153,6 +209,7 @@ export async function renderModules(el) {
 
     el.innerHTML = `
       <div style="max-width:900px">
+        ${isolationPanel(iso)}
         <div style="margin-bottom:20px;padding:14px;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius)">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div>
@@ -183,6 +240,7 @@ export async function renderModules(el) {
       </div>
     `;
 
+    wireIsolation(el);
     wireInstall(el);
     wireUninstall(el);
     wireNavToggles(el);

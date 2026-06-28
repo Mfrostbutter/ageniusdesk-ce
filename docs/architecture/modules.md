@@ -207,7 +207,19 @@ The module manager UI reflects this: the install panel's **Discover** button lis
 
 > **Heuristic review, not a sandbox.** A static scan of code that runs in-process cannot contain a determined author (`getattr(__import__('os'), 'system')`, base64-then-`exec`, runtime-fetched payloads all bypass it). The scan catches low-effort or accidental danger, forces an explicit consent moment, and records what was approved. Absence of findings is not a safety guarantee. The report carries its own limitations text, and every UI surface says the same. There is no "scanned and safe" badge.
 
-Security posture is explicit and limited: a community module's backend runs in-process with full Python access and no sandbox, and its frontend (`static/` view) is loaded into the app's own page, so it shares the DOM and `window` and can read, change, or break the host UI. Out-of-process isolation (backend) and iframe isolation (frontend) are the deferred real boundaries (see [Security](security.md)). Only `secrets_required` keys are surfaced for the operator to supply; the full `.env` is not auto-injected. Install only from sources you trust.
+Security posture: by default a community module's backend runs in-process with full Python access and no sandbox, so the install scan/consent is a heuristic, not containment. The frontend (`static/` view) now loads in a sandboxed iframe (opaque origin, `postMessage` bridge) so it cannot touch the host UI. The backend can also be isolated out-of-process (see tiers below). Only `secrets_required` keys are surfaced for the operator to supply; the full `.env` is not auto-injected. Install only from sources you trust.
+
+## Backend isolation tiers
+
+Selected in **Settings > Modules** or via `AGD_MODULE_ISOLATION` (env overrides the saved setting; a change restarts the app). The module's code is identical across tiers; only the spawn mechanism and transport differ.
+
+| Tier | Boundary | What it stops | Overhead | Needs |
+|------|----------|---------------|----------|-------|
+| `in_process` (default) | none | nothing at runtime (scan/consent only) | none | nothing |
+| `subprocess` | separate process, same OS user/kernel/fs | host `backend` imports, secrets in env, direct vault/DB access, crashing the host | small (1 process + a proxy hop) | nothing |
+| `container` | own Docker container (fs/PID/net namespaces, cgroups) | host filesystem + processes, resource exhaustion, all Linux caps, internet (for no-network modules) | higher (container per module) | Docker socket |
+
+In the isolated tiers, every privileged action goes through a loopback **capability bridge** (`/api/_host/*`), never direct host access: `notes.*` scoped to the module's declared vault paths (checked against the symlink-resolved location), and a tool-free `assistant.complete` that runs the LLM host-side so the provider key never reaches the module. The host reverse-proxies `/api/{id}/*` to the worker, stripping the host session and adding a per-spawn proxy secret. v1 container caveats: the worker runs as root inside the cap-dropped container, and a network-declaring module reaches any host (per-host egress enforcement is on the roadmap). Full design: `docs/specs/2026-06-27-out-of-process-backend-isolation.md`.
 
 ## How a failed community module is recorded, not fatal
 

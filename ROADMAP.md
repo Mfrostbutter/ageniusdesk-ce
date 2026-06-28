@@ -107,7 +107,7 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 The headline is real isolation for community modules, the boundary the v0.2 scan/consent layer bridges:
 
 - [x] **Frontend iframe isolation**: render each community view in a sandboxed `iframe` (`allow-scripts`, no `allow-same-origin`) with a postMessage RPC bridge to a whitelisted host API (`fetch` / `notify` / `navigate` / `openInHarness`), plus theme propagation and auto-resize. A module's frontend can no longer read, change, or break the host UI; it reaches the host only over the bridge, and `fetch` is restricted to same-origin `/api/` paths.
-- [ ] **Out-of-process backend isolation**: run a module's Python in a sandboxed subprocess behind an RPC contract, so a module no longer runs in-process with full data and credential access.
+- [x] **Out-of-process backend isolation**: run a module's Python outside the app process behind the capability bridge, so a module no longer runs in-process with full data and credential access. Two operator-selectable tiers (Settings > Modules / `AGD_MODULE_ISOLATION`): **subprocess** (sandboxed child process, blocked host imports, scrubbed env) and **container** (own hardened Docker container: read-only rootfs, dropped capabilities, no socket, resource limits, isolated network). Privileged actions go through the bridge (vault scoped to declared paths; tool-free `assistant.complete` with the key host-side). The reference YouTube Research module is dual-mode. Remaining hardening (non-root container uid, per-host egress enforcement) tracked for v0.3+.
 
 ## Medium-Term (v0.3+ Concept)
 
