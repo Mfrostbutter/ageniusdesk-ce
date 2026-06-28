@@ -25,7 +25,8 @@ Start with [Getting Started](guide/getting-started.md) if you just deployed, or
 | [Executions & Errors](guide/errors.md) | The error feed, grouping, AI triage, and installing the global error handler |
 | [Insights](guide/insights.md) | Execution analytics, success rates, busiest/slowest workflows |
 | [Containers](guide/containers.md) | One-click Docker deployment, templates, lifecycle management |
-| [Code Lab](guide/code-lab.md) | The Monaco editor, AI code generation, the Prompt Builder, and Send to n8n |
+| [Code Lab](guide/code-lab.md) | The Monaco editor, AI code generation, the Prompt Builder, Agent mode, and Send to n8n |
+| [Agent Fleet](guide/agent-fleet.md) | Build LangGraph / PydanticAI agents in Code Lab and run + monitor them: the catalog, live graph + run waterfall, human-in-the-loop, and vault-stored agents you own |
 | [AI Assistant & Models](guide/ai-assistant.md) | Per-area model config, providers, the assistant chat, MCP tools, and RAG |
 | [The Harness (Knowledge)](guide/knowledge.md) | Knowledge sources, connectors, agent instructions, and the notes vault |
 | [Secrets](guide/secrets.md) | The encrypted local store, `$NAME` references, compound typed secrets, and syncing credentials into n8n |

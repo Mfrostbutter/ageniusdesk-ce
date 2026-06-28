@@ -295,6 +295,13 @@ the three shipped agents are just bundled examples. Two surfaces, mirroring n8n:
 
 ## Build slices (the spine first)
 
+**Status (2026-06-28): all five slices shipped + dogfooded on 3066.** Vault
+discovery, Register-from-Code-Lab, the PydanticAI adapter, the normalized run
+waterfall, and the Code Lab Agent mode are live. PydanticAI runs via `agent.run()`
+with the message history replayed as the normalized events (not live-streamed yet);
+richer per-token streaming + dedicated agent skill docs in the vault are noted
+follow-ons.
+
 1. **Vault `agents/` section + manifest + fleet discovery.** The runner loads
    agents from `vault/agents/` (plus the seeded examples). The connective tissue.
 2. **`Register to Agent Fleet` from Code Lab** → writes the agent into
