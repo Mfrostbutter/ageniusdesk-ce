@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 SERVER_ID = "n8n-mcp-builtin"
 SERVER_NAME = "n8n-mcp (node intelligence)"
-SERVER_DESC = "Built-in n8n node knowledge, search, and workflow validation."
+SERVER_DESC = "n8n node knowledge, search, and workflow validation. Powered by n8n-mcp by czlonkowski (MIT)."
 CONTAINER_NAME = "agd-n8n-mcp"
 IMAGE = os.environ.get("AGD_N8N_MCP_IMAGE", "ghcr.io/czlonkowski/n8n-mcp:latest")
 INTERNAL_PORT = 3000

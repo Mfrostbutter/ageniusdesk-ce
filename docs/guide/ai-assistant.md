@@ -117,7 +117,7 @@ Workspace tools are also registered. The Ollama backend and the OpenAI Responses
 
 ### MCP server tools
 
-Any MCP servers configured in the dashboard contribute their tools to the assistant alongside the built-in tools, scoped to the active instance. Adding the `n8n-mcp` MCP server, for example, gives the assistant deep n8n node knowledge plus workflow validation and create/update tools, which improves Workflow Builder accuracy. Configure MCP servers in the admin area; see [admin & users](admin-users.md).
+Any MCP servers configured in the dashboard contribute their tools to the assistant alongside the built-in tools, scoped to the active instance. The built-in [`n8n-mcp`](https://github.com/czlonkowski/n8n-mcp) server by czlonkowski (MIT) gives the assistant deep n8n node knowledge plus workflow validation and create/update tools, which improves Workflow Builder accuracy; it auto-installs when Docker is available (Settings → MCP Servers → n8n Intelligence). Configure other MCP servers in the admin area; see [admin & users](admin-users.md).
 
 ## Optional Qdrant RAG
 

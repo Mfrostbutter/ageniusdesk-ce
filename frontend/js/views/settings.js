@@ -667,6 +667,9 @@ async function renderN8nMcpCard() {
         validation. Docs-only by default (no n8n credentials); wire it to the active instance for workflow
         create/update tools.<span style="color:var(--text-dim)">${esc(runNote)}</span>
       </p>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
+        Powered by <a href="https://github.com/czlonkowski/n8n-mcp" target="_blank" rel="noopener" style="color:var(--accent)">n8n-mcp</a> by czlonkowski (MIT).
+      </div>
       ${(!s.docker_available && !s.registered)
         ? `<div style="font-size:11px;color:var(--text-dim);background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px">Docker isn't reachable from the dashboard, so n8n-mcp can't auto-start. Run it yourself in HTTP mode and add it below, or give the dashboard Docker access and reload.</div>`
         : ''}

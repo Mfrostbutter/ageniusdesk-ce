@@ -77,7 +77,7 @@ Workflow Builder generates a complete, importable workflow JSON from a plain-lan
    - Missing `name`, `connections`, or `settings` are filled with defaults before import.
 6. On success a toast shows the imported workflow ID; the OUTPUT log records it.
 
-> Tip: adding the `n8n-mcp` MCP server (Settings → MCP Servers) gives the assistant deep n8n node knowledge plus workflow validation and create/update tools, which improves the accuracy of generated node types and parameters. See [MCP server tools](ai-assistant.md#mcp-server-tools).
+> Tip: the built-in [`n8n-mcp`](https://github.com/czlonkowski/n8n-mcp) server by czlonkowski (MIT) gives the assistant deep n8n node knowledge plus workflow validation and create/update tools, which improves the accuracy of generated node types and parameters. It auto-installs when Docker is available (Settings → MCP Servers → n8n Intelligence). See [MCP server tools](ai-assistant.md#mcp-server-tools).
 
 ## Using the AI Code Assistant
 
