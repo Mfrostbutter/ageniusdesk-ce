@@ -604,6 +604,9 @@ function rowHtml(c) {
   const openUrl = getPublicUrl(c);
   const httpUrl = getHttpUrl(c);
   const hasHttp = !!httpUrl;
+  // The dashboard's own container: never offer stop/restart/recreate/destroy
+  // here (it would take AgeniusDesk down). Manage it from Docker Desktop / host.
+  const isSelf = !!c.is_self;
 
   // External-link SVG (Open button)
   const iconExternalLink = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
@@ -623,7 +626,9 @@ function rowHtml(c) {
       <td style="font-size:11px;color:var(--text-dim);white-space:nowrap">${escHtml(ports)}</td>
       <td style="font-size:11px;white-space:nowrap;color:${color}">${escHtml(c.status)}</td>
       <td style="white-space:nowrap;position:relative">
-        ${isRunning
+        ${isSelf
+          ? `<span class="ct-badge" style="background:rgba(96,165,250,0.12);color:#60a5fa" title="This is the container AgeniusDesk runs in. Stop/restart/destroy it from Docker Desktop or the host, not here.">🏠 this dashboard</span>`
+          : isRunning
           ? `<button class="ct-action-btn danger" data-action="stop" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Stop ${escHtml(c.name)}">
                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
              </button>
@@ -645,11 +650,14 @@ function rowHtml(c) {
                 data-n8n="${isN8nManaged(c) ? '1' : ''}" data-url="${escHtml(openUrl)}" title="More actions">⋯</button>
         <div class="ct-dropdown" id="dd-${escHtml(c.id)}" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);min-width:180px;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
           <button class="ct-dd-item" data-action="inspect" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}">🔍 Inspect</button>
-          <button class="ct-dd-item" data-action="update" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}">↑ Recreate (pull latest)</button>
+          ${isSelf
+            ? `<div class="ct-dd-item ct-dd-item--disabled" style="white-space:normal;line-height:1.4" title="Manage the dashboard's own container from Docker Desktop or the host">🏠 AgeniusDesk's own container — stop/recreate/destroy it from Docker Desktop, not here.</div>`
+            : `<button class="ct-dd-item" data-action="update" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}">↑ Recreate (pull latest)</button>
           ${isN8nManaged(c) ? `<button class="ct-dd-item" data-action="register" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" data-url="${escHtml(getRegisterUrl(c))}">+ Register as instance</button>` : ''}
           <button class="ct-dd-item ct-dd-item--disabled" title="Coming soon — G1 snapshot support">📦 Snapshot <span style="font-size:9px;opacity:0.5;margin-left:4px">soon</span></button>
           ${(c.labels || {})['ageniusdesk.bundle'] ? `<button class="ct-dd-item" data-action="recreate-bundle" data-id="${escHtml(c.id_full)}" data-bundle="${escHtml((c.labels || {})['ageniusdesk.bundle'])}">⟳ Recreate bundle (pull latest)</button>` : ''}
-          <button class="ct-dd-item ct-dd-item--danger" data-action="destroy" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" data-managed="${(c.labels || {})['ageniusdesk.managed'] === 'true' ? '1' : ''}" data-bundle="${escHtml((c.labels || {})['ageniusdesk.bundle'] || '')}">🗑 Destroy…</button>
+          <button class="ct-dd-item ct-dd-item--danger" data-action="destroy" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" data-managed="${(c.labels || {})['ageniusdesk.managed'] === 'true' ? '1' : ''}" data-bundle="${escHtml((c.labels || {})['ageniusdesk.bundle'] || '')}">🗑 Destroy…</button>`
+          }
         </div>
       </td>
     </tr>

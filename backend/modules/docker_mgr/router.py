@@ -33,6 +33,27 @@ def _docker_unavailable() -> HTTPException:
     )
 
 
+async def _guard_not_self(container_id: str, action: str) -> None:
+    """Refuse a destructive action on the container the dashboard runs in.
+
+    Destroying / stopping / recreating our own container from inside the app
+    takes the dashboard down (and a failed recreate could leave it gone). That
+    is a Docker-Desktop / host operation, never an in-app one.
+    """
+    try:
+        is_self = await docker.is_self_container(container_id)
+    except Exception:
+        is_self = False
+    if is_self:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Refusing to {action} the AgeniusDesk dashboard's own container. "
+                "Manage the dashboard container from Docker Desktop or the host instead."
+            ),
+        )
+
+
 # ── Status ────────────────────────────────────────────────────────────────────
 
 
@@ -60,6 +81,15 @@ async def list_containers(all: bool = True, project: str = ""):
 
     if project:
         containers = [c for c in containers if c["compose_project"] == project]
+
+    # Flag the dashboard's own container so the UI can mark it and hide its
+    # destructive controls (it must be managed from Docker Desktop, not here).
+    self_full, self_name = await docker.self_container()
+    for c in containers:
+        c["is_self"] = bool(
+            (self_full and c.get("id_full") == self_full)
+            or (self_name and c.get("name") == self_name)
+        )
 
     # Sort: running first, then alphabetical by name.
     containers.sort(key=lambda c: (0 if c["state"] == "running" else 1, c["name"]))
@@ -302,6 +332,7 @@ async def destroy_container(
     Any registered n8n instances whose URL matches a port mapping of the
     destroyed container are automatically de-registered.
     """
+    await _guard_not_self(container_id, "destroy")
     candidates, host_ports = await _container_candidate_urls(container_id)
 
     try:
@@ -432,6 +463,7 @@ async def recreate_container(container_id: str):
 
     Returns a deploy_id — connect to GET /deploy/{id}/progress for SSE updates.
     """
+    await _guard_not_self(container_id, "recreate")
     try:
         config, name = await docker.get_recreate_config(container_id)
     except RuntimeError as exc:
@@ -449,12 +481,17 @@ async def recreate_container(container_id: str):
 # ── Actions ───────────────────────────────────────────────────────────────────
 
 _VALID_ACTIONS = {"start", "stop", "restart", "pause", "unpause"}
+# Actions that would take the dashboard down if run against its own container.
+# (start / unpause are harmless — they can't disrupt an already-running self.)
+_SELF_PROTECTED_ACTIONS = {"stop", "restart", "pause"}
 
 
 @router.post("/{container_id}/{action}")
 async def container_action(container_id: str, action: str):
     if action not in _VALID_ACTIONS:
         raise HTTPException(status_code=400, detail=f"Invalid action. Choose from: {', '.join(_VALID_ACTIONS)}")
+    if action in _SELF_PROTECTED_ACTIONS:
+        await _guard_not_self(container_id, action)
     try:
         await docker.container_action(container_id, action)
         return {"ok": True, "action": action, "container_id": container_id}

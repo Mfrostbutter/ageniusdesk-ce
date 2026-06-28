@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
+import socket
 from typing import AsyncGenerator
 
 import aiodocker
@@ -16,6 +19,10 @@ import aiodocker
 logger = logging.getLogger(__name__)
 
 _docker: aiodocker.Docker | None = None
+
+# Cache of (full_id, name) for the container THIS process runs in. Empty strings
+# mean "resolved, not containerized / unknown" so we don't re-probe every call.
+_self_cache: dict[str, str] | None = None
 
 
 def _get_client() -> aiodocker.Docker:
@@ -204,6 +211,86 @@ async def get_recreate_config(container_id: str) -> tuple[dict, str]:
         "HostConfig": info["HostConfig"],
     }
     return config, name
+
+
+# ── Self-container protection ─────────────────────────────────────────────────
+#
+# AgeniusDesk can manage containers via the mounted Docker socket. It must never
+# destroy / stop / recreate the container it is itself running in — that is a
+# foot-gun that takes the dashboard down from inside the dashboard. Those actions
+# belong to Docker Desktop / the host. We identify the self-container and refuse.
+
+
+def _self_id_from_proc() -> str | None:
+    """Best-effort: extract this container's 64-hex id from procfs.
+
+    cgroup v1 lines and overlay mount paths both embed the container id.
+    Returns None on a non-containerized host or cgroup v2 without it.
+    """
+    for path in ("/proc/self/mountinfo", "/proc/self/cgroup"):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        m = re.search(r"\b([0-9a-f]{64})\b", text)
+        if m:
+            return m.group(1)
+    return None
+
+
+async def self_container() -> tuple[str, str]:
+    """Return (full_id, name) of the container this process runs in, or ("","").
+
+    Resolved once and cached. Detection order: AGD_SELF_CONTAINER override, the
+    HOSTNAME env (Docker's default = container id), socket hostname, then the
+    procfs id. Each candidate is confirmed by inspecting it so we return the
+    canonical id + name. ("","") when not containerized or undetectable.
+    """
+    global _self_cache
+    if _self_cache is not None:
+        return _self_cache["id"], _self_cache["name"]
+
+    full, name = "", ""
+    override = os.environ.get("AGD_SELF_CONTAINER", "").strip()
+    if override or os.path.exists("/.dockerenv"):
+        candidates = [
+            override,
+            os.environ.get("HOSTNAME", "").strip(),
+            socket.gethostname(),
+            _self_id_from_proc() or "",
+        ]
+        for cand in candidates:
+            if not cand:
+                continue
+            try:
+                c = await _get_client().containers.get(cand)
+                info = await c.show()
+                full = info.get("Id", "")
+                name = (info.get("Name", "") or "").lstrip("/")
+                if full:
+                    break
+            except Exception:
+                continue
+    _self_cache = {"id": full, "name": name}
+    if full:
+        logger.info("docker: self-container resolved as %s (%s)", name or "?", full[:12])
+    return full, name
+
+
+async def is_self_container(container_id: str) -> bool:
+    """True if container_id refers to the dashboard's own container."""
+    self_full, self_name = await self_container()
+    if not self_full and not self_name:
+        return False
+    try:
+        c = await _get_client().containers.get(container_id)
+        info = await c.show()
+    except Exception:
+        return False
+    cid = info.get("Id", "")
+    cname = (info.get("Name", "") or "").lstrip("/")
+    return (bool(self_full) and cid == self_full) or (bool(self_name) and cname == self_name)
 
 
 async def system_info() -> dict:
