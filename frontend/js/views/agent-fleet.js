@@ -151,8 +151,12 @@ function openUsageModal(run) {
             <th style="padding:4px 8px;text-align:right">Input</th><th style="padding:4px 8px;text-align:right">Output</th>
             <th style="padding:4px 8px;text-align:right">Total</th><th style="padding:4px 8px;text-align:right">Cost</th>
           </tr></thead><tbody>${rows}</tbody>
-        </table>` : `<div style="color:var(--text-muted);font-size:12px;padding:8px 0">Per-call detail not available (LangSmith returned only the aggregate).</div>`}
-      <div style="font-size:11px;color:var(--text-muted);margin-top:12px">Figures from the LangSmith trace for this run.${run.trace_url ? ` <a href="${esc(run.trace_url)}" target="_blank" style="color:var(--accent)">Open full trace ↗</a>` : ''}</div>
+        </table>` : `<div style="color:var(--text-muted);font-size:12px;padding:8px 0">${run.trace_url
+          ? 'Per-call detail not available (LangSmith returned only the aggregate).'
+          : 'Per-call detail not available. Enable LangSmith tracing for a per-call breakdown.'}</div>`}
+      <div style="font-size:11px;color:var(--text-muted);margin-top:12px">${run.trace_url
+        ? `Figures from the LangSmith trace for this run. <a href="${esc(run.trace_url)}" target="_blank" style="color:var(--accent)">Open full trace ↗</a>`
+        : 'Estimated from token counts against the built-in price book. Set LANGSMITH_TRACING=true with a LANGSMITH_API_KEY for exact per-call figures.'}</div>
     </div>`;
   const close = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
