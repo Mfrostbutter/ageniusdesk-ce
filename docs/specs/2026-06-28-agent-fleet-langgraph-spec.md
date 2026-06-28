@@ -243,3 +243,61 @@ extension) is deferred to that follow-on.
 - The private-infra agents (content/publish/remediation/answer-engine).
 - Cross-process / persistent HITL checkpointer (in-worker MemorySaver is v1).
 - Per-host egress allowlist enforcement (deferred at the platform level already).
+
+---
+
+# Authoring + management direction (decided 2026-06-28)
+
+This supersedes the earlier "build agents inside the Agent Fleet view" idea. The
+corrected product framing: **AgeniusDesk is a control plane for code-authored AI
+automations the same way it already is for n8n.** The agents are arbitrary
+LangGraph + PydanticAI automations (any purpose, any tools), not n8n-ops helpers;
+the three shipped agents are just bundled examples. Two surfaces, mirroring n8n:
+
+- **Code Lab = build** (the n8n-editor analog). You author the agent here.
+- **Agent Fleet = run + monitor** (the n8n-executions/errors analog). No in-app
+  builder; Agent Fleet is monitor-only.
+
+## Decisions
+
+1. **Code Lab gets an Agent track.** A new mode alongside Code Node / Workflow
+   Builder, with a **framework toggle: LangGraph | PydanticAI** (a toggle inside
+   one Agent mode, not two modes). The template dropdown becomes agent starters
+   (ReAct, HITL, parallel fan-out, pipeline, blank) per framework; the AI sidebar
+   loads the agent skills (`langgraph-agent`, `langsmith-evals`) the way it loads
+   n8n skills + n8n-mcp today; the existing Prompt Builder is reused for the system
+   prompt; add an **Open in Studio** link (LangGraph). `Send to n8n` is joined by
+   **`Register to Agent Fleet`**.
+
+2. **Agents live in the VAULT.** Add an **`agents/` section to the vault** (Harness
+   files the operator owns). `Register to Agent Fleet` writes the agent there
+   (code + a small manifest: name, framework, model, trigger, enabled); the fleet
+   **discovers** agents from `vault/agents/`. PydanticAI is a **peer to LangGraph,
+   v1** (the adapter abstraction is not deferred).
+
+3. **Agent Fleet is monitor-only.** Catalog of built agents with a **framework
+   badge (LangGraph/PydanticAI)**, status, last run, **enable/disable**, and a
+   **trigger** (manual/webhook/schedule). Runs, errors, and a health roll-up,
+   mirroring the n8n error tracking + Fleet Health.
+
+4. **Run view normalized to a WATERFALL for both frameworks**, so monitoring looks
+   the same regardless of framework. This reuses the OTel observability waterfall
+   already used for n8n executions, unifying observability. **LangGraph
+   additionally** shows the live node-graph panel (for now); **PydanticAI** gets
+   the waterfall only. The earlier asymmetry (graph+timeline vs timeline) is out.
+
+## Build slices (the spine first)
+
+1. **Vault `agents/` section + manifest + fleet discovery.** The runner loads
+   agents from `vault/agents/` (plus the seeded examples). The connective tissue.
+2. **`Register to Agent Fleet` from Code Lab** → writes the agent into
+   `vault/agents/<name>/`. Closes the build->manage loop.
+3. **PydanticAI adapter + a normalized run-event/span model** (spans with timing)
+   that both adapters emit, feeding the waterfall.
+4. **Waterfall run view** in Agent Fleet (both frameworks); LangGraph keeps the
+   graph panel.
+5. **Code Lab Agent mode UX** (framework toggle, agent templates, agent skills in
+   the sidebar, Open in Studio).
+
+Dependency: `pydantic-ai` joins the `langgraph`/`agent-fleet` extra (pin a
+clean-venv resolution against the existing langchain/anthropic pins).
