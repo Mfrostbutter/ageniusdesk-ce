@@ -219,12 +219,34 @@ _REGISTRY: dict[str, AgentDef] = {
 DEFAULT_AGENT_ID = OPS_TRIAGE.id
 
 
+def _vault_agents() -> list[AgentDef]:
+    """Operator-authored agents discovered from the vault. Lazy import avoids a
+    circular dependency (vault_agents imports AgentDef from here) and keeps boot
+    light. Never raises: discovery is best-effort."""
+    try:
+        from . import vault_agents
+
+        return vault_agents.discover()
+    except Exception:  # noqa: BLE001 - a discovery failure must not hide the built-ins
+        return []
+
+
 def all_agents() -> list[AgentDef]:
-    return list(_REGISTRY.values())
+    """Built-in agents first, then vault agents (skipping any id that collides with a
+    built-in). Re-read each call so a newly registered vault agent shows immediately."""
+    builtins = list(_REGISTRY.values())
+    builtin_ids = {a.id for a in builtins}
+    extra = [a for a in _vault_agents() if a.id not in builtin_ids]
+    return builtins + extra
 
 
 def get_agent(agent_id: str) -> Optional[AgentDef]:
-    return _REGISTRY.get(agent_id)
+    if agent_id in _REGISTRY:
+        return _REGISTRY[agent_id]
+    for a in _vault_agents():
+        if a.id == agent_id:
+            return a
+    return None
 
 
 def register(agent: AgentDef) -> None:

@@ -89,3 +89,20 @@ TOOLS = [
     get_execution,
     fleet_health,
 ]
+
+# Name -> tool, so a vault agent's manifest can declare the tools it uses by name
+# and the runtime injects the @tool objects into the agent's pure graph factory.
+TOOL_REGISTRY = {t.name: t for t in TOOLS}
+
+
+def resolve_tools(names: list[str] | None) -> list:
+    """Resolve tool names to @tool objects (unknown names skipped). Empty/None means
+    the full built-in toolset, a sensible default for an unscoped agent."""
+    if not names:
+        return list(TOOLS)
+    return [TOOL_REGISTRY[n] for n in names if n in TOOL_REGISTRY]
+
+
+def tool_catalog() -> list[dict]:
+    """[{name, description}] for the builder UI / agent introspection."""
+    return [{"name": t.name, "description": (t.description or "").strip()} for t in TOOLS]

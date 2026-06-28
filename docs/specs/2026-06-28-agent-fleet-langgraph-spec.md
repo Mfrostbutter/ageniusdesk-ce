@@ -342,6 +342,32 @@ What "community" becomes for agents:
 - **Community modules EXTEND the platform** (extra framework adapters, tool packs,
   prebuilt agent bundles) on top of the core runtime, not being it.
 
+## Vault agent format (slice 1 — done 2026-06-28)
+
+Operator-authored agents live in the vault at `data/workspace/agents/<id>/`:
+
+- `agent.json` — manifest (metadata only): `name`, `framework` (`langgraph` |
+  `pydantic-ai`), `model` / `model_env` / `max_tokens`, `tools` (names from the
+  tool registry), `hitl`, `badges`, `tagline`, `description`, `run_hint`,
+  `uses_errors`, `enabled`. `id` defaults to the folder name.
+- `graph.py` — a PURE factory exporting `build(llm, tools, checkpointer=None)`, and
+  OPTIONALLY `initial_state(task, target)` + `kickoff(error_id, prompt)`. It imports
+  only langgraph/langchain; the host injects the model + the resolved tools, so the
+  agent code never reaches AgeniusDesk internals (portable + safe).
+
+`vault_agents.discover()` scans the folder, reads only the manifests (cheap,
+boot-safe, no langgraph needed), and registers an `AgentDef` per agent whose
+callables lazily import `graph.py` at run time (module cached by path+mtime, so a
+Code Lab edit reloads automatically). `registry.all_agents()` merges built-ins +
+vault agents fresh on each call, so a newly written agent appears with no restart.
+A vault agent shows in the catalog even without the langgraph extra; running it then
+surfaces the missing-dep error. Tool names resolve via `tools_local.resolve_tools`
+(`tool_catalog()` lists them for the future Code Lab builder). Verified live: a
+sample `quick-triage` vault agent was discovered and ran to completion.
+
+This is the format Code Lab's "Register to Agent Fleet" (slice 2) writes and its
+Agent templates (slice 5) scaffold.
+
 Migration (done 2026-06-28): the community `agent-fleet` module became
 `backend/modules/agent_fleet/` (builtin manifest, eager router, core auth, the
 runner re-broadcasts `langgraph:run` over the WebSocket); the frontend became a
