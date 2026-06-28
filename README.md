@@ -34,6 +34,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 - Add any number of n8n instances by URL and API key
 - Switch between instances instantly
 - View all workflows, recent executions, and error history in one place
+- Fleet Health: workflow health and errors rolled up across every connected instance in one pane (per-instance active/total workflows, error rate over recent runs, and unhealthy workflows, plus a combined total). A degraded or unreachable instance is shown, not fatal
 
 **Error Visibility**
 - Real-time error feed across all instances
@@ -90,8 +91,9 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 - Install third-party modules from a GitHub repo through a two-phase inspect then install flow
 - A static code scan surfaces each module's declared capabilities (network hosts, filesystem write paths, subprocess) and flags risky calls before you consent
 - Proportional consent, a per-install audit trail, and one-click restart to activate
-- First module: [YouTube Research](https://github.com/Mfrostbutter/ageniusdesk-community-modules) (paste a link, get a structured breakdown auto-filed into your notes vault)
-- Heuristic review, not a sandbox; install only from sources you trust
+- Optional out-of-process isolation (opt-in, **Settings > Modules**): run a module's backend in a sandboxed subprocess, or in its own hardened Docker container (read-only rootfs, all Linux capabilities dropped, no Docker socket, no host secrets). Privileged actions go through a loopback capability bridge: vault access scoped to the module's declared paths, plus a tool-free LLM call that runs host-side so provider keys never reach the module. The default stays in-process
+- First module: [YouTube Research](https://github.com/Mfrostbutter/ageniusdesk-community-modules) (paste a link, get a structured breakdown auto-filed into your notes vault), which runs the same code in-process or isolated
+- The default in-process mode is heuristic review, not a sandbox; install in-process modules only from sources you trust. For a real boundary, enable the container tier
 
 **Themes and Music**
 - 3 built-in themes (Dark, Light, n8n) plus custom theme support
@@ -145,7 +147,9 @@ See [docs/CONFIG.md](docs/CONFIG.md) for all options.
 
 Wire your n8n instance to report failures into the dashboard in real time.
 
-**One-click (recommended):** once an instance is connected, open **Settings > Error Handler > Install to active instance**. This imports and activates the global error handler workflow (with the dashboard URL pre-filled). Then do the one step n8n requires: **Settings > Workflows > Error Workflow** and select the imported workflow. Repeat the install for each instance.
+**Auto-install on connect:** adding a new instance now best-effort installs and activates the global error handler into it automatically, so errors flow from the moment it's connected. You still do the one step n8n requires (below). If your dashboard sets `AGD_WEBHOOK_TOKEN`, also set `AGD_WEBHOOK_TOKEN` in the n8n instance's environment so the handler's POST carries the matching token (otherwise errors are rejected and silently dropped).
+
+**One-click:** once an instance is connected, open **Settings > Error Handler > Install to active instance**. This imports and activates the global error handler workflow (with the dashboard URL pre-filled). Then do the one step n8n requires: **Settings > Workflows > Error Workflow** and select the imported workflow. Repeat the install for each instance.
 
 **Manual:** download the workflow JSON from the same tab (or `backend/n8n_workflows/global-error-handler.json`), import it via **Workflows > Import from File** in n8n, point the HTTP Request node at `http://your-dashboard:3000/api/errors/webhook`, then select it as the Error Workflow and activate it.
 
@@ -157,7 +161,7 @@ Wire your n8n instance to report failures into the dashboard in real time.
 
 **Machine endpoints:** New integrations should use `/api/v1/...` with an AgeniusDesk API key. If you expose the legacy `/api/errors/webhook` or `/api/messages/webhook` endpoints, set `AGD_WEBHOOK_TOKEN`.
 
-**Community Modules:** Community modules can load and execute Python code from `data/modules/`. Only install modules from trusted sources.
+**Community Modules:** Community modules can load and execute Python code from `data/modules/`. The default runs them in-process (fully trusted). v0.3 adds optional out-of-process isolation, selectable in **Settings > Modules**: a sandboxed subprocess, or a hardened Docker container with no host secrets, no Docker socket, and only scoped capability-bridge access. Install in-process modules only from sources you trust; use the container tier for an OS-level boundary.
 
 ## Documentation
 
