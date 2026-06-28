@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass + a dedicated host-bridge pass (Copilot, `2026-06-27-host-bridge-review.md`, closed). LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). Host-bridge review fixes: symlink-resolved scope check (a vault symlink cannot redirect notes I/O out of scope), uninstall stops the worker + revokes its bridge token, worker spawn deferred to the lifespan after the bridge is listening (in a thread executor), per-write 1 MB cap, list endpoints skip symlinks, generic provider error to the worker, literal `__import__("backend")` now scanned. All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
+Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass + a dedicated host-bridge pass (Copilot, `2026-06-27-host-bridge-review.md`, closed). LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). Host-bridge review fixes: symlink-resolved scope check (a vault symlink cannot redirect notes I/O out of scope), uninstall stops the worker + revokes its bridge token, worker spawn deferred to the lifespan after the bridge is listening (in a thread executor), per-write 1 MB cap, list endpoints skip symlinks, generic provider error to the worker, literal `__import__("backend")` now scanned. phase 6 (reference consumer youtube-research re-ported as a DUAL-MODE module on the bridge, verified live on 3066 in subprocess mode end to end). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: dual-mode operator UI + CHANGELOG/ROADMAP (7), supervised crash-restart watchdog (5.7), broadcast + container tier (8).
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -622,8 +622,20 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
    broadcast}`. Scanner: `backend.*` host-import flipped to HIGH ("won't run
    isolated"); bridge `assistant.complete` use without `host.assistant` is HIGH
    undeclared; declared bridge use is INFO.
-6. Re-port youtube-research onto the bridge + private store + data importer
-   (polling for progress; no broadcast).
+6. [DONE] Re-ported youtube-research onto the bridge as a DUAL-MODE module: a
+   single `_host.py` facade calls the bridge when AGD_BRIDGE_URL is set and
+   imports `backend.*` directly otherwise, so the module runs in_process (default,
+   min_app_version stays 0.2.0) AND isolated. Jobs moved to a module-private
+   SQLite (`_data/jobs.db`) with a one-time in_process import of the legacy host
+   table; LLM goes through `assistant.complete`; router drops the host auth-gate
+   dep under isolation; progress via polling (no broadcast). Scanner AGD_ env
+   carve-out added (handshake vars are not undeclared-env findings). Verified live
+   on 3066 (subprocess mode): worker spawns healthy, a real job ran end to end
+   (captions -> assistant.complete breakdown -> notes-write artifacts -> notes-move
+   auto-file into research/engineering-and-devtools/...). KNOWN LIMITATION: under
+   isolation `move` archives source files but cannot rmdir, so empty source dirs
+   linger in `_inbox` (cosmetic; a write-scoped `notes.remove-empty-folder` bridge
+   method is the future fix).
 7. Dual-mode flag, docs (honest matrix), CHANGELOG/ROADMAP, tests.
 8. (Later) `broadcast` namespace + the host->iframe WS relay (5.5c), then the
    container tier under the same bridge.
