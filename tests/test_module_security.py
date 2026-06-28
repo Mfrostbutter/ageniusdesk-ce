@@ -16,6 +16,7 @@ from backend.module_registry import (
     COMMUNITY_MODULES_DIR,
     Capabilities,
     FilesystemCapability,
+    HostBridgeCapability,
     ModuleManifest,
     NetworkCapability,
     SecretRequirement,
@@ -216,13 +217,40 @@ def test_scanner_over_declaration_is_info(tmp_path):
     assert all(f.category == "over-declared" for f in info)
 
 
-def test_scanner_host_import_is_info(tmp_path):
-    # Importing the AgeniusDesk host is expected for a community module -> INFO.
+def test_scanner_host_import_is_high(tmp_path):
+    # Under the isolation contract, importing the host (backend.*) reaches host
+    # internals and won't run isolated -> HIGH, not INFO.
     code = "from backend.modules.notes import storage\ndef run():\n    return storage\n"
     d = _write_module(tmp_path, None, code)
     report = scan_module(d, ModuleManifest(id="h", name="H"))
-    assert not report.has("MEDIUM") and not report.has("HIGH")
-    assert any(f.category == "host-import" for f in report.findings)
+    assert report.has("HIGH")
+    assert any(f.category == "host-import" and f.severity == "HIGH" for f in report.findings)
+
+
+def test_scanner_bridge_assistant_requires_capability(tmp_path):
+    code = (
+        "import httpx\n"
+        "async def run():\n"
+        "    return await httpx.AsyncClient().post('http://x/api/_host/assistant/complete', json={})\n"
+    )
+    net = Capabilities(network=NetworkCapability(enabled=True, hosts=["x"]))
+
+    # host.assistant NOT declared -> HIGH undeclared-host.
+    da = tmp_path / "undeclared"
+    da.mkdir()
+    _write_module(da, None, code)
+    rep = scan_module(da, ModuleManifest(id="bnod", name="B", capabilities=net))
+    assert any(f.category == "undeclared-host" and f.severity == "HIGH" for f in rep.findings)
+
+    # host.assistant declared -> downgraded to INFO transparency, no undeclared finding.
+    caps = Capabilities(network=NetworkCapability(enabled=True, hosts=["x"]),
+                        host=HostBridgeCapability(assistant=True))
+    db = tmp_path / "declared"
+    db.mkdir()
+    _write_module(db, None, code)
+    rep2 = scan_module(db, ModuleManifest(id="bdec", name="C", capabilities=caps))
+    assert any(f.category == "host-bridge" and f.severity == "INFO" for f in rep2.findings)
+    assert not any(f.category == "undeclared-host" for f in rep2.findings)
 
 
 def test_scanner_cross_community_import_is_medium(tmp_path):

@@ -201,9 +201,9 @@ The module manager UI reflects this: the install panel's **Discover** button lis
 | Severity | Examples detected |
 |---|---|
 | CRITICAL | `eval`/`exec`/`compile`, `os.system`/`os.popen`, dynamic `__import__`/`importlib.import_module` with a non-literal name, `pickle`/`marshal` loads, `ctypes` |
-| HIGH | undeclared network imports/calls, calls to a host outside the declared allowlist, raw sockets, `subprocess` when undeclared or `shell=True`, writes outside declared `write_paths`, reads of undeclared env vars, references to the secret store |
+| HIGH | undeclared network imports/calls, calls to a host outside the declared allowlist, raw sockets, `subprocess` when undeclared or `shell=True`, writes outside declared `write_paths`, reads of undeclared env vars, references to the secret store, host imports (`backend.*`) (reach host internals and do not run under isolation), calling the host bridge `assistant.complete` without declaring `host.assistant` |
 | MEDIUM | out-of-tree file reads, dynamic `getattr`/`setattr` on imported modules, imports of another community module (`data/modules/*`), large opaque base64/hex literals |
-| INFO | over-declaration (a declared capability the code never uses); host imports (`backend.*`) — expected for a community module, surfaced as transparency |
+| INFO | over-declaration (a declared capability the code never uses); declared host-bridge use (`/api/_host/*`), surfaced as transparency |
 
 > **Heuristic review, not a sandbox.** A static scan of code that runs in-process cannot contain a determined author (`getattr(__import__('os'), 'system')`, base64-then-`exec`, runtime-fetched payloads all bypass it). The scan catches low-effort or accidental danger, forces an explicit consent moment, and records what was approved. Absence of findings is not a safety guarantee. The report carries its own limitations text, and every UI surface says the same. There is no "scanned and safe" badge.
 

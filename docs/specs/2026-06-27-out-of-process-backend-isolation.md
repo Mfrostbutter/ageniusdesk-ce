@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass. LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: scanner additions for the new caps (5), youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
+Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass. LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -74,13 +74,11 @@ from "separate subprocess" (v1, light, cross-platform, a raised bar) to
    contract said it could, writes outside its lane, over-reads env. The common
    case. v1 stops this cold.
 2. **Low-effort malicious module.** Tries the obvious: `from backend.config
-   import decrypt_value`, `open("data/secrets.json")`, `get_db()`. Mind the gap in
-   what the scanner catches *today*: a direct secret-store read
-   (`data/secrets.json`) is HIGH, but a bare `import backend.*` is only INFO
-   (`scanner.py:246`), so the import path is not loudly flagged now. v1
-   structurally removes the sanctioned in-process pathway, and the contract flip
-   upgrades host imports to a HIGH "will not run under isolation" finding
-   (Section 6).
+   import decrypt_value`, `open("data/secrets.json")`, `get_db()`. The scanner
+   flags a direct secret-store read (`data/secrets.json`) as HIGH and, as of the
+   phase-5 contract flip, a bare `import backend.*` as HIGH too (it reaches host
+   internals and will not run under isolation). v1 also structurally removes the
+   sanctioned in-process pathway (Section 6).
 3. **Determined malicious module (same-uid).** Knows it is sandboxed and works to
    escape: reads host secrets off disk, reads `/proc/<pid>/environ` of the host or
    sibling workers, fetches a second-stage payload at runtime. **v1 (same-uid
@@ -614,8 +612,10 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
    host resolves provider/key (key never crosses to the worker); no caller-set
    base URL; max_tokens clamped to a hard ceiling. respx tests assert no `tools`
    key is ever sent.
-5. [PARTIAL] Capability model gained `filesystem.read_paths` + `host.{assistant,
-   broadcast}`. Scanner additions (host.* cross-check, host-import HIGH) pending.
+5. [DONE] Capability model gained `filesystem.read_paths` + `host.{assistant,
+   broadcast}`. Scanner: `backend.*` host-import flipped to HIGH ("won't run
+   isolated"); bridge `assistant.complete` use without `host.assistant` is HIGH
+   undeclared; declared bridge use is INFO.
 6. Re-port youtube-research onto the bridge + private store + data importer
    (polling for progress; no broadcast).
 7. Dual-mode flag, docs (honest matrix), CHANGELOG/ROADMAP, tests.

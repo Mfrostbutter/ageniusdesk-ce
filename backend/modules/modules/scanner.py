@@ -69,6 +69,12 @@ _SECRET_PATH_MARKERS = (
     "data\\config.json",
 )
 
+# Host capability bridge endpoints. A module that calls assistant.complete must
+# declare host.assistant; notes-bridge use is surfaced as transparency (the
+# bridge enforces path scoping regardless).
+_BRIDGE_ASSISTANT = "/api/_host/assistant/complete"
+_BRIDGE_NOTES = "/api/_host/notes/"
+
 # A "large opaque literal" heuristic: long strings that are pure base64/hex are a
 # common obfuscation carrier. Tuned to avoid flagging ordinary prose/templates.
 _OPAQUE_MIN_LEN = 800
@@ -239,12 +245,20 @@ class _FileScanner(ast.NodeVisitor):
                     line,
                     "imports subprocess but the manifest does not declare subprocess access",
                 )
-        # Reaching into the AgeniusDesk host (backend.*) is expected for a
-        # community module and surfaced as INFO transparency, not a risk.
+        # Importing the AgeniusDesk host (backend.*) reaches into host internals
+        # AND will not run under out-of-process isolation (the worker blocks the
+        # import). HIGH under the isolation contract: a re-ported module reaches
+        # the host only through the capability bridge, never by importing it.
         # Reaching into the COMMUNITY modules dir (data/modules/*) is another
         # community module poking at a sibling and stays MEDIUM.
         if root == "backend":
-            self._add("INFO", "host-import", line, f"imports the AgeniusDesk host package '{module}'")
+            self._add(
+                "HIGH",
+                "host-import",
+                line,
+                f"imports the AgeniusDesk host package '{module}' — reaches host internals and will not "
+                "run under isolation; use the host bridge instead",
+            )
         elif root == "data" and "modules" in module.split("."):
             self._add("MEDIUM", "cross-module", line, f"imports another community module '{module}'")
 
@@ -415,6 +429,20 @@ class _FileScanner(ast.NodeVisitor):
                 self._add("MEDIUM", "cross-module", node.lineno, "references the modules directory")
             elif len(v) >= _OPAQUE_MIN_LEN and (_BASE64_RE.match(v) or _HEX_RE.match(v)):
                 self._add("MEDIUM", "obfuscation", node.lineno, f"large opaque literal ({len(v)} chars)")
+            # Host-bridge usage (separate from the chain above; a bridge URL won't
+            # match the secret/cross-module/opaque markers).
+            if _BRIDGE_ASSISTANT in norm:
+                if not self.caps.host.assistant:
+                    self._add(
+                        "HIGH",
+                        "undeclared-host",
+                        node.lineno,
+                        "calls the host bridge assistant.complete but the manifest does not declare host.assistant",
+                    )
+                else:
+                    self._add("INFO", "host-bridge", node.lineno, "uses the host bridge assistant.complete")
+            elif _BRIDGE_NOTES in norm:
+                self._add("INFO", "host-bridge", node.lineno, "uses the host notes bridge")
         self.generic_visit(node)
 
 
