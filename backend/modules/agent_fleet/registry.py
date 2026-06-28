@@ -46,6 +46,9 @@ class AgentDef:
     max_tokens: int = 2048
     max_tokens_env: str = ""
     hitl: bool = False
+    # Execution framework. "langgraph" (default) runs through the graph driver;
+    # "pydantic-ai" runs through the PydanticAI adapter. Set by vault discovery.
+    framework: str = "langgraph"
     # Cross-provider reviewer hook. Unused by the v1 fleet (all single-provider),
     # kept so the agent-agnostic runner can build a second model for a future agent
     # without a runner change. Empty = single-provider (the default).
@@ -67,6 +70,7 @@ class AgentDef:
             "description": self.description,
             "badges": list(self.badges),
             "model": self.default_model,
+            "framework": self.framework,
             "reviewer_provider": self.reviewer_provider,
             "reviewer_model": self.reviewer_model,
             "hitl": self.hitl,

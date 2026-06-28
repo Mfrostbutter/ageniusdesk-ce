@@ -627,6 +627,44 @@ function timelineHtml(events) {
   return steps.join('');
 }
 
+// Normalized run view: a trace waterfall from the timestamped event log. Works the
+// same for every framework (LangGraph, PydanticAI, ...) since they all emit ts'd
+// events; LangGraph additionally shows the node graph beside it.
+const _WF_COLORS = {
+  thinking: '#38bdf8', node: '#a78bfa', tool_call: '#34d399',
+  awaiting_approval: '#f59e0b', resumed: '#38bdf8', final: '#34d399', error: '#ef4444',
+};
+function renderWaterfall(events, status) {
+  const evs = (events || []).filter((e) => e && e.ts);
+  if (!evs.length) return '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">Waiting for the first event…</div>';
+  const t0 = evs[0].ts;
+  const t1 = Math.max(evs[evs.length - 1].ts, t0 + 1);
+  const span = Math.max(t1 - t0, 1);
+  const rows = [];
+  for (let i = 0; i < evs.length; i++) {
+    const e = evs[i];
+    if (['started', 'tool_result', 'node_light'].includes(e.phase)) continue;
+    const start = e.ts - t0;
+    const end = (evs[i + 1] ? evs[i + 1].ts : t1) - t0;
+    const dur = Math.max(end - start, 0);
+    const label = e.phase === 'tool_call'
+      ? `${e.tool}(${fmtArgs(e.args)})`
+      : (e.phase === 'node' ? (e.label || e.node || 'step')
+        : (e.phase === 'thinking' ? 'reasoning' : e.phase.replace('_', ' ')));
+    rows.push({ label, kind: e.phase, leftPct: (start / span) * 100, widthPct: Math.max((dur / span) * 100, 1.5), dur });
+  }
+  const durTxt = (d) => (d >= 100 ? (d / 1000).toFixed(1) + 's' : Math.round(d) + 'ms');
+  const bars = rows.map((r) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">
+      <div style="width:160px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);color:var(--text-secondary)" title="${esc(r.label)}">${esc(r.label)}</div>
+      <div style="flex:1;position:relative;height:14px;background:var(--bg-void);border-radius:3px;min-width:80px">
+        <div style="position:absolute;left:${r.leftPct}%;width:${r.widthPct}%;top:0;bottom:0;background:${_WF_COLORS[r.kind] || '#5a6678'};border-radius:3px;opacity:.9"></div>
+      </div>
+      <div style="width:48px;text-align:right;color:var(--text-muted)">${durTxt(r.dur)}</div>
+    </div>`).join('');
+  return `<div style="font-size:10px;color:var(--text-muted);text-align:right;margin-bottom:4px">${(span / 1000).toFixed(1)}s total</div>${bars}`;
+}
+
 function wireApproval(pane, run, proposalMd) {
   const editBox = pane.querySelector('#lg-edit');
   const toggle = pane.querySelector('.lg-edit-toggle');
@@ -738,10 +776,12 @@ async function renderDetail({ stickToBottom = false } = {}) {
 
   // Graph + timeline sit side by side (two columns) when a topology exists, so the
   // tall graph never pushes the timeline (or the approval panel) off-screen.
+  const waterfall = renderWaterfall(events, run.status);
   const timelineCol = `
-    <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Investigation timeline</div>
-    <div id="lg-timeline" style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-elevated, var(--bg-void));padding:6px 14px;max-height:58vh;overflow-y:auto">
-      ${timeline || '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">Waiting for the first event…</div>'}
+    <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Run waterfall</div>
+    <div id="lg-timeline" style="border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-elevated, var(--bg-void));padding:8px 14px;max-height:58vh;overflow-y:auto">
+      ${waterfall}
+      ${timeline ? `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:11px;color:var(--text-muted)">Step detail</summary><div style="margin-top:6px">${timeline}</div></details>` : ''}
     </div>`;
   const topRow = graphPanel
     ? `<div style="display:grid;grid-template-columns:minmax(340px,1fr) minmax(0,1fr);gap:16px;align-items:start;margin-bottom:14px">

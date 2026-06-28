@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 from typing import Any, Optional
 
@@ -288,7 +289,7 @@ def _make_emit(run_id: str, events: list[dict]):
     """
 
     async def emit(payload: dict) -> None:
-        event = {"run_id": run_id, **payload}
+        event = {"run_id": run_id, "ts": int(time.time() * 1000), **payload}
         events.append(event)
         await manager.broadcast("langgraph:run", event)
         await storage.update_run(run_id, events=events)
@@ -431,6 +432,61 @@ async def _drive(graph, inp, config, emit, AIMessage, ToolMessage) -> dict:
     return {"status": "done", "final_md": final_md}
 
 
+async def _run_pydantic(agent, task: str, api_key: str, emit) -> tuple:
+    """Run a PydanticAI agent and emit the normalized run events so the same
+    waterfall + timeline render. Uses agent.run() then replays the message history
+    as tool_call/tool_result events (best-effort; the run is not live-streamed yet).
+    Returns (final_md, native_meta). The graph.py factory built a pydantic_ai.Agent
+    and ignores the llm/checkpointer args."""
+    os.environ["ANTHROPIC_API_KEY"] = api_key  # pydantic-ai resolves the key from env
+    pa = agent.build(None, None)
+    await emit({"phase": "thinking", "node": "agent", "text": "Running the PydanticAI agent."})
+    result = await pa.run(task)
+
+    # Replay the message history as tool steps (shape varies across versions).
+    try:
+        for msg in result.all_messages():
+            for part in getattr(msg, "parts", []) or []:
+                kind = type(part).__name__
+                if kind == "ToolCallPart":
+                    args = getattr(part, "args", {})
+                    await emit({
+                        "phase": "tool_call", "node": "tools",
+                        "tool": getattr(part, "tool_name", "tool"),
+                        "args": args if isinstance(args, dict) else {"input": str(args)[:200]},
+                    })
+                elif kind == "ToolReturnPart":
+                    await emit({
+                        "phase": "tool_result", "node": "tools",
+                        "tool": getattr(part, "tool_name", "tool"),
+                        "preview": str(getattr(part, "content", ""))[:_PREVIEW_CHARS],
+                    })
+    except Exception:  # noqa: BLE001 - steps are a nicety; never fail the run on them
+        pass
+
+    output = getattr(result, "output", None)
+    if output is None:
+        output = getattr(result, "data", "")
+    final_md = output if isinstance(output, str) else str(output)
+
+    meta = {"total_tokens": 0, "total_cost": 0.0, "detail": {}}
+    try:
+        u = result.usage()
+        it = int(getattr(u, "request_tokens", 0) or getattr(u, "input_tokens", 0) or 0)
+        ot = int(getattr(u, "response_tokens", 0) or getattr(u, "output_tokens", 0) or 0)
+        tt = int(getattr(u, "total_tokens", 0) or (it + ot))
+        pi, po = _price_for(agent.default_model)
+        cost = round(it / 1_000_000 * pi + ot / 1_000_000 * po, 6)
+        meta = {
+            "total_tokens": tt, "total_cost": cost,
+            "detail": {"input_tokens": it, "output_tokens": ot, "total_tokens": tt,
+                       "total_cost": cost, "steps": []},
+        }
+    except Exception:  # noqa: BLE001
+        pass
+    return final_md, meta
+
+
 async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) -> None:
     """Execute one agent run end to end. Fire-and-forget from the router.
 
@@ -478,6 +534,30 @@ async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) 
             int(os.environ.get(agent.max_tokens_env, agent.max_tokens))
             if agent.max_tokens_env else agent.max_tokens
         )
+
+        # PydanticAI agents run through their own adapter, not the LangGraph driver.
+        if getattr(agent, "framework", "langgraph") == "pydantic-ai":
+            task = agent.kickoff(error_id, prompt)
+            await emit({
+                "phase": "started", "task": task, "model": model,
+                "agent_id": agent.id, "agent_name": agent.name,
+            })
+            try:
+                final_md, meta = await _run_pydantic(agent, task, api_key, emit)
+            except Exception as e:  # noqa: BLE001 - terminal state must be written
+                await fail(f"PydanticAI run failed: {type(e).__name__}: {e}")
+                return
+            await emit({
+                "phase": "final", "triage_md": final_md, "trace_url": None,
+                "total_tokens": meta["total_tokens"], "total_cost": meta["total_cost"],
+                "usage_detail": meta.get("detail", {}),
+            })
+            await storage.update_run(
+                run_id, status="done", triage_md=final_md, trace_url="",
+                total_tokens=meta["total_tokens"], total_cost=meta["total_cost"],
+                usage_detail=meta.get("detail", {}), events=events,
+            )
+            return
 
         # Primary model through the provider seam (anthropic today, not hard-wired).
         llm = make_chat_model("anthropic", model, max_tokens, api_key)

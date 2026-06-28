@@ -88,11 +88,9 @@ def _to_agentdef(agent_dir: Path, m: AgentManifest) -> AgentDef:
     mod_name = f"agentfleet_vault_{m.id}"
 
     def build(llm, checkpointer=None, **_kw):
-        if (m.framework or "langgraph").lower() != "langgraph":
-            raise NotImplementedError(
-                f"agent '{m.id}': the {m.framework} adapter is not available yet "
-                "(PydanticAI lands in a later build)."
-            )
+        # Imports the agent's graph.py and calls its factory. The runner decides HOW
+        # to execute what comes back (LangGraph driver vs PydanticAI adapter), per
+        # the agent's framework; a PydanticAI factory ignores the llm/checkpointer.
         from .tools_local import resolve_tools
 
         mod = _load_module(entry_path, mod_name)
@@ -142,6 +140,7 @@ def _to_agentdef(agent_dir: Path, m: AgentManifest) -> AgentDef:
         max_tokens=m.max_tokens,
         max_tokens_env=m.max_tokens_env,
         hitl=m.hitl,
+        framework=m.framework,
         run_hint=m.run_hint,
         uses_errors=m.uses_errors,
     )

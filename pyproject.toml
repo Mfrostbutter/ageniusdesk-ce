@@ -56,6 +56,7 @@ langgraph = [
     "langchain-anthropic==1.4.5",
     "langchain-openai>=1.0.0,<2.0.0",
     "langsmith==0.8.14",
+    "pydantic-ai==1.99.0",
 ]
 dev = [
     "ruff>=0.7.0",
