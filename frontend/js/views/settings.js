@@ -626,8 +626,85 @@ window.__instCredentials = (id, name, url, color) => {
 
 // ── MCP Servers ─────────────────────────────────────────────────────────────
 
+async function renderN8nMcpCard() {
+  const host = document.getElementById('n8n-mcp-card');
+  if (!host) return;
+  let s;
+  try {
+    s = await get('/api/mcp/n8n-mcp/status');
+  } catch {
+    host.innerHTML = '';
+    return;
+  }
+  const badge = (text, color) =>
+    `<span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55;font-size:11px">${esc(text)}</span>`;
+  let state = '';
+  let action = '';
+  if (s.registered && s.mode === 'full') {
+    state = badge('Active · full', '#34d399');
+    action = `<button class="btn btn-sm btn-ghost" id="n8nmcp-disable">Remove</button>`;
+  } else if (s.registered) {
+    state = badge('Active · docs', '#34d399');
+    action = `<button class="btn btn-sm btn-primary" id="n8nmcp-upgrade">Wire to active instance</button>`
+      + ` <button class="btn btn-sm btn-ghost" id="n8nmcp-disable">Remove</button>`;
+  } else if (s.docker_available) {
+    state = badge('Not installed', '#fbbf24');
+    action = `<button class="btn btn-sm btn-primary" id="n8nmcp-enable">Enable</button>`;
+  } else {
+    state = badge('Docker unavailable', '#ff6d5a');
+  }
+  const runNote = s.registered
+    ? (s.container_running ? ' Container healthy.' : ' Container not running — try Enable to restart it.')
+    : '';
+  host.innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">n8n Intelligence (n8n-mcp)</span>
+        ${state}
+      </div>
+      <p style="font-size:12px;color:var(--text-secondary);margin:6px 0 10px">
+        A built-in MCP server giving the assistant and Code Lab real n8n node knowledge, search, and workflow
+        validation. Docs-only by default (no n8n credentials); wire it to the active instance for workflow
+        create/update tools.<span style="color:var(--text-dim)">${esc(runNote)}</span>
+      </p>
+      ${(!s.docker_available && !s.registered)
+        ? `<div style="font-size:11px;color:var(--text-dim);background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px">Docker isn't reachable from the dashboard, so n8n-mcp can't auto-start. Run it yourself in HTTP mode and add it below, or give the dashboard Docker access and reload.</div>`
+        : ''}
+      ${action ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${action}</div>` : ''}
+      <div id="n8nmcp-result" style="font-size:12px;margin-top:8px"></div>
+    </div>`;
+
+  const result = document.getElementById('n8nmcp-result');
+  const run = async (path, btn, busyText) => {
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyText;
+    result.textContent = '';
+    try {
+      const r = await post(path, {});
+      if (r.ok) {
+        toast.success('n8n-mcp updated');
+        renderN8nMcpCard();
+      } else {
+        result.innerHTML = `<span style="color:var(--error)">${esc(r.error || 'Failed')}</span>`;
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    } catch (e) {
+      result.innerHTML = `<span style="color:var(--error)">${esc(e.message)}</span>`;
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  };
+  document.getElementById('n8nmcp-enable')?.addEventListener('click', (e) => run('/api/mcp/n8n-mcp/enable', e.target, 'Starting…'));
+  document.getElementById('n8nmcp-upgrade')?.addEventListener('click', (e) => run('/api/mcp/n8n-mcp/upgrade', e.target, 'Wiring…'));
+  document.getElementById('n8nmcp-disable')?.addEventListener('click', (e) => run('/api/mcp/n8n-mcp/disable', e.target, 'Removing…'));
+}
+
+
 export async function renderMCP(el) {
   el.innerHTML = `
+    <div id="n8n-mcp-card" style="margin-bottom:16px"></div>
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
         <span class="card-title">MCP Servers</span>
@@ -686,6 +763,8 @@ export async function renderMCP(el) {
       <div id="all-tools-list"><div class="spinner"></div></div>
     </div>
   `;
+
+  renderN8nMcpCard().catch(() => {});
 
   let mcpTokenField = null;
   document.getElementById('add-mcp-btn').addEventListener('click', async () => {
