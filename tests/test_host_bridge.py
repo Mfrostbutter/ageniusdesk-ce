@@ -129,6 +129,61 @@ def test_read_only_path(bridge_client):
                        json={"path": "shared/missing.md"}, headers=_h(token)).status_code == 404
 
 
+# ── notes.append (write-scoped) ───────────────────────────────────────────────
+
+
+def test_append_creates_and_grows(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    assert client.post("/api/_host/notes/append",
+                       json={"path": "research/app.md", "content": "line1"}, headers=_h(token)).status_code == 200
+    client.post("/api/_host/notes/append", json={"path": "research/app.md", "content": "line2"}, headers=_h(token))
+    body = client.post("/api/_host/notes/read", json={"path": "research/app.md"}, headers=_h(token)).json()["content"]
+    assert "line1" in body and "line2" in body
+
+
+def test_append_outside_scope_forbidden(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    assert client.post("/api/_host/notes/append",
+                       json={"path": "user/x.md", "content": "x"}, headers=_h(token)).status_code == 403
+
+
+def test_append_size_limit(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    big = "a" * (bridge.MAX_NOTE_BYTES + 1)
+    assert client.post("/api/_host/notes/append",
+                       json={"path": "research/big.md", "content": big}, headers=_h(token)).status_code == 413
+
+
+# ── notes.search (results scoped to read paths) ───────────────────────────────
+
+
+def test_search_scoped_to_read_paths(bridge_client):
+    client, mint = bridge_client
+    seed = mint(write_paths=["research", "user"])
+    term = "zzquniquesearchterm"
+    client.post("/api/_host/notes/write",
+                json={"path": "research/find.md", "content": f"hello {term} world"}, headers=_h(seed))
+    client.post("/api/_host/notes/write",
+                json={"path": "user/secret.md", "content": f"private {term} data"}, headers=_h(seed))
+    token = mint(read_paths=["research"])  # cannot see user/
+    r = client.post("/api/_host/notes/search", json={"query": term}, headers=_h(token))
+    assert r.status_code == 200, r.text
+    paths = [x["path"] for x in r.json()["results"]]
+    assert "research/find.md" in paths
+    assert not any(p.startswith("user/") for p in paths)
+
+
+def test_search_requires_read_scope(bridge_client):
+    client, mint = bridge_client
+    token = mint()  # no read paths
+    r = client.post("/api/_host/notes/search", json={"query": "anything"}, headers=_h(token))
+    assert r.status_code == 200
+    assert r.json()["results"] == []
+
+
 # ── folders ───────────────────────────────────────────────────────────────────
 
 
@@ -165,14 +220,14 @@ def test_symlink_escape_blocked(bridge_client):
     link = research / "evil"
     _try_symlink(link, Path("..") / "user")
     try:
-        # Write THROUGH the symlink would land in user/secret.md (out of scope).
+        # Write THROUGH the symlink would land in user/symesc.md (out of scope).
         w = client.post("/api/_host/notes/write",
-                        json={"path": "research/evil/secret.md", "content": "x"}, headers=_h(token))
+                        json={"path": "research/evil/symesc.md", "content": "x"}, headers=_h(token))
         assert w.status_code == 403, w.text
-        assert not (storage.VAULT_DIR / "user" / "secret.md").exists()  # nothing written
+        assert not (storage.VAULT_DIR / "user" / "symesc.md").exists()  # nothing written
         # Read and make-folder through the symlink are likewise refused.
         assert client.post("/api/_host/notes/read",
-                           json={"path": "research/evil/secret.md"}, headers=_h(token)).status_code == 403
+                           json={"path": "research/evil/symesc.md"}, headers=_h(token)).status_code == 403
         assert client.post("/api/_host/notes/make-folder",
                            json={"rel": "research/evil/sub"}, headers=_h(token)).status_code == 403
     finally:

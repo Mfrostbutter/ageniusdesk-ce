@@ -28,7 +28,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from backend.modules.notes import storage
+from backend.modules.notes import index, storage
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +187,12 @@ class _PathPayload(BaseModel):
     path: str
 
 
+class _SearchPayload(BaseModel):
+    query: str = ""
+    tag: str = ""
+    limit: int = 30
+
+
 class _RelPayload(BaseModel):
     rel: str
 
@@ -209,6 +215,14 @@ async def notes_write(payload: _WritePayload, grant: BridgeGrant = Depends(_requ
     return await storage.write(rel, payload.content)
 
 
+@bridge_app.post("/api/_host/notes/append")
+async def notes_append(payload: _WritePayload, grant: BridgeGrant = Depends(_require_grant)):
+    if len(payload.content.encode("utf-8")) > MAX_NOTE_BYTES:
+        raise HTTPException(status_code=413, detail=f"note exceeds the {MAX_NOTE_BYTES}-byte write limit")
+    rel = _note_rel_in_scope(payload.path, grant.write_paths)
+    return await storage.append(rel, payload.content)
+
+
 @bridge_app.post("/api/_host/notes/read")
 async def notes_read(payload: _PathPayload, grant: BridgeGrant = Depends(_require_grant)):
     rel = _note_rel_in_scope(payload.path, grant.read_paths)
@@ -216,6 +230,16 @@ async def notes_read(payload: _PathPayload, grant: BridgeGrant = Depends(_requir
         return {"path": rel, "content": storage.read(rel)}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="note not found")
+
+
+@bridge_app.post("/api/_host/notes/search")
+async def notes_search(payload: _SearchPayload, grant: BridgeGrant = Depends(_require_grant)):
+    """Full-text search the vault, but return ONLY hits under the module's declared
+    read paths (so a module cannot read snippets of notes outside its scope)."""
+    limit = max(1, min(int(payload.limit or 30), 100))
+    results = await index.search(payload.query or "", payload.tag or None, limit)
+    scoped = [r for r in results if _under(r.get("path", ""), grant.read_paths)]
+    return {"results": scoped}
 
 
 @bridge_app.post("/api/_host/notes/delete")

@@ -319,8 +319,10 @@ Two namespaces are needed by the reference consumer (`notes.*`,
 | Method | Args | Capability check |
 |---|---|---|
 | `notes.write` | `path`, `content` | `path` resolves under vault AND under a declared write path (reuse `storage.resolve()` traversal guard; reject `..`, absolute, backslash) |
+| `notes.append` | `path`, `content` | under a declared write path (per-call byte cap, like write) |
 | `notes.read` | `path` | under a declared read path |
-| `notes.list_folders` | `rel` | under a declared read path |
+| `notes.search` | `query`, `tag?`, `limit?` | FTS over the vault; results FILTERED to the declared read paths (no out-of-scope snippets) |
+| `notes.list_folders` / `notes.list_files` | `rel` | under a declared read path |
 | `notes.make_folder` | `rel` | under a declared write path |
 | `notes.move` | `from`, `to` | both under declared write paths |
 | `notes.delete` / `notes.index_remove` | `path` | under a declared write path |
