@@ -223,6 +223,7 @@ in the Harness.
 | `research/` | Output from add-ins (research modules, etc.) | Add-ins |
 | `shared/` | Canonical facts (company info, conventions) | Both |
 | `sessions/` | Per-session logs | The agents |
+| `skills/` | Curated n8n skills the assistant loads on demand | Seeded (yours to edit) |
 
 `AGENTS.md` at the root holds the instructions that steer every agent.
 Edit it here, or from the Harness Instructions panel.

@@ -70,6 +70,10 @@ prompt explicitly overrides a section marked overrideable above.
   tools (workspace_read/write/append/search over the Harness files), knowledge
   sources (MCP servers, Qdrant), error history, secrets store.
 - Use web search only when no first-party source has the answer.
+- For any n8n workflow task (building or editing a workflow, configuring nodes,
+  writing expressions or Code nodes, error handling, debugging a failure),
+  consult the n8n skill library in `skills/` first (start at `skills/README.md`),
+  and pair it with the n8n-mcp tools.
 - Before calling a destructive tool (delete, overwrite, recreate), state what
   you are about to do and wait for confirmation unless the operator has already
   confirmed in this turn.

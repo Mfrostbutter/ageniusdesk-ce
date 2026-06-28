@@ -73,6 +73,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("baseline ensure_baseline failed: %s", e)
 
+    # Harness skill library: seed the curated n8n skills into the vault on first
+    # run so the assistant + Code Lab have focused n8n guidance out of the box.
+    try:
+        from backend.modules.notes.skills_seed import ensure_skills
+        await ensure_skills()
+    except Exception as e:
+        logger.exception("skills ensure_skills failed: %s", e)
+
     # Cost observability: refresh the LLM price book from OpenRouter in the
     # background (best-effort; bundled defaults + last-good cache cover failures).
     try:

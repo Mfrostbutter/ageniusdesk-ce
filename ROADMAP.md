@@ -102,8 +102,8 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 - [ ] **More container templates**: MySQL, MongoDB, Minio, additional databases and services
 - [ ] **Richer Code Lab**: code snippets library, n8n node documentation sidebar, template expansion
 - [ ] **Additional knowledge connectors**: HTTP fetch, GitHub, API connectors beyond Qdrant
-- [ ] **Harness skills section**: a library of skills in the Harness that agent instructions can point at for specific areas of concern, so an agent loads focused, domain-specific guidance on demand
-- [ ] **Curate high-quality n8n skills**: source and vet excellent n8n-focused skills (node config, expressions, workflow patterns) to ship as starting content for the Harness skills section
+- [x] **Harness skills section**: a library of skills in the Harness (`skills/`) that agent instructions point at, so an agent loads focused, domain-specific guidance on demand. Seeded into the vault on first run; router note at `skills/README.md` (shipped — see CHANGELOG [Unreleased])
+- [x] **Curate high-quality n8n skills**: the full czlonkowski/n8n-skills set (MIT) — workflow patterns, node config, expressions, Code nodes, error handling, validation, agents, and more — vendored as the starting content for the Harness skills section
 - [ ] **Workflow version history**: snapshot on import, diff viewer, restore from snapshot
 - [ ] **Scheduled backups**: automated per-instance backup with configurable retention
 - [ ] **Health monitoring**: configurable endpoint polling, uptime tracking, SLA dashboards

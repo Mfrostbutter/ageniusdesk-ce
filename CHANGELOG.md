@@ -4,6 +4,9 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+### Added
+- **n8n skill library in the Harness.** The harness now ships a curated library of focused n8n skills under `skills/`, seeded into your vault on first run. Each skill is a `SKILL.md` entry point plus reference docs covering one area (workflow patterns, node configuration, expressions, JavaScript/Python Code nodes, error handling, validation, AI agents, binary/data, sub-workflows, the n8n-mcp tools, multi-instance, and self-hosting), with a router note (`skills/README.md`) the in-app assistant reads first to load the right guidance on demand. Pair it with the n8n-mcp MCP server and Code Lab to build workflows correctly the first time. Seeded once and never overwritten, so your edits stick; opt out with `AGD_SEED_SKILLS=false`. Vendored from [czlonkowski/n8n-skills](https://github.com/czlonkowski/n8n-skills) (MIT), with the license and notices kept alongside the files. The seed `AGENTS.md` now points agents at the library.
+
 ## [0.3.0] - 2026-06-28
 
 ### Added
