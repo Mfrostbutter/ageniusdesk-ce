@@ -112,6 +112,14 @@ docker compose up -d --build
 
 Open http://localhost:3000. A setup wizard walks you through adding your first n8n instance.
 
+> **Port 3000 already in use?** It is a common dev port, so a collision is likely if you already run something there (often a prior AgeniusDesk). Pick a free host port with `PORT`, in `.env` or inline:
+>
+> ```bash
+> PORT=8080 docker compose up -d --build   # then open http://localhost:8080
+> ```
+>
+> The container always listens on 3000 internally; `PORT` only changes the host port. If `docker compose up` prints `Bind for 0.0.0.0:3000 failed: port is already allocated`, that is the collision, set `PORT` to a free port and re-run.
+
 ### Bare Metal
 
 Requires Python 3.10 or later.

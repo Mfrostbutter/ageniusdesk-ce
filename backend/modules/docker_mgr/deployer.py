@@ -480,6 +480,46 @@ async def recreate_bundle(
     await deploy_bundle(deploy_id, template, field_values, public_host=public_host)
 
 
+async def _published_host_ports(docker) -> dict[int, str]:
+    """Map host port -> container name for every RUNNING container, so a deploy can
+    warn about a collision before Docker fails the bind. Best-effort; {} on error."""
+    out: dict[int, str] = {}
+    try:
+        containers = await docker.containers.list()
+    except Exception:  # noqa: BLE001 - the check must never block a deploy
+        return out
+    for c in containers:
+        info = getattr(c, "_container", {}) or {}
+        names = info.get("Names") or []
+        name = (names[0] if names else info.get("Id", "")).lstrip("/")
+        for p in info.get("Ports") or []:
+            pub = p.get("PublicPort")
+            if pub:
+                out.setdefault(int(pub), name)
+    return out
+
+
+def _requested_host_ports(container_config: dict) -> list[int]:
+    """The host ports a container_config will bind (HostConfig.PortBindings)."""
+    ports: list[int] = []
+    bindings = ((container_config.get("HostConfig") or {}).get("PortBindings")) or {}
+    for spec in bindings.values():
+        for b in spec or []:
+            hp = (b or {}).get("HostPort")
+            if hp:
+                try:
+                    ports.append(int(hp))
+                except (TypeError, ValueError):
+                    pass
+    return ports
+
+
+def _is_port_conflict(message: str) -> bool:
+    """True when a Docker/OS error message is a host-port bind collision."""
+    m = (message or "").lower()
+    return "already allocated" in m or "address already in use" in m
+
+
 async def deploy(
     deploy_id: str,
     template_id: str,
@@ -551,6 +591,25 @@ async def deploy(
         )
         container_name = f"agd-{instance_name}"
 
+        # 0. Port-collision pre-check: fail fast with a clear message instead of a
+        # cryptic Docker bind error deep in the start step. A port held by the very
+        # container we are about to replace (a re-deploy of the same instance) is
+        # not a conflict — it is removed before the new one starts. Best-effort.
+        try:
+            docker = docker_client._get_client()
+            used = await _published_host_ports(docker)
+            for hp in _requested_host_ports(container_config):
+                holder = used.get(hp)
+                if holder and holder != container_name:
+                    await error(
+                        f"Host port {hp} is already in use by container '{holder}'. "
+                        f"Pick a different Host port for this deploy, or stop '{holder}' first."
+                    )
+                    await q.put(None)
+                    return
+        except Exception:  # noqa: BLE001 - never let the check itself block a deploy
+            pass
+
         # 1. Pull image
         await step(f"Pulling {image}…", "This may take a few minutes on first run.")
         try:
@@ -612,7 +671,15 @@ async def deploy(
         try:
             await container.start()
         except Exception as exc:
-            await error(f"Container start failed: {exc}")
+            if _is_port_conflict(str(exc)):
+                req = ", ".join(str(p) for p in _requested_host_ports(container_config)) or "the requested port"
+                await error(
+                    f"Host port {req} is already in use on this host (often another process "
+                    f"holding it, e.g. an n8n started outside AgeniusDesk). Pick a different "
+                    f"Host port, or free that port, then re-deploy."
+                )
+            else:
+                await error(f"Container start failed: {exc}")
             await q.put(None)
             return
 

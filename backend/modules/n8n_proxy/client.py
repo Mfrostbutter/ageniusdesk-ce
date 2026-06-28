@@ -704,7 +704,7 @@ async def inject_dashboard_trigger(workflow_id: str) -> dict[str, Any]:
         "name": w.get("name") or "Workflow",
         "nodes": nodes + [new_node],
         "connections": connections,
-        "settings": w.get("settings") or {},
+        "settings": {k: v for k, v in (w.get("settings") or {}).items() if k in _ALLOWED_WF_SETTINGS},
     }
     try:
         await _put(f"/api/v1/workflows/{workflow_id}", put_body)
@@ -825,7 +825,7 @@ async def remove_dashboard_trigger(workflow_id: str) -> dict[str, Any]:
         "name": w.get("name") or "Workflow",
         "nodes": nodes,
         "connections": connections,
-        "settings": w.get("settings") or {},
+        "settings": {k: v for k, v in (w.get("settings") or {}).items() if k in _ALLOWED_WF_SETTINGS},
     }
     try:
         await _put(f"/api/v1/workflows/{workflow_id}", put_body)
@@ -908,21 +908,24 @@ async def import_workflow(
 
     Optionally overrides the workflow name and attaches tags (created if missing).
     """
-    # n8n's Public API rejects these fields as read-only on POST /workflows.
-    # `active` and `tags` must be set via separate endpoints after create.
-    readonly_on_create = {
-        "id", "active", "tags", "createdAt", "updatedAt", "versionId",
-        "activeVersionId", "versionCounter", "triggerCount", "shared",
-        "activeVersion", "staticData", "meta", "pinData",
-    }
-    clean = {k: v for k, v in workflow_data.items() if k not in readonly_on_create}
+    # n8n's Public API create schema is strict (additionalProperties: false): it
+    # accepts ONLY name, nodes, connections, and settings, and 400s with
+    # "request/body must NOT have additional properties" on anything else a full
+    # export carries (id, active, tags, pinData, versionId, meta, staticData,
+    # isArchived, triggerCount, ...). An allowlist is robust to any extra or future
+    # field; a denylist silently breaks whenever n8n adds one. `active` and `tags`
+    # are applied via separate endpoints after create.
+    allowed = ("name", "nodes", "connections", "settings")
+    clean = {k: workflow_data[k] for k in allowed if k in workflow_data}
 
-    # n8n requires `settings` on create (at least an empty object)
+    # n8n requires settings + connections on create (at least empty objects).
     clean.setdefault("settings", {})
+    clean.setdefault("connections", {})
 
     override = (name_override or "").strip()
     if override:
         clean["name"] = override
+    clean.setdefault("name", "Imported workflow")
 
     try:
         result = await _post("/api/v1/workflows", clean)
