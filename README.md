@@ -26,7 +26,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 | **YouTube Research (community module)** | **The Harness, populated** |
 | ![Research console: paste a YouTube link, get a structured breakdown filed into the vault](docs/screenshots/research.png) | ![The notes vault with research auto-filed under research/ai-assisted-coding](docs/screenshots/harness-populated.png) |
 | **Agent Fleet** | **Build an agent in Code Lab** |
-| ![A managed fleet of LangGraph and PydanticAI agents: catalog, live graph, run waterfall, and human-in-the-loop approval](docs/screenshots/agent-fleet.png) | ![Code Lab Agent mode: framework toggle, agent starters, and Register to Agent Fleet](docs/screenshots/agent-builder.png) |
+| ![A managed fleet of LangGraph and PydanticAI agents: catalog, live graph, run waterfall, and human-in-the-loop approval](docs/screenshots/agent-fleet.png) | ![Code Lab Agent Builder: framework toggle, agent starters, and Register to Agent Fleet](docs/screenshots/agent-builder.png) |
 | **Secrets store** | **Import / Export** |
 | ![Fernet-encrypted secret store with $NAME references and masked values](docs/screenshots/secrets-store.png) | ![Import n8n workflows from JSON with tags and a title override](docs/screenshots/import-export.png) |
 
@@ -48,7 +48,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 - Syntax highlighting, autocomplete, and n8n node introspection
 - AI assistance to generate or explain code
 - One-click "Send to n8n" to deploy directly
-- **Agent mode:** build LangGraph or PydanticAI agents (ReAct, human-in-the-loop, and parallel fan-out starters) with AI assist, then Register them to the Agent Fleet
+- **Agent Builder:** build LangGraph or PydanticAI agents (ReAct, human-in-the-loop, and parallel fan-out starters) with AI assist, then Register them to the Agent Fleet
 
 **Agent Fleet**
 - A managed fleet of agents, operated the way AgeniusDesk operates n8n: a catalog, run with a **live graph + a normalized run waterfall**, **human-in-the-loop** approve/resume, and **LangSmith tracing** with per-call token/cost

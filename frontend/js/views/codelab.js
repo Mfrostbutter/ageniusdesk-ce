@@ -25,7 +25,7 @@ export async function render(container) {
             <div style="display:flex;border:1px solid var(--border-dim);border-radius:4px;overflow:hidden">
               <button id="mode-code" class="btn btn-sm btn-primary" style="border-radius:0;font-size:11px" title="Write n8n Code-node code">Code Node</button>
               <button id="mode-workflow" class="btn btn-sm" style="border-radius:0;font-size:11px" title="Describe a workflow and generate its JSON">Workflow Builder</button>
-              <button id="mode-agent" class="btn btn-sm" style="border-radius:0;font-size:11px" title="Build a LangGraph / PydanticAI agent for the Agent Fleet">Agent</button>
+              <button id="mode-agent" class="btn btn-sm" style="border-radius:0;font-size:11px" title="Build a LangGraph / PydanticAI agent for the Agent Fleet">Agent Builder</button>
             </div>
             <span id="agent-mode-tools" style="display:none;align-items:center;gap:8px">
               <select id="agent-framework" title="Agent framework" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:4px 8px;font-family:var(--font-mono);width:auto;margin:0">

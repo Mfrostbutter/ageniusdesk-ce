@@ -23,9 +23,9 @@ A toggle at the top left switches the whole view between three modes.
 |---|---|---|---|
 | Code Node | "Code Node" | A JavaScript/TypeScript/Python snippet for one n8n Code node | "Send to n8n" |
 | Workflow Builder | "Workflow Builder" | A complete n8n workflow as JSON | "Import to n8n" |
-| Agent | "Agent" | A LangGraph or PydanticAI agent (Python) | "Register to Agent Fleet" |
+| Agent Builder | "Agent Builder" | A LangGraph or PydanticAI agent (Python) | "Register to Agent Fleet" |
 
-Switching modes swaps the editor language and, if the current content does not match the new mode, loads a starter (a code template in Code Node mode, a one-node manual-trigger scaffold in Workflow Builder mode, an agent scaffold in Agent mode). Content that already matches is preserved. The template + language pickers show in Code Node mode; a framework + starter picker shows in Agent mode.
+Switching modes swaps the editor language and, if the current content does not match the new mode, loads a starter (a code template in Code Node mode, a one-node manual-trigger scaffold in Workflow Builder mode, an agent scaffold in Agent Builder mode). Content that already matches is preserved. The template + language pickers show in Code Node mode; a framework + starter picker shows in Agent Builder mode.
 
 ## Code Node mode walkthrough
 
@@ -80,16 +80,16 @@ Workflow Builder generates a complete, importable workflow JSON from a plain-lan
 
 > Tip: the built-in [`n8n-mcp`](https://github.com/czlonkowski/n8n-mcp) server by czlonkowski (MIT) gives the assistant deep n8n node knowledge plus workflow validation and create/update tools, which improves the accuracy of generated node types and parameters. It auto-installs when Docker is available (Settings → MCP Servers → n8n Intelligence). See [MCP server tools](ai-assistant.md#mcp-server-tools).
 
-## Agent mode
+## Agent Builder mode
 
-Agent mode builds a LangGraph or PydanticAI agent that runs in the [Agent Fleet](agent-fleet.md).
+Agent Builder mode builds a LangGraph or PydanticAI agent that runs in the [Agent Fleet](agent-fleet.md).
 
-1. Click **Agent** in the mode toggle. The editor switches to Python and loads an agent scaffold.
+1. Click **Agent Builder** in the mode toggle. The editor switches to Python and loads an agent scaffold.
 2. Pick a **framework** (LangGraph or PydanticAI) and a **starter** (ReAct, human-in-the-loop, parallel fan-out, or blank). Changing either reloads the scaffold.
 3. Write the agent. A LangGraph agent is a pure factory — `build(llm, tools, checkpointer=None)` returning a compiled graph — importing only langgraph/langchain; AgeniusDesk injects the model and the tools you select. The AI sidebar is agent-aware (quick actions: Explain, Add a tool, Make it HITL, Fix).
 4. Click **Register to Agent Fleet**. Name it, pick its model, select the tools it may call, and toggle human-in-the-loop. It is written to your vault under `agents/<id>/` (a pure `graph.py` factory + an `agent.json` manifest) and appears in the Agent Fleet immediately, no restart.
 
-Agent mode needs the agent dependency extra installed (`AGD_EXTRAS="assistant,langgraph"`); without it the Register button still saves the files, but running needs the extra. Full details, including running + monitoring, are in [Agent Fleet](agent-fleet.md).
+Agent Builder mode needs the agent dependency extra installed (`AGD_EXTRAS="assistant,langgraph"`); without it the Register button still saves the files, but running needs the extra. Full details, including running + monitoring, are in [Agent Fleet](agent-fleet.md).
 
 ## Using the AI Code Assistant
 
@@ -158,7 +158,7 @@ The OUTPUT panel below the editor records import results (workflow IDs, names). 
 
 ## Related
 
-- [Agent Fleet](agent-fleet.md) - run + monitor the LangGraph / PydanticAI agents you build in Agent mode
+- [Agent Fleet](agent-fleet.md) - run + monitor the LangGraph / PydanticAI agents you build in Agent Builder mode
 - [AI Assistant & Models](ai-assistant.md) - configure the provider, model, instructions, and fallback for the Code Lab area
 - [Secrets](secrets.md) - store the provider API keys Code Lab resolves by reference
 - [The Harness](knowledge.md) - shared house rules prepended to every assistant area

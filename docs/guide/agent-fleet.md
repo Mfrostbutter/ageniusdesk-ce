@@ -19,8 +19,8 @@ Agent Fleet needs two things in the AgeniusDesk environment:
    ```
 
    (or `pip install '.[langgraph]'` on bare metal). Without it the **Agent Fleet**
-   view still loads, but a run reports the missing extra and Code Lab's Agent mode
-   shows an "install the extra" nudge.
+   view still loads, but a run reports the missing extra and Code Lab's Agent
+   Builder shows an "install the extra" nudge.
 
 2. **An Anthropic API key.** The built-in agents run on Claude. The key resolves
    from the environment (`ANTHROPIC_API_KEY` / `ANTHROPIC_KEY`) or the encrypted
@@ -64,9 +64,9 @@ approve, edit, or reject to resume. Past runs replay their full timeline on clic
 
 ## Building your own agent
 
-Build agents in **Code Lab → Agent mode** (see the [Code Lab guide](code-lab.md)):
+Build agents in **Code Lab → Agent Builder** (see the [Code Lab guide](code-lab.md)):
 
-1. Switch the mode toggle to **Agent**.
+1. Switch the mode toggle to **Agent Builder**.
 2. Pick a **framework** (LangGraph or PydanticAI) and a **starter** (ReAct,
    human-in-the-loop, parallel fan-out, or blank). The editor loads a scaffold.
 3. Write the agent. The AI sidebar is agent-aware and will help. A LangGraph agent
