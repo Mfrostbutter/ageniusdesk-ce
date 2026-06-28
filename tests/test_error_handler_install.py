@@ -52,3 +52,24 @@ async def test_install_handler_auth_failure_is_soft():
     assert out["error"] == "auth"
     assert out["installed"] is False
     assert out["activated"] is False
+
+
+def test_handler_template_carries_webhook_token_header():
+    """The handler POSTs to the login-exempt /api/errors/webhook, which is
+    token-gated when AGD_WEBHOOK_TOKEN is set. Without the token header the POST
+    401s and is silently dropped (continueOnFail), so the template must reference
+    $env.AGD_WEBHOOK_TOKEN as a header."""
+    from backend.modules.errors.router import _load_handler_template
+
+    wf = _load_handler_template("http://10.0.0.1:3066")
+    http_nodes = [n for n in wf["nodes"] if n.get("type") == "n8n-nodes-base.httpRequest"]
+    assert http_nodes, "template must contain an httpRequest node"
+    params = http_nodes[0]["parameters"]
+    assert params.get("sendHeaders") is True
+    headers = params.get("headerParameters", {}).get("parameters", [])
+    names = {(h.get("name") or "").lower() for h in headers}
+    assert "x-agd-webhook-token" in names
+    token_hdr = next(h for h in headers if (h.get("name") or "").lower() == "x-agd-webhook-token")
+    assert "AGD_WEBHOOK_TOKEN" in token_hdr.get("value", "")
+    # URL was rewritten to the dashboard base passed in.
+    assert "10.0.0.1:3066" in params["url"]

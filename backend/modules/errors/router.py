@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from backend.auth_gate import require_trusted_request
+from backend.auth_gate import require_role
 from backend.config import get_active_instance_id, is_configured
 from backend.modules.errors import collector
 from backend.modules.n8n_proxy import client as n8n
@@ -115,7 +115,7 @@ class _GroupClear(BaseModel):
     purge_n8n: bool = False
 
 
-@router.post("/clear-group")
+@router.post("/clear-group", dependencies=[Depends(require_role("operator"))])
 async def clear_error_group(req: _GroupClear):
     """Delete every local row matching the group key on the active instance.
 
@@ -151,7 +151,7 @@ async def clear_error_group(req: _GroupClear):
     return {"deleted": deleted, "purged": purged, "instance_id": active}
 
 
-@router.delete("/{execution_id}")
+@router.delete("/{execution_id}", dependencies=[Depends(require_role("operator"))])
 async def delete_single_error(execution_id: str, purge_n8n: bool = True):
     """Delete one error record by execution_id and optionally purge it from n8n.
 
@@ -168,7 +168,7 @@ async def delete_single_error(execution_id: str, purge_n8n: bool = True):
     return result
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_role("operator"))])
 async def sync_errors_from_n8n(limit: int = 100):
     """Pull recent failed executions from n8n and backfill the error store.
 
@@ -208,7 +208,7 @@ async def sync_errors_from_n8n(limit: int = 100):
     return {"synced": synced, "skipped": skipped, "instance_id": active}
 
 
-@router.delete("")
+@router.delete("", dependencies=[Depends(require_role("operator"))])
 async def clear_errors(
     before_date: str = "",
     workflow_id: str = "",
@@ -296,7 +296,7 @@ async def handler_status():
     }
 
 
-@router.post("/install-handler", dependencies=[Depends(require_trusted_request)])
+@router.post("/install-handler", dependencies=[Depends(require_role("operator"))])
 async def install_handler(req: _InstallHandlerRequest):
     """One-click install: import the global error-handler workflow into the
     active n8n instance and (optionally) activate it. Idempotent — if a handler

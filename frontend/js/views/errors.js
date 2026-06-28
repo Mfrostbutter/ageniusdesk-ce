@@ -66,7 +66,7 @@ function instanceBadge(id) {
   const name = inst ? inst.name : (id ? 'unknown' : 'no instance');
   const color = inst && inst.color ? inst.color : '#888';
   return `<span class="instance-badge" title="${esc(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary);font-family:var(--font-mono)">`
-    + `<span style="width:6px;height:6px;border-radius:50%;background:${esc(color)}"></span>`
+    + `<span style="width:6px;height:6px;border-radius:50%;background:${attr(color)}"></span>`
     + `${esc(name)}</span>`;
 }
 
@@ -205,7 +205,7 @@ function prependError(error) {
 function renderGroupItem(g) {
   const n8nBase = (window.__n8nUrl || '').replace(/\/$/, '');
   const n8nExecUrl = g.last_execution_id && g.workflow_id && n8nBase
-    ? `${n8nBase}/workflow/${esc(g.workflow_id)}/executions/${esc(g.last_execution_id)}`
+    ? `${n8nBase}/workflow/${encodeURIComponent(g.workflow_id)}/executions/${encodeURIComponent(g.last_execution_id)}`
     : '';
   return `
     <div class="error-item" onclick="this.classList.toggle('expanded')">

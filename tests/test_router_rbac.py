@@ -145,3 +145,29 @@ def test_operator_allowed_modules_isolation(anon, monkeypatch):
     _as_role(monkeypatch, "operator")
     # in_process is the default, so this write is harmless; not-403 proves the gate.
     assert anon.post("/api/modules/isolation", json={"mode": "in_process"}).status_code != 403
+
+
+# ── errors: n8n-mutating writes are operator; reads + the webhook stay open ────
+
+
+def test_viewer_blocked_errors_mutations_reads_open(anon, monkeypatch):
+    _as_role(monkeypatch, "viewer")
+    # Endpoints that reach into n8n (purge executions, install/activate the error
+    # handler) or mutate the local store must match the operator floor used on
+    # /api/n8n/*; a viewer flipping these is the same class as the modules gap.
+    assert anon.post("/api/errors/sync").status_code == 403
+    assert anon.delete("/api/errors/some-exec").status_code == 403
+    assert anon.delete("/api/errors").status_code == 403
+    assert anon.post("/api/errors/clear-group", json={"workflow_id": "w"}).status_code == 403
+    assert anon.post("/api/errors/install-handler", json={}).status_code == 403
+    # Reads + the machine webhook stay open.
+    assert anon.get("/api/errors").status_code != 403
+    assert anon.get("/api/errors/grouped").status_code != 403
+    assert anon.get("/api/errors/handler-status").status_code != 403
+
+
+def test_operator_allowed_errors_clear(anon, monkeypatch):
+    _as_role(monkeypatch, "operator")
+    # DELETE with no params is a local-store clear (no network); not-403 proves
+    # the role gate let the operator through.
+    assert anon.delete("/api/errors").status_code != 403

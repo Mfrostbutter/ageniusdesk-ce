@@ -23,7 +23,15 @@ function attr(s) {
 }
 
 function jsStr(s) {
-  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // A JS single-quoted string sitting inside a double-quoted HTML attribute
+  // (onclick="...'${jsStr(x)}'..."). Escape BOTH the JS string delimiters and
+  // the attribute/tag delimiters, so an attacker-controlled id (e.g. a
+  // workflow_id posted to the open /api/errors/webhook) cannot break out of the
+  // attribute and inject markup. Must match views/errors.js (the source this was
+  // extracted from); a weaker version here is a stored-XSS regression.
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
+    .replace(/</g, '\\x3C').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
 function instanceBadge(id, map) {
@@ -31,7 +39,7 @@ function instanceBadge(id, map) {
   const name = inst ? inst.name : (id ? 'unknown' : 'no instance');
   const color = inst && inst.color ? inst.color : '#888';
   return `<span class="instance-badge" title="${attr(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary);font-family:var(--font-mono)">`
-    + `<span style="width:6px;height:6px;border-radius:50%;background:${esc(color)}"></span>${esc(name)}</span>`;
+    + `<span style="width:6px;height:6px;border-radius:50%;background:${attr(color)}"></span>${esc(name)}</span>`;
 }
 
 function formatTime(iso) {
@@ -46,8 +54,11 @@ export function renderErrorItem(e, ctx = {}) {
   const map = ctx.instanceMap || {};
   const inst = map[e.instance_id] || {};
   const n8nBase = (inst.n8nUrl || window.__n8nUrl || '').replace(/\/$/, '');
+  // encodeURIComponent (not esc): these ids land in an href attribute, and esc()
+  // does not escape the double-quote, so a hostile id could break out of href=.
+  // Percent-encoding is both URL-correct and attribute-safe.
   const n8nExecUrl = e.execution_id && e.workflow_id && n8nBase
-    ? `${n8nBase}/workflow/${esc(e.workflow_id)}/executions/${esc(e.execution_id)}`
+    ? `${n8nBase}/workflow/${encodeURIComponent(e.workflow_id)}/executions/${encodeURIComponent(e.execution_id)}`
     : '';
   return `
     <div class="error-item" onclick="this.classList.toggle('expanded')">

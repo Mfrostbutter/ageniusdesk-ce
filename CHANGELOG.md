@@ -19,6 +19,11 @@ Targeting v0.3.
 - **Fleet Health view.** A dedicated view aggregating workflow health across every connected n8n instance: per-instance active/total workflows, error rate over recent executions, and the unhealthy workflows, plus a combined roll-up. Live parallel fan-out; a degraded or unreachable instance is shown, not fatal. The "one client becomes ten" pane.
 - **Auto-install the error handler on connect.** Adding an n8n instance now best-effort installs + activates the Global Error Handler workflow into it (idempotent), so its errors flow to AgeniusDesk from the moment it's connected. It posts to a container-reachable dashboard URL (`AGD_PUBLIC_HOST`, else a configured host alias). n8n's public API cannot set the instance-wide Error Workflow, so the connect result surfaces that one remaining manual step.
 
+### Fixed
+- **Stored XSS in the shared error item (pre-release).** The error renderer shared across Overview, Errors, and Fleet Health escaped an error's `workflow_id` / `execution_id` too weakly for the `onclick` / `href` contexts it writes them into. Since those fields arrive on the login-exempt error webhook, a crafted value could break out of the attribute and run script in the operator's dashboard. The component now escapes the attribute/JS delimiters (matching the source renderer) and percent-encodes ids in URLs; a node-driven regression test renders a hostile error and asserts no breakout.
+- **Role floor on error operations.** Error-store endpoints that reach into n8n (purge executions, install/activate the error handler) or clear stored errors now require the **operator** role, matching every other n8n-mutating route; reads and the machine webhook stay open.
+- **Error handler vs. webhook token.** The auto-installed Global Error Handler now sends the `x-agd-webhook-token` header (from `$env.AGD_WEBHOOK_TOKEN`), so error delivery keeps working when the dashboard requires a webhook token instead of silently dropping every error.
+
 ### Next
 - Container tier hardening: drop the module worker to a non-root uid, and a per-host egress proxy that enforces the manifest's declared `network.hosts` (today a network-declaring module reaches any host).
 

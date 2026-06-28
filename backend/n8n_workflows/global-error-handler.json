@@ -23,6 +23,12 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.FLOW_DASHBOARD_URL || 'http://localhost:3000' }}/api/errors/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-agd-webhook-token", "value": "={{ $env.AGD_WEBHOOK_TOKEN || '' }}" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
@@ -39,7 +45,7 @@
     },
     {
       "parameters": {
-        "content": "## Global Error Handler → AgeniusDesk\n\nCatches errors from ALL workflows and sends them to your AgeniusDesk instance.\n\n**Setup:**\n1. Set the `AGENIUSDESK_URL` environment variable in your n8n instance\n   (e.g., `http://your-dashboard:3000`)\n2. Or edit the HTTP Request node URL directly\n3. Go to n8n Settings → Workflows → Error Workflow → Select this workflow",
+        "content": "## Global Error Handler → AgeniusDesk\n\nCatches errors from ALL workflows and sends them to your AgeniusDesk instance.\n\n**Setup:**\n1. Set the `AGENIUSDESK_URL` environment variable in your n8n instance\n   (e.g., `http://your-dashboard:3000`)\n2. Or edit the HTTP Request node URL directly\n3. Go to n8n Settings → Workflows → Error Workflow → Select this workflow\n\n**If your dashboard sets `AGD_WEBHOOK_TOKEN`:** also set `AGD_WEBHOOK_TOKEN` in this n8n instance's environment, so the POST carries the matching token (otherwise errors are rejected and silently dropped).",
         "height": 220,
         "width": 520,
         "color": 4
