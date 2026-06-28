@@ -9,6 +9,7 @@
 
 import { get, post, del, onEvent } from '../api.js';
 import { openTraceModal } from '../components/trace-waterfall.js';
+import { renderErrorItem } from '../components/error-item.js';
 
 let unsub = null;
 
@@ -53,7 +54,7 @@ async function loadInstanceMap() {
   try {
     const d = await get('/api/n8n/instances');
     _instanceMap = Object.fromEntries(
-      (d.instances || []).map(i => [i.id, { name: i.name || i.id, color: i.color || '#888' }])
+      (d.instances || []).map(i => [i.id, { name: i.name || i.id, color: i.color || '#888', n8nUrl: i.login_url || i.url || '' }])
     );
   } catch {
     _instanceMap = {};
@@ -197,7 +198,7 @@ function prependError(error) {
   const empty = feed.querySelector('.empty-state');
   if (empty) empty.remove();
   const div = document.createElement('div');
-  div.innerHTML = renderErrorItem(error);
+  div.innerHTML = renderErrorItem(error, { instanceMap: _instanceMap });
   feed.prepend(div.firstElementChild);
 }
 
@@ -240,40 +241,10 @@ function renderGroupItem(g) {
   `;
 }
 
-function renderErrorItem(e) {
-  const n8nBase = (window.__n8nUrl || '').replace(/\/$/, '');
-  const n8nExecUrl = e.execution_id && e.workflow_id && n8nBase
-    ? `${n8nBase}/workflow/${esc(e.workflow_id)}/executions/${esc(e.execution_id)}`
-    : '';
-  return `
-    <div class="error-item" onclick="this.classList.toggle('expanded')">
-      <div class="error-item-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <span class="error-item-workflow" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-          ${instanceBadge(e.instance_id)}
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.workflow_name)}</span>
-        </span>
-        <span class="error-item-time">${formatTime(e.occurred_at)}</span>
-      </div>
-      <div class="error-item-message">${esc(e.error_message)}</div>
-      <div class="error-item-detail">
-        <div><strong>Workflow ID:</strong> <code style="display:inline;padding:2px 6px;font-size:11px">${esc(e.workflow_id)}</code></div>
-        ${e.execution_id ? `<div><strong>Execution:</strong> <code style="display:inline;padding:2px 6px;font-size:11px">${esc(e.execution_id)}</code></div>` : ''}
-        <div><strong>Node:</strong> ${esc(e.node_name || 'N/A')}</div>
-        <div><strong>Type:</strong> ${esc(e.error_type)}</div>
-        <code>${esc(e.error_message)}</code>
-        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
-          <button class="btn btn-sm btn-ghost err-ai-btn" data-wf="${attr(e.workflow_name)}" data-node="${attr(e.node_name || '')}" data-type="${attr(e.error_type)}" data-msg="${attr(e.error_message || '')}" data-exec="${attr(e.execution_id || '')}" data-wfid="${attr(e.workflow_id)}" onclick="event.stopPropagation();window.__askErrorAI(this)" title="Ask AI to analyze this error">&#10022; Ask AI</button>
-          ${e.execution_id ? `<button class="btn btn-sm btn-ghost" data-wf="${attr(e.workflow_name)}" data-exec="${attr(e.execution_id)}" onclick="event.stopPropagation();window.__observeError(this)" title="View this execution's OpenTelemetry trace">&#128202; Trace</button>` : ''}
-          <button class="btn btn-sm btn-primary" onclick="window.__nav('workflows',{selectId:'${jsStr(e.workflow_id)}'})">View Workflow</button>
-          ${n8nExecUrl ? `<a class="btn btn-sm btn-ghost" href="${n8nExecUrl}" target="_blank" rel="noopener">Open in n8n</a>` : ''}
-          ${e.execution_id ? `<button class="btn btn-sm btn-danger" onclick="window.__deleteExecution('${jsStr(e.execution_id)}', this)">Delete This Error</button>` : ''}
-          <button class="btn btn-sm btn-danger" style="opacity:0.7" onclick="window.__clearWorkflowErrors('${jsStr(e.workflow_id)}', this)">Clear All for Workflow</button>
-        </div>
-        <div class="err-ai-result" style="display:none;margin-top:10px;padding:10px 12px;background:var(--bg-void);border:1px solid var(--border-dim);border-radius:var(--radius);font-size:12px;line-height:1.6" onclick="event.stopPropagation()"></div>
-      </div>
-    </div>
-  `;
-}
+// renderErrorItem moved to components/error-item.js (shared across Overview,
+// Errors/Executions, and Fleet Health so an error looks + acts identically
+// everywhere). Behaviors (__askErrorAI / __observeError / __deleteExecution /
+// __clearWorkflowErrors) stay defined in this module, registered app-wide.
 
 // Ask AI about an error — same workflow agent the Workflows page uses. Builds a
 // prompt from the error context and renders the analysis inline under the detail.

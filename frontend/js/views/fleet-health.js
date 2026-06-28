@@ -14,6 +14,7 @@
  */
 
 import { get } from '../api.js';
+import { renderErrorItem } from '../components/error-item.js';
 
 let _tab = 'health';
 let _instMap = {};
@@ -28,14 +29,6 @@ function rateColor(rate) {
   if (rate >= 20) return '#ff6d5a';
   if (rate >= 5) return '#fbbf24';
   return '#34d399';
-}
-
-function fmtWhen(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso.replace(' ', 'T') + 'Z').toLocaleString(undefined,
-      { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  } catch { return iso; }
 }
 
 // ── Health tab ────────────────────────────────────────────────────────────────
@@ -105,35 +98,16 @@ async function loadHealth(content) {
   }
 }
 
-// ── Errors tab ────────────────────────────────────────────────────────────────
-
-function errorRow(err) {
-  const inst = _instMap[err.instance_id] || { name: err.instance_id || 'unknown', color: '#8a94a6' };
-  return `
-    <div style="display:flex;gap:10px;align-items:flex-start;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:10px 12px">
-      <span title="${esc(inst.name)}" style="flex-shrink:0;margin-top:3px;width:8px;height:8px;border-radius:50%;background:${esc(inst.color)}"></span>
-      <div style="min-width:0;flex:1">
-        <div style="display:flex;justify-content:space-between;gap:8px">
-          <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(err.workflow_name || 'Unknown workflow')}</span>
-          <span style="font-size:11px;color:var(--text-muted);flex-shrink:0">${esc(fmtWhen(err.occurred_at))}</span>
-        </div>
-        <div style="font-size:12px;color:#fca5a5;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(err.error_message || '')}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
-          <span class="badge" style="background:${esc(inst.color)}22;color:${esc(inst.color)};border:1px solid ${esc(inst.color)}55;font-size:10px">${esc(inst.name)}</span>
-          ${err.node_name ? ` · node ${esc(err.node_name)}` : ''}${err.error_type ? ` · ${esc(err.error_type)}` : ''}
-        </div>
-      </div>
-    </div>`;
-}
+// ── Errors tab (shared error-item, identical to Overview + the Errors view) ───
 
 async function loadErrors(content) {
   content.innerHTML = '<div class="spinner"></div>';
   try {
-    // Ensure the instance map exists (id -> name/color) for badging.
-    if (!Object.keys(_instMap).length) {
-      const inst = await get('/api/n8n/instances').catch(() => ({ instances: [] }));
-      _instMap = Object.fromEntries((inst.instances || []).map(i => [i.id, { name: i.name || i.id, color: i.color || '#60a5fa' }]));
-    }
+    // Build the instance map with per-instance n8n URL so the shared item's
+    // "Open in n8n" points at each error's OWN instance (correct cross-instance).
+    const inst = await get('/api/n8n/instances').catch(() => ({ instances: [] }));
+    _instMap = Object.fromEntries((inst.instances || []).map(i =>
+      [i.id, { name: i.name || i.id, color: i.color || '#60a5fa', n8nUrl: i.login_url || i.url || '' }]));
     const data = await get('/api/errors?instance_id=all&limit=100');
     const errors = data.errors || [];
     const header = `<div style="font-size:12px;opacity:0.65;margin-bottom:10px">${errors.length} recent error${errors.length === 1 ? '' : 's'} across all instances · ${esc(data.count_24h || 0)} in the last 24h</div>`;
@@ -141,7 +115,8 @@ async function loadErrors(content) {
       content.innerHTML = header + `<div style="opacity:0.6;font-size:13px">No errors collected. Errors flow in once an instance's Global Error Handler is installed (auto-installed on connect).</div>`;
       return;
     }
-    content.innerHTML = header + `<div style="display:flex;flex-direction:column;gap:8px">${errors.map(errorRow).join('')}</div>`;
+    content.innerHTML = header
+      + `<div class="errors-list" style="display:flex;flex-direction:column;gap:8px">${errors.map(e => renderErrorItem(e, { instanceMap: _instMap })).join('')}</div>`;
   } catch (e) {
     content.innerHTML = `<div class="error-banner">Failed to load errors: ${esc(e.message)}</div>`;
   }

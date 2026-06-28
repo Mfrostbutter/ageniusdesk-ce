@@ -7,6 +7,7 @@
 import { get, post, del, onEvent } from '../api.js';
 import * as toast from '../components/toast.js';
 import * as assistantDock from '../components/assistant-dock.js';
+import { renderErrorItem } from '../components/error-item.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
 import * as getstarted from '../components/getstarted.js';
 
@@ -500,7 +501,7 @@ async function loadDashboardData() {
     ]);
 
     _instanceMap = Object.fromEntries(
-      (instData.instances || []).map(i => [i.id, { name: i.name || i.id, color: i.color || '#888' }])
+      (instData.instances || []).map(i => [i.id, { name: i.name || i.id, color: i.color || '#888', n8nUrl: i.login_url || i.url || '' }])
     );
 
     const workflows = wfData.workflows || [];
@@ -908,7 +909,7 @@ function prependError(error) {
   if (!el) return;
   el.querySelector('.empty-state')?.remove();
   const div = document.createElement('div');
-  div.innerHTML = renderErrorItem(error);
+  div.innerHTML = renderErrorItem(error, { instanceMap: _instanceMap });
   el.prepend(div.firstElementChild);
   const badge = document.getElementById('error-count-badge');
   if (badge) {
@@ -926,35 +927,9 @@ function _instanceBadge(id) {
     + `${esc(name)}</span>`;
 }
 
-function renderErrorItem(e) {
-  const n8nBase = (window.__n8nUrl || '').replace(/\/$/, '');
-  const n8nExecUrl = e.execution_id && e.workflow_id && n8nBase
-    ? `${n8nBase}/workflow/${esc(e.workflow_id)}/executions/${esc(e.execution_id)}`
-    : '';
-  return `
-    <div class="error-item" onclick="this.classList.toggle('expanded')">
-      <div class="error-item-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <span class="error-item-workflow" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-          ${_instanceBadge(e.instance_id)}
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.workflow_name)}</span>
-        </span>
-        <span class="time-relative">${relativeTime(e.occurred_at)}</span>
-      </div>
-      <div class="error-item-message">${esc(e.error_message)}</div>
-      <div class="error-item-detail">
-        <div><strong>Node:</strong> ${esc(e.node_name || 'N/A')}</div>
-        <div><strong>Type:</strong> ${esc(e.error_type)}</div>
-        ${e.execution_id ? `<div><strong>Execution:</strong> <code style="display:inline;padding:2px 6px;font-size:11px">${esc(e.execution_id)}</code></div>` : ''}
-        <code>${esc(e.error_message)}</code>
-        <div style="display:flex;gap:8px;margin-top:10px" onclick="event.stopPropagation()">
-          <button class="btn btn-sm btn-primary" onclick="window.__nav('workflows',{selectId:'${jsStr(e.workflow_id)}'})">View Workflow</button>
-          ${n8nExecUrl ? `<a class="btn btn-sm btn-ghost" href="${n8nExecUrl}" target="_blank" rel="noopener">Open in n8n</a>` : ''}
-          ${e.execution_id ? `<button class="btn btn-sm btn-danger" onclick="window.__deleteExecution('${jsStr(e.execution_id)}', this)">Delete This Error</button>` : ''}
-        </div>
-      </div>
-    </div>
-  `;
-}
+// renderErrorItem is the shared component (components/error-item.js) so a Recent
+// Errors item on the Overview is identical to the Errors view and Fleet Health:
+// same Ask AI / Trace / View Workflow / Open in n8n / Delete / Clear-all actions.
 
 // ── Execution Detail Modal ───────────────────────────────────────────────────
 
