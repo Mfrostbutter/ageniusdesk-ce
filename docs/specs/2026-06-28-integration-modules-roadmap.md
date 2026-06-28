@@ -22,6 +22,11 @@ Two families: an **agent runtime** (LangGraph + PydanticAI), an **infra
 integration** (Proxmox), and **secret-backend integrations** (Infisical /
 agent-vault).
 
+**Distribution (locked): all three ship as COMMUNITY modules** — installed via
+the GitHub inspect / scan / consent pipeline, opt-in, none built into CE core.
+People install what they want. See "Isolation & credentials" for the one thing
+this forces us to design.
+
 ---
 
 ## 1. Agent Fleet — one runtime, framework adapters
@@ -52,7 +57,6 @@ contract already running in the beta ("personal" AgeniusDesk).
 - One `agent:run` event contract; LangGraph + PydanticAI adapters emit it.
 
 **Open questions:**
-- Built-in vs community vs mixed (see cross-cutting below).
 - How LangSmith config/keys flow (per-operator secret; per-agent project?).
 - Is the live graph view LangGraph-only at first, with PydanticAI on plain
   run/step streaming until it has a graph to render?
@@ -74,8 +78,9 @@ URL**; that's it. Same low-friction onboarding as adding an n8n instance.
   cluster, N nodes").
 
 **Fit / safety:**
-- Trusted **built-in** (holds cluster credentials), like `n8n_proxy` /
-  `docker_mgr`.
+- Ships as a **community module** (opt-in). It holds cluster credentials, so it
+  is a credential-holding module — see "Isolation & credentials" for how those
+  creds reach it without breaking the sandbox.
 - Inherits the **self-protection** rule: never let the app destroy/stop the
   Proxmox node or VM/LXC the dashboard itself runs on — that's a console action.
 - Read-first; destructive actions gated at the operator role + confirmation.
@@ -106,6 +111,10 @@ and agent-vault as **resolution backends**.
 - Extends the existing secret-resolution layer rather than replacing it.
 - Strong pairing with the Agent Fleet (agents get brokered, rotated credentials
   via the bridge, never raw keys).
+- Awkwardest fit for "community module": a secret BACKEND inverts the bridge —
+  the host wants to pull secrets FROM the module, whereas the bridge is built for
+  the module to call the host. Likely needs a small host-side resolver the
+  module registers, rather than a normal sandboxed worker. Flag for design.
 
 **Open questions:**
 - Resolution precedence (env > broker > local store?) and cache TTL.
@@ -114,17 +123,41 @@ and agent-vault as **resolution backends**.
 
 ---
 
-## Cross-cutting decisions to make
+## Isolation & credentials (the thing "all community" forces us to design)
 
-- **Distribution per module:** built-in (first-party, trusted — natural for
-  Proxmox and the secret backends, which hold credentials) vs community
-  (inspect/consent pipeline, runs under isolation — natural for third-party
-  agents). Likely **mixed**: Proxmox + secret backends + the Agent runtime as
-  built-in; individual agents as installable content on top of the runtime.
+Distribution is locked to **community** for all three. That is clean for the
+Agent Fleet — its only host secret is the LLM key, already handled host-side by
+`assistant.complete`. It is NOT free for the credential-holding ones (Proxmox,
+secret backends), because the bridge model is deliberately "the key never enters
+the worker." Under the container/subprocess tiers the worker env is scrubbed, so
+a sandboxed Proxmox module cannot just be handed the cluster token.
+
+Three ways to reconcile (pick during build, not now):
+
+1. **Extend the bridge (recommended, keeps the philosophy):** add host-mediated
+   capabilities so the credential stays host-side — e.g. a generic
+   `http.request` bridge method scoped to the module's declared `network.hosts`
+   with the host injecting the consented auth, or a per-integration bridge
+   namespace. The module orchestrates; the host makes the authenticated call.
+   Same shape as `assistant.complete`.
+2. **Consented-secret tier:** the operator explicitly accepts that this module
+   receives specific secrets in-process (a trust step at install). Less pure;
+   simplest to ship.
+3. **Host-side resolver (secret backends specifically):** a secret backend is
+   inverted from the worker model; it likely registers a thin host-side resolver
+   rather than running purely as a sandboxed worker.
+
+This is the central design question for the credential-holding modules. The
+Agent Fleet does not block on it.
+
+## Other cross-cutting decisions
+
 - **CE vs Enterprise:** these are CE building blocks; multi-tenant governance
   (per-client RBAC, audit/receipts) stays on the separate enterprise roadmap.
 - **First prototype order:** TBD (Agent runtime w/ LangGraph adapter, vs Proxmox
   as a simpler warm-up, vs PydanticAI adapter to prove the generalized contract).
+- **Repo:** community modules live in `ageniusdesk-community-modules` alongside
+  `youtube-research` (each its own folder + manifest).
 
 ## Not deciding yet
 
