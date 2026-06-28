@@ -184,6 +184,15 @@ function modelChip(model) {
   return `<span title="${esc(m)}" style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:10px;padding:1px 7px">${esc(label)}</span>`;
 }
 
+// Framework label (LangGraph vs PydanticAI) so the card shows what runs it.
+function frameworkChip(framework) {
+  const f = String(framework || 'langgraph');
+  const isPa = f === 'pydantic-ai';
+  const label = isPa ? 'PydanticAI' : 'LangGraph';
+  const color = isPa ? '#c084fc' : '#818cf8';
+  return `<span title="${esc(f)}" style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:10px;padding:1px 7px">${label}</span>`;
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 
 export async function render(container) {
@@ -293,6 +302,24 @@ async function loadAgents() {
   if (opts) window.__viewOpts = null;
 }
 
+// Delete an operator-authored (vault) agent. Built-ins have no Delete button and
+// are rejected server-side; a live run is also rejected (409) and surfaced.
+async function deleteAgent(agentId) {
+  const agent = _agents.find(a => a.id === agentId);
+  if (!agent || agent.builtin) return;
+  if (!confirm(`Delete agent "${agent.name}"? This removes it from your vault (agents/${agentId}/). This cannot be undone.`)) return;
+  try {
+    await del(`/api/agent-fleet/agents/${encodeURIComponent(agentId)}`);
+    toast.success(`Deleted "${agent.name}"`);
+    if (_selectedAgentId === agentId) _selectedAgentId = null;
+    _graphs[agentId] = undefined;
+    _expandedCards.delete(agentId);
+    await loadAgents();
+  } catch (e) {
+    toast.error(`Could not delete: ${e.message}`);
+  }
+}
+
 function renderCatalog() {
   const cat = _container.querySelector('#lg-catalog');
   if (!cat) return;
@@ -313,10 +340,19 @@ function renderCatalog() {
       </div>
       ${open ? `<div class="lg-card-body">
         <div style="font-size:11.5px;color:var(--text-muted);line-height:1.45;margin-bottom:7px">${esc(a.tagline)}</div>
-        <div style="display:flex;gap:5px;flex-wrap:wrap">${badges}</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+          ${frameworkChip(a.framework)}${badges}
+          ${a.builtin
+            ? '<span title="Bundled example; cannot be deleted" style="font-size:10px;color:var(--text-faint);margin-left:auto">built-in</span>'
+            : `<button class="lg-agent-del" data-del="${esc(a.id)}" title="Delete this agent from your vault" style="margin-left:auto;padding:4px 9px;background:var(--bg-void);border:1px solid var(--border);border-radius:var(--radius);font-size:11px;color:var(--text-muted);cursor:pointer">Delete</button>`}
+        </div>
       </div>` : ''}
     </div>`;
   }).join('');
+  cat.querySelectorAll('.lg-agent-del').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteAgent(b.dataset.del);
+  }));
   // Card click selects the agent; the caret toggles the description (stops the
   // click from also selecting).
   cat.querySelectorAll('.lg-agent-card').forEach(c => c.addEventListener('click', () => selectAgent(c.dataset.id)));

@@ -90,6 +90,12 @@ Lab), version them, export them, or delete them. The fleet **discovers** vault
 agents on every read, so changes show up with no restart, and a run picks up the
 latest code automatically.
 
+To remove an agent from the dashboard, expand its card in the Agent Fleet and
+click **Delete**; it deletes the `agents/<id>/` folder from your vault after a
+confirm. The three built-in example agents have no Delete button and cannot be
+removed. Deleting is blocked while a run is in progress. Any secrets the agent
+used are left in the Secrets store for you to clean up separately.
+
 ## LangGraph vs PydanticAI
 
 Both run and render in the same waterfall. Today:

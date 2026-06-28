@@ -75,7 +75,14 @@ class RegisterAgentRequest(BaseModel):
 
 @router.get("/agents")
 async def list_agents():
-    return {"agents": [a.card() for a in registry.all_agents()], "default": registry.DEFAULT_AGENT_ID}
+    builtins = registry.builtin_ids()
+    cards = []
+    for a in registry.all_agents():
+        card = a.card()
+        # Built-ins are bundled examples and cannot be deleted; vault agents can.
+        card["builtin"] = a.id in builtins
+        cards.append(card)
+    return {"agents": cards, "default": registry.DEFAULT_AGENT_ID}
 
 
 @router.get("/tools")
