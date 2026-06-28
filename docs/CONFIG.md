@@ -46,6 +46,20 @@ All of the above except Ollama are OpenAI-compatible and route through the same 
 | `SEARCH_PROVIDER` | `none` | Web search provider for assistant: `tavily`, `serper`, `none`. |
 | `SEARCH_API_KEY` | (none) | API key for web search provider. |
 
+## Observability & Tracing
+
+Tracing and per-run cost are self-contained: no external account or SaaS is required. LangSmith is an optional integration for teams already building on that platform.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGD_OTEL_ENABLED` | `false` | Enable the embedded OpenTelemetry OTLP/HTTP receiver. n8n and the Agent Fleet export workflow, node, and agent spans straight to AgeniusDesk; the Observability view renders them as a trace waterfall. No external service. |
+| `AGD_OTEL_TOKEN` | (none) | Bearer token gating the OTLP ingest endpoint. Unset = open (trusted-LAN only). Set this before exposing the port publicly. |
+| `AGD_OTEL_RETENTION_HOURS` | `72` | Age-based span pruning; spans older than this are dropped. |
+| `AGD_OTEL_MAX_SPANS` | `500000` | Hard cap on stored spans; the oldest are pruned first past this limit. |
+| `AGD_PRICEBOOK_REFRESH_HOURS` | `24` | How often to refresh the LLM price book from OpenRouter's public models API. Cached to `data/price_book.json` with a last-good fallback. Per-run cost is computed locally from token counts against this book. |
+| `LANGSMITH_TRACING` | `false` | **Optional.** Set to `true` (with `LANGSMITH_API_KEY`) to also send Agent Fleet runs to LangSmith. For teams already on LangSmith; not required for tracing or cost. When on, it overrides the local price-book cost estimate with LangSmith's exact figures and adds a per-call breakdown plus an external trace link. Self-disables if the key is missing. |
+| `LANGSMITH_API_KEY` | (none) | LangSmith API key. Only used when `LANGSMITH_TRACING=true`. A LangSmith account is needed only for this optional integration. |
+
 ## Notifications
 
 | Variable | Default | Description |

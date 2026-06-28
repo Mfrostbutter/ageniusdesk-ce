@@ -25,8 +25,17 @@ Agent Fleet needs two things in the AgeniusDesk environment:
 2. **An Anthropic API key.** The built-in agents run on Claude. The key resolves
    from the environment (`ANTHROPIC_API_KEY` / `ANTHROPIC_KEY`) or the encrypted
    Secrets store (`ANTHROPIC_KEY`); if your AI Assistant already uses Anthropic, no
-   extra key is needed. Optional: set `LANGSMITH_TRACING=true` + `LANGSMITH_API_KEY`
-   to trace runs in LangSmith.
+   extra key is needed.
+
+> **Do I need a LangChain or LangSmith account?** No. LangChain, LangGraph, and
+> PydanticAI are open-source libraries (bundled in the agent extra); they need no
+> account and no API key. The only required key is your LLM provider key above.
+> Tracing and per-run cost are built in: every run streams a step waterfall, and
+> cost is computed locally from token counts against a price book, all with no
+> external service. **LangSmith is optional**, for teams already building on that
+> platform: set `LANGSMITH_TRACING=true` + `LANGSMITH_API_KEY` to also send runs to
+> LangSmith, which then supplies exact (rather than estimated) per-call cost and an
+> external trace link. It self-disables if the key is absent.
 
 ## The built-in agents
 
