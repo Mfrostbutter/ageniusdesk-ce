@@ -714,20 +714,73 @@ return [{
   return templates[name] || templates.blank;
 }
 
+// Starter options per framework: LangGraph has graph patterns; PydanticAI has agent
+// shapes. The template dropdown is repopulated from this when the framework changes.
+const AGENT_TEMPLATE_OPTS = {
+  langgraph: [['react', 'ReAct tool-loop'], ['hitl', 'Human-in-the-loop'], ['fanout', 'Parallel fan-out'], ['blank', 'Blank']],
+  'pydantic-ai': [['tools', 'Tool agent'], ['structured', 'Structured output'], ['blank', 'Blank']],
+};
+function repopulateAgentTemplates(framework) {
+  const sel = document.getElementById('agent-template');
+  if (!sel) return;
+  const opts = AGENT_TEMPLATE_OPTS[framework] || AGENT_TEMPLATE_OPTS.langgraph;
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+}
+
 // Agent starters. A vault agent's graph.py is a PURE factory: it imports only
 // langgraph/langchain; the host injects the model + the tools declared at register
 // time. (build is required; initial_state/kickoff are optional overrides.)
 function getAgentTemplate(framework, pattern) {
   if ((framework || 'langgraph') === 'pydantic-ai') {
-    return `# PydanticAI agent. The Agent Fleet adapter is coming soon — this registers
-# now and runs once the adapter lands.
+    const pa = {
+      tools: `# A PydanticAI agent with a tool. Define tools as functions; the agent loops them.
 from pydantic_ai import Agent
+
+agent = Agent(
+    "anthropic:claude-haiku-4-5",
+    system_prompt="You are a helpful assistant. Use the tools to answer.",
+)
+
+
+@agent.tool_plain
+def now() -> str:
+    """Return the current UTC time as an ISO 8601 string."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def build(llm, tools, checkpointer=None):
-    # The Agent Fleet PydanticAI adapter will wire the host model + tools here.
-    return Agent(model="anthropic:claude-haiku-4-5", system_prompt="You are a helpful agent.")
-`;
+    return agent
+`,
+      structured: `# A PydanticAI agent that returns a typed, validated result.
+from pydantic import BaseModel
+from pydantic_ai import Agent
+
+
+class Summary(BaseModel):
+    title: str
+    bullets: list[str]
+
+
+agent = Agent(
+    "anthropic:claude-haiku-4-5",
+    output_type=Summary,
+    system_prompt="Summarize the user's request into a title and three bullet points.",
+)
+
+
+def build(llm, tools, checkpointer=None):
+    return agent
+`,
+      blank: `from pydantic_ai import Agent
+
+
+def build(llm, tools, checkpointer=None):
+    return Agent("anthropic:claude-haiku-4-5", system_prompt="You are a helpful agent.")
+`,
+    };
+    return pa[pattern] || pa.tools;
   }
   const lg = {
     react: `from langchain_core.messages import SystemMessage
@@ -912,7 +965,12 @@ function setupHandlers() {
       document.getElementById('agent-framework')?.value || 'langgraph',
       document.getElementById('agent-template')?.value || 'react'));
   };
-  document.getElementById('agent-framework')?.addEventListener('change', setAgentTpl);
+  // The starter list differs per framework (LangGraph has graph patterns; PydanticAI
+  // has agent shapes), so repopulate the dropdown when the framework changes.
+  document.getElementById('agent-framework')?.addEventListener('change', () => {
+    repopulateAgentTemplates(document.getElementById('agent-framework').value);
+    setAgentTpl();
+  });
   document.getElementById('agent-template')?.addEventListener('change', setAgentTpl);
 
   document.getElementById('code-ai-form').addEventListener('submit', (e) => {
