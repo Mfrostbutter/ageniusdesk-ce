@@ -918,8 +918,11 @@ async def import_workflow(
     allowed = ("name", "nodes", "connections", "settings")
     clean = {k: workflow_data[k] for k in allowed if k in workflow_data}
 
-    # n8n requires settings + connections on create (at least empty objects).
-    clean.setdefault("settings", {})
+    # `settings` is itself strict (additionalProperties:false): a full export carries
+    # UI-only keys (e.g. timeSavedPerExecution) n8n's create API rejects with
+    # "request/body/settings must NOT have additional properties". Keep only n8n's
+    # allowed settings keys. n8n requires settings + connections present (empty ok).
+    clean["settings"] = {k: v for k, v in (clean.get("settings") or {}).items() if k in _ALLOWED_WF_SETTINGS}
     clean.setdefault("connections", {})
 
     override = (name_override or "").strip()
