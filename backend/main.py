@@ -23,6 +23,7 @@ from backend.config import (
     settings,
 )
 from backend.database import close_db, get_db
+from backend.module_registry import APP_VERSION
 from backend.modules import register_modules
 from backend.websocket import manager
 
@@ -142,7 +143,7 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-app = FastAPI(title="AgeniusDesk", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AgeniusDesk", version=APP_VERSION, lifespan=lifespan)
 
 
 def _cors_origins() -> list[str]:
@@ -365,7 +366,7 @@ async def status():
             "color": active.get("color", ""),
         } if active else None,
         "theme": get_active_theme(),
-        "version": "0.2.0",
+        "version": APP_VERSION,
         "websocket_clients": manager.count,
         "health_endpoints": config.get("health_endpoints", []),
     }

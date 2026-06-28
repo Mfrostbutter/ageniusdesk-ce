@@ -12,6 +12,7 @@ import os
 import httpx
 
 from backend.config import decrypt_value, load_config, save_config
+from backend.module_registry import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ async def _mcp_initialize(client: httpx.AsyncClient, url: str, server: dict) -> 
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "ageniusdesk", "version": "0.2.0"},
+                "clientInfo": {"name": "ageniusdesk", "version": APP_VERSION},
             },
             "id": 1,
         },

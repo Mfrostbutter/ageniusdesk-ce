@@ -1684,7 +1684,9 @@ def _default_system_prompt() -> str:
 
 def _baseline_environment_line() -> str:
     """App + version line. Cheap, in-process."""
-    return "AgeniusDesk dashboard, version 0.2.0"
+    from backend.module_registry import APP_VERSION
+
+    return f"AgeniusDesk dashboard, version {APP_VERSION}"
 
 
 def _baseline_instance_line() -> str:

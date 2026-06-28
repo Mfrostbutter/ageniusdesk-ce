@@ -4,7 +4,7 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
-Targeting v0.3.
+## [0.3.0] - 2026-06-28
 
 ### Added
 - **More AI providers for the assistant and workflow creation.** Beyond OpenRouter / OpenAI / Anthropic / Ollama, the assistant now natively supports **Perplexity, Groq, DeepSeek, Mistral, xAI (Grok), and Together AI**, plus a **Custom (OpenAI-compatible)** provider: set a base URL in Models and point it at any OpenAI-compatible endpoint (Azure OpenAI, LiteLLM, vLLM, LocalAI, Fireworks, ...). They route through the shared OpenAI-compatible chat path with live model listing where the provider exposes a `/models` endpoint; Perplexity is offered tools-free since it rejects an unknown `tools` field. Each area (Code Lab / Error Triage / Assistant) still picks its own provider and model, and keys resolve from the Secrets store by convention (`$PERPLEXITY_KEY`, `$GROQ_KEY`, `$DEEPSEEK_KEY`, `$MISTRAL_KEY`, `$XAI_KEY`, `$TOGETHER_KEY`, `$CUSTOM_LLM_KEY`).
