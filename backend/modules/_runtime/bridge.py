@@ -128,6 +128,18 @@ def _resolved_under(abs_path: Path, prefixes: list[str]) -> bool:
     return _under(resolved_rel, prefixes)
 
 
+def _path_in_scope(path: str, prefixes: list[str]) -> bool:
+    """Non-raising scope predicate: True iff `path` is in scope by BOTH the
+    requested string AND its resolved on-disk location. Used to filter search
+    hits, where a symlink-aliased index entry (indexed under an in-scope-looking
+    rel but resolving outside scope) must not leak."""
+    try:
+        vp = storage.resolve(path)
+    except ValueError:
+        return False
+    return _under(vp.rel, prefixes) and _resolved_under(vp.abs, prefixes)
+
+
 def _note_rel_in_scope(path: str, prefixes: list[str]) -> str:
     """Note-safe resolve (storage.resolve) + scope check. Returns vault-rel path.
 
@@ -238,7 +250,9 @@ async def notes_search(payload: _SearchPayload, grant: BridgeGrant = Depends(_re
     read paths (so a module cannot read snippets of notes outside its scope)."""
     limit = max(1, min(int(payload.limit or 30), 100))
     results = await index.search(payload.query or "", payload.tag or None, limit)
-    scoped = [r for r in results if _under(r.get("path", ""), grant.read_paths)]
+    # Resolved-scope filter (NOT a bare string prefix): a symlink-aliased index
+    # entry must not leak a snippet of content that lives outside the read scope.
+    scoped = [r for r in results if _path_in_scope(r.get("path", ""), grant.read_paths)]
     return {"results": scoped}
 
 

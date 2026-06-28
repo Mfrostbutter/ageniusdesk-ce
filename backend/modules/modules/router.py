@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend import module_registry
-from backend.auth_gate import current_user, require_trusted_request
+from backend.auth_gate import current_user, require_role, require_trusted_request
 from backend.module_registry import APP_VERSION
 
 from . import installer
@@ -90,7 +90,7 @@ class IsolationPayload(BaseModel):
     mode: str
 
 
-@router.post("/isolation")
+@router.post("/isolation", dependencies=[Depends(require_role("operator"))])
 async def set_isolation(payload: IsolationPayload):
     """Persist the isolation tier (applied on the next app restart). The
     AGD_MODULE_ISOLATION env var, if set, still overrides this at runtime."""
@@ -140,7 +140,7 @@ class InstallPayload(BaseModel):
     expected_id: str | None = None
 
 
-@router.post("/discover")
+@router.post("/discover", dependencies=[Depends(require_role("operator"))])
 async def discover_modules(payload: DiscoverPayload):
     """List every installable module in a repo (single-module or monorepo)
     WITHOUT registering anything. The operator picks one to inspect.
@@ -151,7 +151,7 @@ async def discover_modules(payload: DiscoverPayload):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/inspect")
+@router.post("/inspect", dependencies=[Depends(require_role("operator"))])
 async def inspect_module(payload: InspectPayload):
     """Dry-run a community module: download, statically scan, and return the
     manifest + declared capabilities + scan report + resolved sha WITHOUT
@@ -166,7 +166,7 @@ async def inspect_module(payload: InspectPayload):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/install")
+@router.post("/install", dependencies=[Depends(require_role("operator"))])
 async def install_module(payload: InstallPayload, request: Request):
     """Install a community module after inspection + consent.
 
@@ -192,19 +192,20 @@ async def install_module(payload: InstallPayload, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{module_id}")
+@router.delete("/{module_id}", dependencies=[Depends(require_role("operator"))])
 async def uninstall_module(module_id: str):
     """Remove a community module. Built-in modules cannot be uninstalled."""
     entry = module_registry.get_registry().get(module_id)
     if entry and entry.source == "builtin":
         raise HTTPException(status_code=400, detail="cannot_uninstall_builtin")
-    # Container tier: stop + remove the worker container and its data volume async
-    # before the (sync) file removal. Subprocess teardown happens inside uninstall().
+    # Best-effort container/volume teardown REGARDLESS of the current isolation
+    # mode: a module may have run under container mode and the mode later changed,
+    # so gating on the current mode would strand its container + data volume. This
+    # is a no-op when there's no container/volume/Docker. (Subprocess teardown
+    # happens inside uninstall().)
     try:
-        from backend.modules import _isolation_mode
-        if _isolation_mode() == "container":
-            from backend.modules._runtime import containers
-            await containers.stop_container_worker(module_id, remove_volume=True)
+        from backend.modules._runtime import containers
+        await containers.stop_container_worker(module_id, remove_volume=True)
     except Exception as e:
         logger.warning("container teardown for %s during uninstall failed: %s", module_id, e)
     try:

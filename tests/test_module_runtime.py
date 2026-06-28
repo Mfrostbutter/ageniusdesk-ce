@@ -185,6 +185,34 @@ def test_default_isolation_mode_is_in_process(monkeypatch):
     assert _isolation_mode() == "in_process"
 
 
+async def test_stop_container_worker_untracked_cleans_up(monkeypatch):
+    # After a restart or a mode switch a module's container is no longer tracked
+    # in _workers; uninstall must still remove the container + volume and revoke
+    # the grant (mode-independent cleanup), not early-return.
+    from backend.modules._runtime import bridge, containers
+
+    containers_calls = {}
+
+    async def _fake_rm_container(name):
+        containers_calls["container"] = name
+
+    async def _fake_rm_volume(mid):
+        containers_calls["volume"] = mid
+
+    monkeypatch.setattr(containers, "_remove_container_by_name", _fake_rm_container)
+    monkeypatch.setattr(containers, "_remove_volume", _fake_rm_volume)
+    revoked = {}
+    monkeypatch.setattr(bridge, "revoke_module", lambda mid: revoked.setdefault("mid", mid))
+    supervisor._workers.pop("ghostmod-x", None)  # ensure untracked
+
+    res = await containers.stop_container_worker("ghostmod-x", remove_volume=True)
+
+    assert res is False  # nothing was tracked
+    assert containers_calls["container"] == "agd-mod-ghostmod-x"
+    assert containers_calls["volume"] == "ghostmod-x"
+    assert revoked["mid"] == "ghostmod-x"
+
+
 def test_uninstall_stops_worker_and_revokes_token(tmp_path, monkeypatch):
     # HIGH-2: uninstall must stop the subprocess and revoke its bridge token, not
     # leave the module fully operational until the host restarts. chdir so the

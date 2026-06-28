@@ -104,12 +104,12 @@ means accidental/low-effort is stopped but a determined same-uid process is not.
 | Crash/hang/segfault takes down the host | **Enforced** (worker is a separate process) | Enforced |
 | Host actions are mediated + audited (vault, LLM; broadcast when added) | **Enforced** (only the bridge is reachable) | Enforced |
 | Credentials in the worker's own env | **Enforced** (allowlist env, Section 5.3) | Enforced |
-| `import backend.*` | **Guardrail** (curated sys.path + meta-path blocker + packaging change, Section 5.4). A determined module can still read host source off disk and exec it | **Enforced** (host source not in the container) |
-| Reading host secrets/DB **off disk** (`open("data/secrets.json")`) | **NOT enforced** same-uid. Becomes an overt, scanner-flagged act, not a sanctioned API | **Enforced** (no host files mounted; distinct uid) |
-| Reading host/sibling **`/proc/<pid>/environ`** or memory (Linux same-uid) | **NOT enforced**. Same uid can read sibling and host environ unless procfs is hardened | **Enforced** (separate PID namespace; distinct uid) |
-| Network egress outside declared `network.hosts` | **NOT enforced** (declared + scanned only) | **Enforceable** via per-module network policy / egress proxy (still optional) |
-| CPU / memory / disk exhaustion (local DoS) | **NOT enforced** (rlimit best-effort on POSIX) | **Enforced** (container limits) |
-| Arbitrary syscalls | **NOT enforced** | Hardenable (seccomp/cap-drop/read-only rootfs) |
+| `import backend.*` | **Guardrail** (curated sys.path + meta-path blocker + packaging change, Section 5.4). A determined module can still read host source off disk and exec it | **Enforced** (worker bootstrap's import blocker + `/app` is not on the worker's sys.path; host source ships in the image but is unimportable and carries no secrets) |
+| Reading host secrets/DB **off disk** (`open("data/secrets.json")`) | **NOT enforced** same-uid. Becomes an overt, scanner-flagged act, not a sanctioned API | **Enforced** for host data: only the module's own source subtree + its data volume are mounted (volume subpath); no `.secret_key`/`secrets.json`/`config.json`/`users.json`/`dashboard.db`/vault. Host `/app` source is in the image but carries no secrets |
+| Reading host/sibling **`/proc/<pid>/environ`** or memory (Linux same-uid) | **NOT enforced**. Same uid can read sibling and host environ unless procfs is hardened | **Enforced** (separate PID namespace: cannot see host or sibling processes) |
+| Network egress outside declared `network.hosts` | **NOT enforced** (declared + scanned only) | **Partial**: no-network modules get zero internet (internal network); network-declaring modules reach any host (per-host egress proxy is a follow-up) |
+| CPU / memory / disk exhaustion (local DoS) | **NOT enforced** (rlimit best-effort on POSIX) | **Enforced** (container memory/cpu/pids limits) |
+| Arbitrary syscalls | **NOT enforced** | **Partial** (cap-drop ALL + read-only rootfs + no-new-privileges applied; seccomp profile + non-root uid deferred) |
 
 **The v1 honest claim, verbatim for docs and UI:** "Community module backends run
 in a separate process with no host credentials in their environment and no access

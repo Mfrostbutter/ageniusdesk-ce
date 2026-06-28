@@ -251,12 +251,17 @@ async def start_isolated_workers() -> None:
     pending = list(_pending_isolated)
     _pending_isolated.clear()
 
+    # Sweep leftover module CONTAINERS from a prior run regardless of the current
+    # tier, so switching container -> subprocess doesn't strand them. Best-effort
+    # (no-op when Docker is unavailable).
+    try:
+        from backend.modules._runtime import containers as _sweep_containers
+        await _sweep_containers.sweep_orphan_containers()
+    except Exception as e:
+        logger.warning("container orphan sweep failed: %s", e)
+
     if mode == "container":
         from backend.modules._runtime import containers
-        try:
-            await containers.sweep_orphan_containers()
-        except Exception as e:
-            logger.warning("container orphan sweep failed: %s", e)
         for module_id, _parent, caps in pending:
             try:
                 await containers.start_container_worker(module_id, capabilities=caps)

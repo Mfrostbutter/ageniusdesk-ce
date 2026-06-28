@@ -391,16 +391,33 @@ async def _stop_any(worker) -> None:
             logger.warning("error stopping subprocess worker: %s", e)
 
 
+async def _remove_container_by_name(name: str) -> None:
+    try:
+        c = await _client().containers.get(name)
+        await c.delete(force=True)
+    except Exception:
+        pass
+
+
 async def stop_container_worker(module_id: str, *, remove_volume: bool = False) -> bool:
-    from backend.modules._runtime import supervisor
+    """Tear down a module's container worker. Works even when the worker is NOT
+    tracked in _workers (e.g. after a host restart or an isolation-mode switch):
+    it still removes the labeled container, revokes any bridge grant, and (when
+    asked) deletes the per-module volume, so nothing is stranded across modes."""
+    from backend.modules._runtime import bridge, supervisor
 
     worker = supervisor._workers.pop(module_id, None)
-    if worker is None:
-        return False
-    await _stop_any(worker)
+    if worker is not None:
+        await _stop_any(worker)
+    else:
+        await _remove_container_by_name(f"{CONTAINER_PREFIX}{module_id}")
+        try:
+            bridge.revoke_module(module_id)
+        except Exception:
+            pass
     if remove_volume:
         await _remove_volume(module_id)
-    return True
+    return worker is not None
 
 
 async def _remove_volume(module_id: str) -> None:

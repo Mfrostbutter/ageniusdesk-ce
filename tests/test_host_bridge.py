@@ -184,6 +184,36 @@ def test_search_requires_read_scope(bridge_client):
     assert r.json()["results"] == []
 
 
+def test_search_excludes_symlink_aliased_hits(bridge_client):
+    # A symlink-aliased index entry (indexed under an in-scope-looking rel but
+    # resolving outside scope) must not leak a snippet through search, even though
+    # notes.read for the same path is already blocked.
+    import asyncio
+
+    client, mint = bridge_client
+    research = storage.VAULT_DIR / "research"
+    research.mkdir(parents=True, exist_ok=True)
+    (storage.VAULT_DIR / "user").mkdir(parents=True, exist_ok=True)
+    link = research / "evil"
+    _try_symlink(link, Path("..") / "user")
+    leaked = storage.VAULT_DIR / "user" / "leaked.md"
+    try:
+        term = "zztopsecretsymterm"
+        # Write THROUGH the symlink via host storage (the bridge would refuse this
+        # path): on disk it lands in user/, but it indexes as research/evil/...
+        asyncio.run(storage.write("research/evil/leaked.md", f"{term} classified"))
+        token = mint(read_paths=["research"])
+        r = client.post("/api/_host/notes/search", json={"query": term}, headers=_h(token))
+        assert r.status_code == 200, r.text
+        paths = [x["path"] for x in r.json()["results"]]
+        assert "research/evil/leaked.md" not in paths  # symlink-aliased hit dropped
+    finally:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        if leaked.exists():
+            leaked.unlink()
+
+
 # ── folders ───────────────────────────────────────────────────────────────────
 
 

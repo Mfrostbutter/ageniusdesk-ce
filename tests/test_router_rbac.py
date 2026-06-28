@@ -124,3 +124,24 @@ def test_viewer_blocked_player(anon, monkeypatch):
     _as_role(monkeypatch, "viewer")
     # Router-level operator on the Spotify integration.
     assert anon.post("/api/spotify/play").status_code == 403
+
+
+# ── modules management: isolation tier flip + install/uninstall are operator ──
+
+
+def test_viewer_blocked_modules_writes_reads_open(anon, monkeypatch):
+    _as_role(monkeypatch, "viewer")
+    # A viewer must not weaken the isolation boundary or change the install set.
+    assert anon.post("/api/modules/isolation", json={"mode": "in_process"}).status_code == 403
+    assert anon.post("/api/modules/install", json={"repo": "x/y"}).status_code == 403
+    assert anon.post("/api/modules/discover", json={"repo": "x/y"}).status_code == 403
+    assert anon.delete("/api/modules/some-module").status_code == 403
+    # Reads stay open (list + isolation status).
+    assert anon.get("/api/modules").status_code != 403
+    assert anon.get("/api/modules/isolation").status_code != 403
+
+
+def test_operator_allowed_modules_isolation(anon, monkeypatch):
+    _as_role(monkeypatch, "operator")
+    # in_process is the default, so this write is harmless; not-403 proves the gate.
+    assert anon.post("/api/modules/isolation", json={"mode": "in_process"}).status_code != 403
