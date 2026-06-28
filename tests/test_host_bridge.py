@@ -9,7 +9,7 @@ operation validated + scoped to the module's declared vault paths on the host
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.module_registry import Capabilities, FilesystemCapability
+from backend.module_registry import Capabilities, FilesystemCapability, HostBridgeCapability
 from backend.modules._runtime import bridge
 from backend.modules.notes import storage
 
@@ -20,9 +20,11 @@ def bridge_client():
     client = TestClient(bridge.bridge_app)
     issued: list[str] = []
 
-    def _mint(write_paths=None, read_paths=None):
-        caps = Capabilities(filesystem=FilesystemCapability(
-            write_paths=write_paths or [], read_paths=read_paths or []))
+    def _mint(write_paths=None, read_paths=None, host_assistant=False):
+        caps = Capabilities(
+            filesystem=FilesystemCapability(write_paths=write_paths or [], read_paths=read_paths or []),
+            host=HostBridgeCapability(assistant=host_assistant),
+        )
         token = bridge.mint("testmod", caps)
         issued.append(token)
         return token
@@ -136,6 +138,38 @@ def test_make_folder_outside_scope_forbidden(bridge_client):
     token = mint(write_paths=["research"])
     assert client.post("/api/_host/notes/make-folder",
                        json={"rel": "user/evil"}, headers=_h(token)).status_code == 403
+
+
+# ── assistant.complete (capability gate + max_tokens clamp) ──────────────────
+
+
+def test_assistant_complete_requires_capability(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])  # host.assistant NOT declared
+    r = client.post("/api/_host/assistant/complete", json={"user": "hi"}, headers=_h(token))
+    assert r.status_code == 403
+
+
+def test_assistant_complete_calls_executor_and_clamps(bridge_client, monkeypatch):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"], host_assistant=True)
+
+    captured = {}
+
+    async def _fake_complete(system, user, *, model="", max_tokens=8000):
+        captured.update(system=system, user=user, model=model, max_tokens=max_tokens)
+        return "completion-text"
+
+    from backend.modules.assistant import completion
+    monkeypatch.setattr(completion, "complete", _fake_complete)
+
+    r = client.post("/api/_host/assistant/complete",
+                    json={"system": "s", "user": "u", "model": "m", "max_tokens": 10_000_000}, headers=_h(token))
+    assert r.status_code == 200
+    assert r.json()["text"] == "completion-text"
+    # bridge clamps the caller's max_tokens to the hard ceiling before dispatch
+    assert captured["max_tokens"] == completion.HARD_MAX_TOKENS
+    assert captured["user"] == "u"
 
 
 # ── End-to-end: a real worker subprocess calls back through the bridge ─────────

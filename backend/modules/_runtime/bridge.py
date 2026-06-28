@@ -237,6 +237,30 @@ async def notes_list_files(payload: _RelPayload, grant: BridgeGrant = Depends(_r
     return {"files": files}
 
 
+# ── assistant.complete namespace (tool-free LLM, host-resolved key) ───────────
+
+
+class _CompletePayload(BaseModel):
+    user: str
+    system: str = ""
+    model: str = ""
+    max_tokens: int = 8000
+
+
+@bridge_app.post("/api/_host/assistant/complete")
+async def assistant_complete(payload: _CompletePayload, grant: BridgeGrant = Depends(_require_grant)):
+    if not grant.host_assistant:
+        raise HTTPException(status_code=403, detail="module did not declare host.assistant")
+    # Lazy import: keep the assistant provider stack out of the bridge import path.
+    from backend.modules.assistant.completion import HARD_MAX_TOKENS, CompletionError, complete
+    mt = max(1, min(int(payload.max_tokens or 8000), HARD_MAX_TOKENS))
+    try:
+        text = await complete(payload.system, payload.user, model=payload.model, max_tokens=mt)
+    except CompletionError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"text": text}
+
+
 # ── Loopback listener ─────────────────────────────────────────────────────────
 
 _bridge_port: int | None = None

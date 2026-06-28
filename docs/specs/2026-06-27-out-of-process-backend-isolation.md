@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass. LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: `assistant.complete` namespace (phase 4), scanner additions for the new caps (5), youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
+Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass. LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: scanner additions for the new caps (5), youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -609,7 +609,11 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
    validators, segment-aware prefix, read-includes-write). Token minted at spawn
    from the module's caps, injected as AGD_BRIDGE_URL/AGD_BRIDGE_TOKEN, revoked on
    stop. End-to-end test: a worker subprocess writes the vault via the bridge.
-4. `assistant.complete` namespace (tool-free executor).
+4. [DONE] `assistant.complete` namespace: a dedicated tool-free executor
+   (`assistant/completion.py`, never `_dispatch_chat`); gated on `host.assistant`;
+   host resolves provider/key (key never crosses to the worker); no caller-set
+   base URL; max_tokens clamped to a hard ceiling. respx tests assert no `tools`
+   key is ever sent.
 5. [PARTIAL] Capability model gained `filesystem.read_paths` + `host.{assistant,
    broadcast}`. Scanner additions (host.* cross-check, host-import HIGH) pending.
 6. Re-port youtube-research onto the bridge + private store + data importer
