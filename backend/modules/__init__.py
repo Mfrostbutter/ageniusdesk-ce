@@ -43,13 +43,30 @@ BUILTIN_DIR = Path(__file__).parent
 _pending_isolated: list[tuple] = []
 
 
-def _isolation_mode() -> str:
-    """Community-module isolation mode: 'in_process' (default) or 'subprocess'.
+_ISOLATION_MODES = ("in_process", "subprocess", "container")
 
-    Global for now (per-module opt-in is a later phase). Default keeps the
-    pre-isolation behavior so existing installs are unaffected.
+
+def _isolation_mode() -> str:
+    """Community-module isolation mode: 'in_process' (default), 'subprocess', or
+    'container'.
+
+    Resolution: the AGD_MODULE_ISOLATION env var wins when set (an explicit ops
+    override); otherwise the persisted operator setting (Settings > Modules
+    toggle, `module_isolation` in data/config.json); otherwise the default
+    'in_process', so existing installs are unaffected. Global for now (per-module
+    opt-in is a later phase).
     """
-    return os.environ.get("AGD_MODULE_ISOLATION", "in_process").strip().lower()
+    env = os.environ.get("AGD_MODULE_ISOLATION", "").strip().lower()
+    if env in _ISOLATION_MODES:
+        return env
+    try:
+        from backend.config import load_config
+        v = (load_config().get("module_isolation") or "").strip().lower()
+        if v in _ISOLATION_MODES:
+            return v
+    except Exception:
+        pass
+    return "in_process"
 
 
 def _register_builtin(app: FastAPI, child: Path) -> None:
@@ -118,7 +135,7 @@ def _register_community(app: FastAPI, child: Path) -> None:
         ))
         return
 
-    if _isolation_mode() == "subprocess":
+    if _isolation_mode() in ("subprocess", "container"):
         _register_community_isolated(app, child, manifest, entry_path)
         return
 
@@ -203,25 +220,57 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
         logger.warning("Failed to register isolated community module %s: %s", manifest.id, e)
 
 
+def _mark_isolated_failed(module_id: str, err: Exception) -> None:
+    entry = module_registry.get_registry().get(module_id)
+    if entry is not None:
+        module_registry.register(RegistryEntry(
+            manifest=entry.manifest,
+            status="failed",
+            source="community",
+            error=str(err),
+            path=entry.path,
+        ))
+    logger.warning("Failed to start isolated community module %s: %s", module_id, err)
+
+
 async def start_isolated_workers() -> None:
     """Spawn the deferred isolated-module workers (called from the app lifespan,
     AFTER the host bridge is listening).
 
-    Each spawn runs in a thread executor: supervisor.start_worker blocks on a
-    synchronous health wait, and a worker may call the bridge during its own
-    startup. Running the wait off the event loop keeps the loop free to serve that
-    bridge call instead of deadlocking against it.
+    Subprocess tier: each spawn runs in a thread executor, because
+    supervisor.start_worker blocks on a synchronous health wait and a worker may
+    call the bridge during its own startup; running the wait off the event loop
+    keeps the loop free to serve that bridge call instead of deadlocking.
+
+    Container tier: spawn is natively async (aiodocker); a leftover-container
+    sweep runs first.
     """
     if not _pending_isolated:
         return
+    mode = _isolation_mode()
+    pending = list(_pending_isolated)
+    _pending_isolated.clear()
+
+    if mode == "container":
+        from backend.modules._runtime import containers
+        try:
+            await containers.sweep_orphan_containers()
+        except Exception as e:
+            logger.warning("container orphan sweep failed: %s", e)
+        for module_id, _parent, caps in pending:
+            try:
+                await containers.start_container_worker(module_id, capabilities=caps)
+                logger.info("Started isolated community module (container): %s", module_id)
+            except Exception as e:
+                _mark_isolated_failed(module_id, e)
+        return
+
     import asyncio
     import functools
 
     from backend.modules._runtime import supervisor
 
     loop = asyncio.get_running_loop()
-    pending = list(_pending_isolated)
-    _pending_isolated.clear()
     for module_id, parent, caps in pending:
         try:
             await loop.run_in_executor(
@@ -232,16 +281,7 @@ async def start_isolated_workers() -> None:
             )
             logger.info("Started isolated community module: %s", module_id)
         except Exception as e:
-            entry = module_registry.get_registry().get(module_id)
-            if entry is not None:
-                module_registry.register(RegistryEntry(
-                    manifest=entry.manifest,
-                    status="failed",
-                    source="community",
-                    error=str(e),
-                    path=entry.path,
-                ))
-            logger.warning("Failed to start isolated community module %s: %s", module_id, e)
+            _mark_isolated_failed(module_id, e)
 
 
 def register_modules(app: FastAPI) -> list[str]:

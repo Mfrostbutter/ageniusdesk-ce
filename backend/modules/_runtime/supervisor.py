@@ -277,15 +277,17 @@ def start_worker(
 
 
 def stop_worker(module_id: str) -> bool:
-    """Stop and deregister a single worker (uninstall path).
+    """Stop and deregister a single SUBPROCESS worker (uninstall path).
 
     ModuleWorker.stop() revokes the worker's host-bridge token, so this fully
-    tears the worker down. Returns False (no-op, no pidfile write) when no worker
-    is tracked, so it is safe to call in default in_process mode.
+    tears the worker down. Container-tier workers have no sync stop and are torn
+    down asynchronously (see containers.stop_container_worker); this is a no-op
+    for them, and for the default in_process mode (no worker tracked).
     """
-    worker = _workers.pop(module_id, None)
-    if worker is None:
+    worker = _workers.get(module_id)
+    if worker is None or not hasattr(worker, "proc"):
         return False
+    _workers.pop(module_id, None)
     try:
         worker.stop()
     finally:
@@ -294,14 +296,18 @@ def stop_worker(module_id: str) -> bool:
 
 
 def stop_all() -> None:
-    if not _workers:
-        return  # nothing was started: no side effects in default (in_process) mode
-    for worker in list(_workers.values()):
+    """Stop all SUBPROCESS workers. Container workers (no `.proc`) are skipped and
+    torn down via containers.stop_all_containers(); in_process mode has none, so
+    this early-returns with no side effects."""
+    subworkers = [(mid, w) for mid, w in _workers.items() if hasattr(w, "proc")]
+    if not subworkers:
+        return
+    for mid, worker in subworkers:
         try:
             worker.stop()
         except Exception as e:  # pragma: no cover - shutdown best-effort
-            logger.warning("error stopping worker %s: %s", worker.module_id, e)
-    _workers.clear()
+            logger.warning("error stopping worker %s: %s", mid, e)
+        _workers.pop(mid, None)
     _save_pidfile()
 
 

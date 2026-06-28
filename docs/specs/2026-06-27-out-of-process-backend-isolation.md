@@ -418,27 +418,54 @@ shared schema, no name collisions with host tables.
 - The existing `POST /api/admin/restart` (SIGTERM self under `restart:
   unless-stopped`) still works and now also brings workers back.
 
-### 5.8 The container tier (the real boundary, layered later under the same bridge)
+### 5.8 The container tier (v1: operator-selectable real boundary, ships in 0.3)
 
-The product already centers on Docker and the recommended deploy mounts the
-socket. The strong confinement option reuses **the entire bridge unchanged** and
-swaps the worker from a subprocess to a container per module:
+Selected via `AGD_MODULE_ISOLATION=container` (or the Settings toggle). Reuses the
+bridge + reverse proxy UNCHANGED; only the worker spawn and its transport differ,
+so module code is identical to the subprocess tier. Locked decisions for 0.3:
 
-- Image: the same app image (or a slim runtime), entrypoint = the worker
-  bootstrap. Module code + its `_data/` bind-mounted read-appropriately; **no host
-  secrets, no host source, no `data/` beyond the module's own dir mounted.**
-- `--user` distinct uid, `--read-only` rootfs + tmpfs, `--cap-drop ALL`, optional
-  seccomp; memory/CPU limits; a dedicated docker network with egress policy (or an
-  egress proxy enforcing `network.hosts`).
-- Bridge reachable at the host gateway IP over the per-module token; proxy reaches
-  the worker over the container's published loopback port / shared internal net.
+- **Image:** the dashboard's OWN image (discovered by self-inspect; `AGD_MODULE_IMAGE`
+  overrides). All deps (yt-dlp, httpx, fastapi, aiosqlite) are already present, so
+  no per-module build. `/app` host source is in the image, but the worker's import
+  blocker prevents `import backend`, and that source is MIT/public and carries no
+  secrets (secrets are scrubbed from env and live in the token-gated bridge +
+  restricted volumes). A slim worker-only image is a later hardening step.
+- **Spawn:** via aiodocker over the socket the dashboard already mounts. Container
+  name `agd-mod-{id}`, labels `agd.role=module-worker` + `agd.module={id}` for the
+  orphan sweep. Cmd = the same `agd_module_worker/main.py` bootstrap.
+- **Mounts:** the dashboard-data volume mounted READ-ONLY at `/agd-host` (module
+  source at `/agd-host/modules/{id}`); a per-module named volume `agd-mod-{id}-data`
+  mounted READ-WRITE for the module's `_data` (jobs.db), `AGD_MODULE_DATA_DIR`
+  pointed at it. No host secrets, no `data/` beyond the module's own subtree, no
+  Docker socket inside.
+- **Hardening:** `ReadonlyRootfs` + `tmpfs /tmp`, `CapDrop:[ALL]`,
+  `no-new-privileges`, NO Docker socket, `PidsLimit`, `Memory`, `NanoCpus`,
+  `PYTHONDONTWRITEBYTECODE=1`. v1 runs the worker as the image's default user
+  (root) inside this hardened sandbox: `CapDrop:[ALL]` removes the root powers
+  that matter and it is deterministic (no data-volume chown race). Dropping to a
+  non-root uid (with a verified data-volume chown that is reliable inside the app
+  lifespan) is the immediate hardening follow-up.
+- **Network:** two host-created user networks. A module that declares NO network
+  joins `agd-mod-internal` (`internal: true`): it reaches the bridge but has zero
+  internet. A module that declares network joins `agd-mod-egress` (internet, ANY
+  host in 0.3). The dashboard joins both. Per-host allowlist enforcement matching
+  `network.hosts` is the next step (egress proxy); in 0.3 hosts are scanned +
+  consented but not network-enforced.
+- **Transport:** the worker listens on `0.0.0.0:8000` inside its container; the
+  proxy reaches `http://agd-mod-{id}:8000` (Docker DNS on the shared net) with the
+  proxy secret. The bridge binds `0.0.0.0` on its ephemeral, UNPUBLISHED port
+  (reachable only by containers on the shared nets, every call token + cookie
+  gated); the worker reaches it at `http://{dashboard-container}:{bridgeport}`.
+- **Lifecycle:** async spawn/health/stop via aiodocker (health = GET
+  `/_worker/health` with the proxy secret). Orphan sweep removes leftover
+  `agd.role=module-worker` containers on boot. Uninstall stops + removes the
+  container and revokes the token.
 
-This closes every "NOT enforced" row in Section 3 (off-disk secret reads, /proc,
-DoS, syscalls, network). It depends on the Docker socket and adds per-module
-container overhead. **Recommendation:** ship the subprocess tier + bridge first
-(defines and proves the contract, re-ports youtube-research once), then add the
-container tier as an operator-selectable confinement mode. Module code does not
-change between tiers.
+This closes the "NOT enforced" rows in Section 3 (off-disk secret reads, /proc,
+DoS, raw syscalls, and no-internet for non-network modules). Deferred, documented,
+NOT in 0.3: a per-host egress proxy enforcing `network.hosts`; a slim worker-only
+image; a seccomp profile. Falls back to the subprocess tier where Docker is
+unavailable.
 
 ## 6. Capability model changes
 

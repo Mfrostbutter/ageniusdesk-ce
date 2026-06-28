@@ -1,5 +1,7 @@
 """Module manager API — list modules, surface nav, inspect/install/uninstall."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -8,6 +10,8 @@ from backend.auth_gate import current_user, require_trusted_request
 from backend.module_registry import APP_VERSION
 
 from . import installer
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/modules", tags=["modules"], dependencies=[Depends(require_trusted_request)])
 
@@ -147,6 +151,15 @@ async def uninstall_module(module_id: str):
     entry = module_registry.get_registry().get(module_id)
     if entry and entry.source == "builtin":
         raise HTTPException(status_code=400, detail="cannot_uninstall_builtin")
+    # Container tier: stop + remove the worker container and its data volume async
+    # before the (sync) file removal. Subprocess teardown happens inside uninstall().
+    try:
+        from backend.modules import _isolation_mode
+        if _isolation_mode() == "container":
+            from backend.modules._runtime import containers
+            await containers.stop_container_worker(module_id, remove_volume=True)
+    except Exception as e:
+        logger.warning("container teardown for %s during uninstall failed: %s", module_id, e)
     try:
         return installer.uninstall(module_id)
     except Exception as e:

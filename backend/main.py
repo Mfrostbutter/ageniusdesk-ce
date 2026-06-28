@@ -87,10 +87,14 @@ async def lifespan(app: FastAPI):
     # registration) so a worker that calls the bridge during startup finds it
     # already listening. Only when isolation is on (default in_process is dormant).
     try:
-        if os.environ.get("AGD_MODULE_ISOLATION", "in_process").strip().lower() == "subprocess":
-            from backend.modules import start_isolated_workers as _start_isolated_workers
+        from backend.modules import _isolation_mode as _iso
+        from backend.modules import start_isolated_workers as _start_isolated_workers
+        _mode = _iso()
+        if _mode in ("subprocess", "container"):
             from backend.modules._runtime import bridge as _bridge
-            await _bridge.start_bridge()
+            # Container workers reach the bridge over the shared Docker network, so
+            # it must bind 0.0.0.0 there (unpublished port, token + cookie gated).
+            await _bridge.start_bridge(host="0.0.0.0" if _mode == "container" else "127.0.0.1")
             await _start_isolated_workers()
     except Exception as e:
         logger.exception("host bridge / isolated worker start failed: %s", e)
@@ -121,9 +125,15 @@ async def lifespan(app: FastAPI):
     # Shutdown
     try:
         from backend.modules._runtime import supervisor as _supervisor
-        _supervisor.stop_all()
+        _supervisor.stop_all()  # subprocess workers (skips container workers)
     except Exception as e:
         logger.warning("module worker stop_all failed: %s", e)
+    try:
+        from backend.modules._runtime import containers as _containers
+        await _containers.stop_all_containers()
+        await _containers.close_docker()
+    except Exception as e:
+        logger.warning("module container teardown failed: %s", e)
     try:
         from backend.modules._runtime import bridge as _bridge
         await _bridge.stop_bridge()

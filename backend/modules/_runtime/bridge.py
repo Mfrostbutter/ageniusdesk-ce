@@ -320,9 +320,14 @@ def bridge_url() -> str:
     return f"http://127.0.0.1:{_ensure_port()}"
 
 
-async def start_bridge() -> str:
-    """Start the loopback bridge listener (idempotent). Called from the app
-    lifespan when isolation is enabled, BEFORE any worker is spawned.
+async def start_bridge(host: str = "127.0.0.1") -> str:
+    """Start the bridge listener (idempotent). Called from the app lifespan when
+    isolation is enabled, BEFORE any worker is spawned.
+
+    `host` is the bind address: loopback for the subprocess tier; `0.0.0.0` for
+    the container tier, so module containers on the shared Docker network can
+    reach it (the port is ephemeral and UNPUBLISHED, so it is reachable only by
+    containers on that network, and every call is token + cookie gated).
 
     The pre-reserved port can in theory be grabbed by another process between
     reservation and bind (a TOCTOU window). If the bind fails we pick a fresh
@@ -338,7 +343,7 @@ async def start_bridge() -> str:
 
     last_err: object = "did not start in time"
     for _attempt in range(5):
-        config = uvicorn.Config(bridge_app, host="127.0.0.1", port=_ensure_port(), log_level="warning")
+        config = uvicorn.Config(bridge_app, host=host, port=_ensure_port(), log_level="warning")
         server = uvicorn.Server(config)
         task = asyncio.create_task(server.serve())
         for _ in range(200):
