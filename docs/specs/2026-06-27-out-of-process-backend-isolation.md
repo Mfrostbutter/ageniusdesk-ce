@@ -435,11 +435,14 @@ so module code is identical to the subprocess tier. Locked decisions for 0.3:
 - **Spawn:** via aiodocker over the socket the dashboard already mounts. Container
   name `agd-mod-{id}`, labels `agd.role=module-worker` + `agd.module={id}` for the
   orphan sweep. Cmd = the same `agd_module_worker/main.py` bootstrap.
-- **Mounts:** the dashboard-data volume mounted READ-ONLY at `/agd-host` (module
-  source at `/agd-host/modules/{id}`); a per-module named volume `agd-mod-{id}-data`
-  mounted READ-WRITE for the module's `_data` (jobs.db), `AGD_MODULE_DATA_DIR`
-  pointed at it. No host secrets, no `data/` beyond the module's own subtree, no
-  Docker socket inside.
+- **Mounts:** ONLY the module's own source subtree, via a Docker volume SUBPATH
+  mount (`modules/{id}` of the data volume) at `/agd-host/modules/{id}`, read-only.
+  The whole data volume is NEVER mounted: it also holds `.secret_key`,
+  `secrets.json`, `config.json`, `users.json`, `dashboard.db`, and the vault, none
+  of which a module may read. A per-module named volume `agd-mod-{id}-data` is
+  mounted READ-WRITE for the module's `_data` (jobs.db), with `AGD_MODULE_DATA_DIR`
+  pointed at it. No Docker socket inside. (Needs Docker engine >= 25 for subpath
+  mounts.)
 - **Hardening:** `ReadonlyRootfs` + `tmpfs /tmp`, `CapDrop:[ALL]`,
   `no-new-privileges`, NO Docker socket, `PidsLimit`, `Memory`, `NanoCpus`,
   `PYTHONDONTWRITEBYTECODE=1`. v1 runs the worker as the image's default user

@@ -266,9 +266,19 @@ class ContainerWorker:
             "WorkingDir": DATA_MOUNT,
             "Labels": {LABEL_ROLE: ROLE_WORKER, LABEL_MODULE: self.module_id},
             "HostConfig": {
-                "Binds": [
-                    f"{me['data_volume']}:{SRC_MOUNT}:ro",
-                    f"{vol}:{DATA_MOUNT}",
+                # Mount ONLY the module's own source subtree (volume subpath), never
+                # the whole data volume: the data volume also holds .secret_key,
+                # secrets.json, config.json, users.json, dashboard.db and the vault,
+                # which a module must never read. A per-module volume holds its _data.
+                "Mounts": [
+                    {
+                        "Type": "volume",
+                        "Source": me["data_volume"],
+                        "Target": f"{SRC_MOUNT}/modules/{self.module_id}",
+                        "ReadOnly": True,
+                        "VolumeOptions": {"Subpath": f"modules/{self.module_id}"},
+                    },
+                    {"Type": "volume", "Source": vol, "Target": DATA_MOUNT},
                 ],
                 "NetworkMode": network,
                 "ReadonlyRootfs": True,
