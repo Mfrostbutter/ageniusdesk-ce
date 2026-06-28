@@ -16,6 +16,9 @@ Targeting v0.3.
 
   Either way, privileged actions go through a loopback **capability bridge**, never direct host access: vault read/write scoped to the module's declared paths (checked against the symlink-resolved location), and a **tool-free `assistant.complete`** that runs the LLM host-side so the provider key never reaches the module. The default stays **in-process**, so existing installs are unchanged. The reference **YouTube Research** module is dual-mode: the same code runs in-process or isolated.
 
+- **Fleet Health view.** A dedicated view aggregating workflow health across every connected n8n instance: per-instance active/total workflows, error rate over recent executions, and the unhealthy workflows, plus a combined roll-up. Live parallel fan-out; a degraded or unreachable instance is shown, not fatal. The "one client becomes ten" pane.
+- **Auto-install the error handler on connect.** Adding an n8n instance now best-effort installs + activates the Global Error Handler workflow into it (idempotent), so its errors flow to AgeniusDesk from the moment it's connected. It posts to a container-reachable dashboard URL (`AGD_PUBLIC_HOST`, else a configured host alias). n8n's public API cannot set the instance-wide Error Workflow, so the connect result surfaces that one remaining manual step.
+
 ### Next
 - Container tier hardening: drop the module worker to a non-root uid, and a per-host egress proxy that enforces the manifest's declared `network.hosts` (today a network-declaring module reaches any host).
 

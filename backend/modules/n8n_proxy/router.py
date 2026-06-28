@@ -1,11 +1,12 @@
 """n8n proxy API routes — multi-instance support."""
 
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -22,6 +23,8 @@ from backend.config import (
     update_instance,
 )
 from backend.modules.n8n_proxy import client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/n8n", tags=["n8n"], dependencies=[Depends(require_role("operator"))])
 
@@ -56,6 +59,15 @@ class ActiveRequest(BaseModel):
 def _check_configured():
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instances configured. Add one first.")
+
+
+@router.get("/fleet/health")
+async def fleet_health(exec_limit: int = 50):
+    """Workflow health rolled up across ALL configured instances (Fleet Health):
+    one row per instance with totals, error rate over recent executions, and the
+    unhealthy workflows. Fans out in parallel; a degraded instance is reported,
+    not fatal."""
+    return await client.fleet_health(exec_limit=max(1, min(exec_limit, 250)))
 
 
 # ── Instance management ──────────────────────────────────────────────────────
@@ -94,8 +106,10 @@ async def list_instances():
 
 
 @router.post("/instances")
-async def create_instance(req: InstanceRequest):
-    """Add a new n8n instance and test the connection."""
+async def create_instance(req: InstanceRequest, request: Request):
+    """Add a new n8n instance, test the connection, and auto-install the error
+    handler so the instance's errors flow to AgeniusDesk from the moment it's
+    connected."""
     browser_url = req.url.rstrip("/")
     # When the dashboard runs in Docker, a localhost URL must be reached via
     # host.docker.internal from inside the container. Store that as the backend
@@ -122,7 +136,23 @@ async def create_instance(req: InstanceRequest):
         )
 
     add_instance(inst)
-    return {"success": True, "instance": {"id": inst["id"], "name": inst["name"], "url": inst["url"]}}
+
+    # Auto-install the global error handler into the NEW instance (best-effort;
+    # never blocks the connect). n8n's API can import + activate the workflow but
+    # cannot set it as the instance-wide Error Workflow, so the caller still
+    # surfaces that one manual step.
+    error_handler = None
+    try:
+        from backend.modules.errors.router import handler_dashboard_url, install_handler_into
+        error_handler = await install_handler_into(inst, dashboard_url=handler_dashboard_url(request))
+    except Exception as e:  # pragma: no cover - defensive; install itself is best-effort
+        logger.warning("error-handler auto-install for %s failed: %s", inst["name"], e)
+
+    return {
+        "success": True,
+        "instance": {"id": inst["id"], "name": inst["name"], "url": inst["url"]},
+        "error_handler": error_handler,
+    }
 
 
 @router.put("/instances/{instance_id}")

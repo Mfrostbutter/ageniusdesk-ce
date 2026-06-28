@@ -4,7 +4,8 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.auth_gate import require_trusted_request
@@ -349,3 +350,80 @@ async def install_handler(req: _InstallHandlerRequest):
         "activation_error": activation_error,
         "already_existed": False,
     }
+
+
+# ── Auto-install on connect (targets a SPECIFIC instance, not the active one) ──
+
+# n8n's Public API rejects these as read-only on POST /workflows (mirror of the
+# n8n client's import shaping).
+_HANDLER_READONLY = {
+    "id", "active", "tags", "createdAt", "updatedAt", "versionId",
+    "activeVersionId", "versionCounter", "triggerCount", "shared",
+    "activeVersion", "staticData", "meta", "pinData",
+}
+
+
+def handler_dashboard_url(request: Request) -> str:
+    """The address the error handler should POST errors to: one the n8n INSTANCE
+    can reach the dashboard at (often a container, so not the browser URL).
+
+    Precedence: AGD_PUBLIC_HOST (authoritative) -> the first AGD_HOST_ALIASES
+    entry + the request's port (LAN address, the reason host aliases exist) ->
+    the request origin (may be localhost; the workflow keeps an
+    $env.FLOW_DASHBOARD_URL override either way).
+    """
+    from backend.config import settings
+
+    scheme = "https" if request.url.scheme == "https" else "http"
+    if settings.agd_public_host:
+        return f"{scheme}://{settings.agd_public_host}"
+    aliases = [a.strip() for a in (settings.agd_host_aliases or "").split(",") if a.strip()]
+    if aliases:
+        port = request.url.port
+        return f"http://{aliases[0]}:{port}" if port else f"http://{aliases[0]}"
+    return str(request.base_url).rstrip("/")
+
+
+async def install_handler_into(inst: dict, dashboard_url: str = "", activate: bool = True) -> dict:
+    """Best-effort, idempotent install of the global error handler into a SPECIFIC
+    instance (used on connect; the active-instance client can't target it). Never
+    raises. Returns {installed, already, activated, error}."""
+    from backend.config import decrypt_value
+    from backend.modules.n8n_proxy.client import TIMEOUT, _verify, dockerize_url
+
+    out = {"installed": False, "already": False, "activated": False, "error": ""}
+    base = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
+    key = decrypt_value(inst.get("api_key", ""))
+    headers = {"X-N8N-API-KEY": key, "Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as c:
+            lw = await c.get(f"{base}/api/v1/workflows", headers=headers, params={"limit": 250})
+            if lw.status_code != 200:
+                out["error"] = "auth" if lw.status_code in (401, 403) else f"HTTP {lw.status_code}"
+                return out
+            existing = next(
+                (w for w in (lw.json() or {}).get("data", [])
+                 if "global error handler" in (w.get("name") or "").lower()),
+                None,
+            )
+            wf_id = ""
+            if existing:
+                out["already"] = True
+                wf_id = existing.get("id", "")
+                out["activated"] = bool(existing.get("active"))
+            else:
+                wf = _load_handler_template(dashboard_url)
+                clean = {k: v for k, v in wf.items() if k not in _HANDLER_READONLY}
+                clean.setdefault("settings", {})
+                imp = await c.post(f"{base}/api/v1/workflows", headers=headers, json=clean)
+                if imp.status_code not in (200, 201):
+                    out["error"] = f"import HTTP {imp.status_code}: {imp.text[:120]}"
+                    return out
+                out["installed"] = True
+                wf_id = (imp.json() or {}).get("id", "")
+            if activate and wf_id and not out["activated"]:
+                act = await c.post(f"{base}/api/v1/workflows/{wf_id}/activate", headers=headers)
+                out["activated"] = act.status_code in (200, 201)
+    except Exception as e:  # noqa: BLE001 - connect-time best effort, never fatal
+        out["error"] = str(e)[:120]
+    return out

@@ -306,6 +306,91 @@ async def test_connection_with(url: str, api_key: str) -> dict[str, Any]:
         return {"connected": False, "error_class": "generic", "message": str(e)}
 
 
+# ── Fleet health: workflow health aggregated across ALL instances ─────────────
+
+
+async def _instance_health(inst: dict, exec_limit: int = 50) -> dict[str, Any]:
+    """Fetch one instance's workflow + recent-execution health directly from its
+    own n8n API (not the active instance). Never raises: an unreachable or
+    rejecting instance comes back with reachable=False and an error string."""
+    from backend.config import decrypt_value
+
+    out: dict[str, Any] = {
+        "id": inst.get("id", ""),
+        "name": inst.get("name", ""),
+        "color": inst.get("color", ""),
+        "login_url": inst.get("login_url", "") or inst.get("url", ""),
+        "reachable": False,
+        "error": "",
+        "workflows_total": 0,
+        "workflows_active": 0,
+        "exec_total": 0,
+        "exec_error": 0,
+        "error_rate": 0,
+        "unhealthy": [],
+    }
+    url = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
+    api_key = decrypt_value(inst.get("api_key", ""))
+    headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+            wf = await client.get(f"{url}/api/v1/workflows", headers=headers, params={"limit": 250})
+            if wf.status_code != 200:
+                out["error"] = "auth" if wf.status_code in (401, 403) else f"HTTP {wf.status_code}"
+                return out
+            wfs = (wf.json() or {}).get("data", []) or []
+            out["reachable"] = True
+            out["workflows_total"] = len(wfs)
+            out["workflows_active"] = sum(1 for w in wfs if w.get("active"))
+            names = {str(w.get("id", "")): w.get("name", "Unknown") for w in wfs}
+
+            ex = await client.get(f"{url}/api/v1/executions", headers=headers, params={"limit": min(exec_limit, 250)})
+            execs = (ex.json() or {}).get("data", []) or [] if ex.status_code == 200 else []
+            out["exec_total"] = len(execs)
+            err_by_wf: dict[str, int] = {}
+            for e in execs:
+                if e.get("status") == "error":
+                    out["exec_error"] += 1
+                    wid = str(e.get("workflowId", ""))
+                    err_by_wf[wid] = err_by_wf.get(wid, 0) + 1
+            out["error_rate"] = round(out["exec_error"] / out["exec_total"] * 100) if out["exec_total"] else 0
+            out["unhealthy"] = sorted(
+                ({"id": wid, "name": names.get(wid, wid), "errors": n} for wid, n in err_by_wf.items()),
+                key=lambda x: -x["errors"],
+            )[:10]
+    except httpx.ConnectError:
+        out["error"] = "unreachable"
+    except httpx.TimeoutException:
+        out["error"] = "timeout"
+    except Exception as e:  # noqa: BLE001 - one bad instance must not sink the fleet view
+        out["error"] = str(e)[:120]
+    return out
+
+
+async def fleet_health(exec_limit: int = 50) -> dict[str, Any]:
+    """Fan out across every configured instance in parallel and roll up workflow
+    health, so an operator sees the whole fleet (one client becomes ten) in one
+    pane. Read-only aggregation; a degraded instance is shown, not fatal."""
+    from backend.config import get_active_instance_id, get_instances
+
+    instances = get_instances()
+    active_id = get_active_instance_id()
+    results = await asyncio.gather(*[_instance_health(i, exec_limit) for i in instances]) if instances else []
+    for r in results:
+        r["active"] = r["id"] == active_id
+
+    totals = {
+        "instances": len(results),
+        "reachable": sum(1 for r in results if r["reachable"]),
+        "workflows_total": sum(r["workflows_total"] for r in results),
+        "workflows_active": sum(r["workflows_active"] for r in results),
+        "exec_total": sum(r["exec_total"] for r in results),
+        "exec_error": sum(r["exec_error"] for r in results),
+    }
+    totals["error_rate"] = round(totals["exec_error"] / totals["exec_total"] * 100) if totals["exec_total"] else 0
+    return {"instances": results, "totals": totals}
+
+
 async def list_workflows(
     active_only: bool = False,
     name_contains: str = "",

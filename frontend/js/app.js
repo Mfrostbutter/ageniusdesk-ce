@@ -25,6 +25,7 @@ import * as secretsView from './views/secrets.js';
 import * as notesView from './views/notes.js';
 import * as insightsView from './views/insights.js';
 import * as observabilityView from './views/observability.js';
+import * as fleetHealthView from './views/fleet-health.js';
 import * as knowledgeView from './views/knowledge.js';
 import * as knowledgeConnectorsView from './views/knowledge-connectors.js';
 import * as knowledgeInstructionsView from './views/knowledge-instructions.js';
@@ -60,6 +61,7 @@ const views = {
   notes: notesView,
   insights: insightsView,
   observe: observabilityView,
+  fleet: fleetHealthView,
   knowledge: knowledgeView,
   'knowledge-connectors': knowledgeConnectorsView,
   'knowledge-instructions': knowledgeInstructionsView,
@@ -416,9 +418,15 @@ document.getElementById('setup-form')?.addEventListener('submit', async (e) => {
         toast.error(`Could not save to secrets store: ${err.message}. Storing inline.`);
       }
     }
-    await post('/api/n8n/instances', { name, url, api_key: key });
+    const addRes = await post('/api/n8n/instances', { name, url, api_key: key });
     closeSetupModal();
     toast.success(`Connected to ${name}`);
+    const eh = addRes && addRes.error_handler;
+    if (eh && (eh.installed || eh.already)) {
+      toast.info(`Error handler ${eh.installed ? 'installed on' : 'already on'} ${name}. Finish in n8n: Settings → Workflows → Error Workflow → pick "Global Error Handler → AgeniusDesk".`);
+    } else if (eh && eh.error) {
+      toast.warning(`Connected, but the error handler did not auto-install (${eh.error}). Add it from Error Handler settings.`);
+    }
     window.__hasInstances = true;
     await loadInstances();
     navigate('dashboard');
