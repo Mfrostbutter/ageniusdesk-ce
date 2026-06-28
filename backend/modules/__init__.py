@@ -168,9 +168,10 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
 
     # Do NOT source the worker env from the module's declared capabilities.env: a
     # module could name a host secret and have it forwarded. The worker gets only
-    # the base allowlist; config/credentials come via the host bridge (later phase).
+    # the base allowlist; privileged actions go through the capability-scoped host
+    # bridge (token minted from manifest.capabilities).
     try:
-        supervisor.start_worker(manifest.id, child.parent, forward_env=[])
+        supervisor.start_worker(manifest.id, child.parent, capabilities=manifest.capabilities, forward_env=[])
         proxy.register_proxy_route(app, manifest.id)
         missing = check_secrets(manifest)
         status = "missing_secrets" if missing else "loaded"

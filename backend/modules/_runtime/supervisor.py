@@ -66,13 +66,17 @@ def _free_loopback_port() -> int:
 class ModuleWorker:
     """One community module running in its own subprocess behind a proxy secret."""
 
-    def __init__(self, module_id: str, module_parent: Path, data_dir: Path):
+    def __init__(self, module_id: str, module_parent: Path, data_dir: Path, capabilities=None):
         self.module_id = module_id
         self.module_parent = module_parent
         self.data_dir = data_dir
         import secrets as _secrets
 
+        from backend.modules._runtime import bridge
+
         self.proxy_secret = _secrets.token_urlsafe(32)
+        # Per-spawn host-bridge token scoped to this module's declared capabilities.
+        self.bridge_token = bridge.mint(module_id, capabilities)
         self.proc: subprocess.Popen | None = None
         self.started_at: float = 0.0
         self.restarts: int = 0
@@ -96,6 +100,7 @@ class ModuleWorker:
     def _build_env(self, forward_env: list[str] | None) -> dict[str, str]:
         # Reuse the worker's own allowlist so host + worker agree on what leaks.
         from agd_module_worker.sandbox import build_worker_env
+        from backend.modules._runtime import bridge
 
         bind = f"unix:{self.uds_path}" if USE_UDS else f"127.0.0.1:{self.port}"
         injected = {
@@ -105,6 +110,8 @@ class ModuleWorker:
             "AGD_HOST_ROOT": str(HOST_ROOT),
             "AGD_PROXY_SECRET": self.proxy_secret,
             "AGD_WORKER_BIND": bind,
+            "AGD_BRIDGE_URL": bridge.bridge_url(),
+            "AGD_BRIDGE_TOKEN": self.bridge_token,
         }
         return build_worker_env(dict(os.environ), injected, forward_env)
 
@@ -211,6 +218,12 @@ class ModuleWorker:
         # The async client is bound to the host event loop; from sync teardown we
         # drop the ref (use aclose() to close it cleanly from async code).
         self._client = None
+        # Revoke the worker's host-bridge token so it can't be reused.
+        try:
+            from backend.modules._runtime import bridge
+            bridge.revoke(self.bridge_token)
+        except Exception:
+            pass
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -241,13 +254,22 @@ def get(module_id: str) -> ModuleWorker | None:
     return _workers.get(module_id)
 
 
-def start_worker(module_id: str, module_parent: Path, forward_env: list[str] | None = None) -> ModuleWorker:
-    """Spawn (or replace) the worker for a module and block until it is healthy."""
+def start_worker(
+    module_id: str,
+    module_parent: Path,
+    capabilities=None,
+    forward_env: list[str] | None = None,
+) -> ModuleWorker:
+    """Spawn (or replace) the worker for a module and block until it is healthy.
+
+    `capabilities` is the module's declared ModuleManifest.capabilities; it scopes
+    the host-bridge token the worker is given.
+    """
     existing = _workers.pop(module_id, None)
     if existing:
         existing.stop()
     data_dir = COMMUNITY_MODULES_DIR / module_id / "_data"
-    worker = ModuleWorker(module_id, module_parent, data_dir)
+    worker = ModuleWorker(module_id, module_parent, data_dir, capabilities=capabilities)
     worker.spawn(forward_env)
     _workers[module_id] = worker
     _save_pidfile()

@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, revised after adversarial review passes 1-3 (Codex, 2026-06-27). LANDED (local, unpushed): prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy, default-off behind AGD_MODULE_ISOLATION). PENDING: supervised crash-restart watchdog (Section 5.7), host bridge + namespaces (phases 3-4), capability/scanner additions (5), youtube-research re-port (6), dual-mode UI + container tier.
+Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass. LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: `assistant.complete` namespace (phase 4), scanner additions for the new caps (5), youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -597,17 +597,21 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
 0. **Prerequisite:** strict `ModuleManifest.id` validator + containment re-checks
    at all write/move/delete/spawn paths (Section 4.1). Landable as a standalone
    patch ahead of the rest.
-1. Worker bootstrap, as a top-level package outside `backend` (env scrub,
+1. [DONE] Worker bootstrap, as a top-level package outside `backend` (env scrub,
    sys.path/meta-path blocker, proxy-secret middleware, health) + packaging
-   change. Prove `import backend` fails, host secrets absent from env, and the
-   bootstrap itself does not import `backend`.
-2. Reverse proxy in the loader (UDS/loopback, header hygiene, streaming, limits)
-   + lifecycle (spawn/health/restart/orphan cleanup). Run an unmodified trivial
-   module through it.
-3. Host bridge (loopback listener, token store, dispatcher) + `notes.*` namespace
-   with server-side path scoping.
+   change. Proven: `import backend` fails, host secrets absent from env, bootstrap
+   does not import `backend`.
+2. [DONE] Reverse proxy in the loader (UDS/loopback, header hygiene, streaming)
+   + lifecycle (spawn/health/orphan cleanup). A trivial module runs through it.
+   (Supervised crash-restart/backoff deferred, Section 5.7.)
+3. [DONE] Host bridge (loopback listener, per-module token store, dispatcher) +
+   `notes.*` namespace with server-side path scoping (note-safe + dir-safe
+   validators, segment-aware prefix, read-includes-write). Token minted at spawn
+   from the module's caps, injected as AGD_BRIDGE_URL/AGD_BRIDGE_TOKEN, revoked on
+   stop. End-to-end test: a worker subprocess writes the vault via the bridge.
 4. `assistant.complete` namespace (tool-free executor).
-5. Capability model + scanner additions (read_paths, host.*, host-import HIGH).
+5. [PARTIAL] Capability model gained `filesystem.read_paths` + `host.{assistant,
+   broadcast}`. Scanner additions (host.* cross-check, host-import HIGH) pending.
 6. Re-port youtube-research onto the bridge + private store + data importer
    (polling for progress; no broadcast).
 7. Dual-mode flag, docs (honest matrix), CHANGELOG/ROADMAP, tests.

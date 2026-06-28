@@ -1,0 +1,203 @@
+"""Phase 3: the host capability bridge (notes.* namespace + token/scoping).
+
+Drives bridge_app directly with a minted per-module token and asserts the
+security contract: token required, browser cookies rejected, and every notes
+operation validated + scoped to the module's declared vault paths on the host
+(never trusted from the caller).
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.module_registry import Capabilities, FilesystemCapability
+from backend.modules._runtime import bridge
+from backend.modules.notes import storage
+
+
+@pytest.fixture
+def bridge_client():
+    storage.ensure_vault()
+    client = TestClient(bridge.bridge_app)
+    issued: list[str] = []
+
+    def _mint(write_paths=None, read_paths=None):
+        caps = Capabilities(filesystem=FilesystemCapability(
+            write_paths=write_paths or [], read_paths=read_paths or []))
+        token = bridge.mint("testmod", caps)
+        issued.append(token)
+        return token
+
+    yield client, _mint
+    for t in issued:
+        bridge.revoke(t)
+
+
+def _h(token):
+    return {"authorization": f"Bearer {token}"}
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+
+def test_requires_token(bridge_client):
+    client, _ = bridge_client
+    assert client.post("/api/_host/notes/read", json={"path": "research/x"}).status_code == 401
+    assert client.post("/api/_host/notes/read", json={"path": "research/x"},
+                       headers={"authorization": "Bearer nope"}).status_code == 401
+
+
+def test_rejects_cookie_bearing_request(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    r = client.post("/api/_host/notes/read", json={"path": "research/x"},
+                    headers={**_h(token), "cookie": "agd_session=abc"})
+    assert r.status_code == 403
+
+
+# ── notes write/read scoping ──────────────────────────────────────────────────
+
+
+def test_write_and_read_in_scope(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    w = client.post("/api/_host/notes/write",
+                    json={"path": "research/demo/note.md", "content": "hello"}, headers=_h(token))
+    assert w.status_code == 200, w.text
+    r = client.post("/api/_host/notes/read", json={"path": "research/demo/note.md"}, headers=_h(token))
+    assert r.status_code == 200
+    assert r.json()["content"] == "hello"
+
+
+def test_write_outside_scope_forbidden(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    r = client.post("/api/_host/notes/write",
+                    json={"path": "user/secret.md", "content": "x"}, headers=_h(token))
+    assert r.status_code == 403
+
+
+def test_scope_is_segment_aware(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    # 'research-evil' must NOT be treated as under 'research'.
+    r = client.post("/api/_host/notes/write",
+                    json={"path": "research-evil/x.md", "content": "x"}, headers=_h(token))
+    assert r.status_code == 403
+
+
+def test_traversal_rejected(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    for bad in ["../../etc/passwd", "research/../../../etc/passwd", "research\\..\\x"]:
+        r = client.post("/api/_host/notes/write", json={"path": bad, "content": "x"}, headers=_h(token))
+        assert r.status_code in (400, 403), f"{bad!r} -> {r.status_code}"
+
+
+def test_read_includes_write_scope_but_not_others(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])  # no separate read_paths
+    client.post("/api/_host/notes/write",
+                json={"path": "research/a.md", "content": "a"}, headers=_h(token))
+    # readable because it's writable
+    assert client.post("/api/_host/notes/read", json={"path": "research/a.md"}, headers=_h(token)).status_code == 200
+    # not readable outside any declared path
+    assert client.post("/api/_host/notes/read", json={"path": "user/a.md"}, headers=_h(token)).status_code == 403
+
+
+def test_read_only_path(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"], read_paths=["shared"])
+    # can read 'shared' but not write it
+    assert client.post("/api/_host/notes/write",
+                       json={"path": "shared/x.md", "content": "x"}, headers=_h(token)).status_code == 403
+    # reading a missing note in-scope is 404 (in scope), not 403
+    assert client.post("/api/_host/notes/read",
+                       json={"path": "shared/missing.md"}, headers=_h(token)).status_code == 404
+
+
+# ── folders ───────────────────────────────────────────────────────────────────
+
+
+def test_make_and_list_folders_and_files(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    assert client.post("/api/_host/notes/make-folder",
+                       json={"rel": "research/topicX"}, headers=_h(token)).status_code == 200
+    client.post("/api/_host/notes/write",
+                json={"path": "research/file1.md", "content": "f"}, headers=_h(token))
+    folders = client.post("/api/_host/notes/list-folders", json={"rel": "research"}, headers=_h(token)).json()
+    assert "topicX" in folders["folders"]
+    files = client.post("/api/_host/notes/list-files", json={"rel": "research"}, headers=_h(token)).json()
+    assert "file1.md" in files["files"]
+
+
+def test_make_folder_outside_scope_forbidden(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    assert client.post("/api/_host/notes/make-folder",
+                       json={"rel": "user/evil"}, headers=_h(token)).status_code == 403
+
+
+# ── End-to-end: a real worker subprocess calls back through the bridge ─────────
+
+_BRIDGE_MOD = '''
+import os
+import httpx
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/api/bridgemod")
+
+
+@router.get("/write")
+async def do_write(path: str = "research/from-worker.md"):
+    url = os.environ["AGD_BRIDGE_URL"]
+    tok = os.environ["AGD_BRIDGE_TOKEN"]
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.post(f"{url}/api/_host/notes/write",
+                         json={"path": path, "content": "via-bridge"},
+                         headers={"authorization": f"Bearer {tok}"})
+    return {"status": r.status_code}
+'''
+
+
+def test_worker_calls_bridge_end_to_end(tmp_path_factory):
+    import threading
+    import time
+
+    import httpx
+    import uvicorn
+
+    from backend.module_registry import Capabilities, FilesystemCapability
+    from backend.modules._runtime import supervisor
+
+    storage.ensure_vault()
+    port = bridge._ensure_port()
+    server = uvicorn.Server(uvicorn.Config(bridge.bridge_app, host="127.0.0.1", port=port, log_level="warning"))
+    th = threading.Thread(target=server.run, daemon=True)
+    th.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+
+    parent = tmp_path_factory.mktemp("bridgemods")
+    moddir = parent / "bridgemod"
+    moddir.mkdir()
+    (moddir / "__init__.py").write_text(_BRIDGE_MOD)
+    caps = Capabilities(filesystem=FilesystemCapability(write_paths=["research"]))
+    worker = supervisor.start_worker("bridgemod", parent, capabilities=caps)
+    try:
+        transport = httpx.HTTPTransport(uds=worker.uds_path) if supervisor.USE_UDS else httpx.HTTPTransport()
+        with httpx.Client(transport=transport, base_url=worker.base_url, timeout=15) as c:
+            sec = {"x-agd-proxy-secret": worker.proxy_secret}
+            # In-scope write succeeds end to end and lands in the host vault.
+            ok = c.get("/api/bridgemod/write", headers=sec)
+            assert ok.status_code == 200, ok.text
+            assert ok.json()["status"] == 200
+            assert storage.read("research/from-worker.md") == "via-bridge"
+            # Out-of-scope write is refused by the bridge (403), not written.
+            bad = c.get("/api/bridgemod/write", params={"path": "user/evil.md"}, headers=sec)
+            assert bad.json()["status"] == 403
+    finally:
+        worker.stop()
+        server.should_exit = True

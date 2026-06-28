@@ -117,8 +117,19 @@ class NetworkCapability(BaseModel):
 
 
 class FilesystemCapability(BaseModel):
-    # Paths under data/ the module writes. Anything outside is a finding.
+    # Paths the module writes. Anything outside is a finding. Under out-of-process
+    # isolation these are the VAULT-RELATIVE subtrees the host notes bridge lets
+    # the module write (e.g. "research" -> data/workspace/research/...).
     write_paths: list[str] = Field(default_factory=list)
+    # Vault-relative subtrees the module may READ via the bridge. write_paths are
+    # implicitly readable, so this is only for read-only-elsewhere access.
+    read_paths: list[str] = Field(default_factory=list)
+
+
+class HostBridgeCapability(BaseModel):
+    # Host-bridge namespaces beyond notes the module may call under isolation.
+    assistant: bool = False   # assistant.complete (tool-free LLM call; phase 4)
+    broadcast: bool = False   # community:{id}: live events (future)
 
 
 class Capabilities(BaseModel):
@@ -127,6 +138,8 @@ class Capabilities(BaseModel):
     subprocess: bool = False
     # Environment variable keys the module reads (beyond secrets_required).
     env: list[str] = Field(default_factory=list)
+    # Host-bridge surface the module may reach under out-of-process isolation.
+    host: HostBridgeCapability = Field(default_factory=HostBridgeCapability)
 
 
 class ModuleManifest(BaseModel):

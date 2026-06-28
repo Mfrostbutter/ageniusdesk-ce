@@ -82,6 +82,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("price book refresh kickoff failed: %s", e)
 
+    # Out-of-process module isolation: start the loopback capability bridge before
+    # serving, so isolated-module workers can reach it. Only when isolation is on
+    # (default in_process leaves this dormant).
+    try:
+        if os.environ.get("AGD_MODULE_ISOLATION", "in_process").strip().lower() == "subprocess":
+            from backend.modules._runtime import bridge as _bridge
+            await _bridge.start_bridge()
+    except Exception as e:
+        logger.exception("host bridge start failed: %s", e)
+
     logger.info("AgeniusDesk started, database ready")
     # F2: warn when the in-app auth gate is off, so an operator on a naked-port
     # self-host knows privileged routes rely on an edge proxy for auth.
@@ -111,6 +121,11 @@ async def lifespan(app: FastAPI):
         _supervisor.stop_all()
     except Exception as e:
         logger.warning("module worker stop_all failed: %s", e)
+    try:
+        from backend.modules._runtime import bridge as _bridge
+        await _bridge.stop_bridge()
+    except Exception as e:
+        logger.warning("host bridge stop failed: %s", e)
     await close_db()
 
 
