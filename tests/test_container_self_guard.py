@@ -45,10 +45,12 @@ def test_stop_self_blocked(anon, monkeypatch):
     assert anon.post("/api/containers/selfid/stop").status_code == 403
 
 
-def test_restart_self_blocked(anon, monkeypatch):
+def test_restart_self_allowed(anon, monkeypatch):
+    # restart bounces but recovers (restart policy brings the dashboard back),
+    # so it is NOT guarded; it fails later on the unavailable test daemon, not 403.
     _operator(monkeypatch)
     _self(monkeypatch, True)
-    assert anon.post("/api/containers/selfid/restart").status_code == 403
+    assert anon.post("/api/containers/selfid/restart").status_code != 403
 
 
 def test_pause_self_blocked(anon, monkeypatch):

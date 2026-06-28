@@ -481,9 +481,10 @@ async def recreate_container(container_id: str):
 # ── Actions ───────────────────────────────────────────────────────────────────
 
 _VALID_ACTIONS = {"start", "stop", "restart", "pause", "unpause"}
-# Actions that would take the dashboard down if run against its own container.
-# (start / unpause are harmless — they can't disrupt an already-running self.)
-_SELF_PROTECTED_ACTIONS = {"stop", "restart", "pause"}
+# Actions that would leave the dashboard DOWN if run against its own container.
+# restart is allowed: it bounces but recovers (restart policy brings it back).
+# start / unpause are harmless. stop / pause / destroy / recreate are blocked.
+_SELF_PROTECTED_ACTIONS = {"stop", "pause"}
 
 
 @router.post("/{container_id}/{action}")

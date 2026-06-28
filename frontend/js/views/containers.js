@@ -627,7 +627,10 @@ function rowHtml(c) {
       <td style="font-size:11px;white-space:nowrap;color:${color}">${escHtml(c.status)}</td>
       <td style="white-space:nowrap;position:relative">
         ${isSelf
-          ? `<span class="ct-badge" style="background:rgba(96,165,250,0.12);color:#60a5fa" title="This is the container AgeniusDesk runs in. Stop/restart/destroy it from Docker Desktop or the host, not here.">🏠 this dashboard</span>`
+          ? `<span class="ct-badge" style="background:rgba(96,165,250,0.12);color:#60a5fa" title="This is the container AgeniusDesk runs in. Stop/destroy it from Docker Desktop or the host, not here. Restart is OK — it bounces and comes back.">🏠 this dashboard</span>
+             <button class="ct-action-btn" data-action="restart" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Restart the dashboard (it will bounce and come back)">
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.48"/></svg>
+             </button>`
           : isRunning
           ? `<button class="ct-action-btn danger" data-action="stop" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Stop ${escHtml(c.name)}">
                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
