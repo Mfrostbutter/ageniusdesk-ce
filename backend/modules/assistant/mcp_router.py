@@ -2,9 +2,10 @@
 
 import secrets
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.auth_gate import require_role
 from backend.config import encrypt_value
 from backend.modules.assistant import mcp_client
 
@@ -131,6 +132,38 @@ async def list_server_tools(server_id: str):
         "tools": [{"name": t["function"]["name"], "description": t["function"]["description"]} for t in tools],
         "count": len(tools),
     }
+
+
+# ── Built-in n8n-mcp (node intelligence) ─────────────────────────────────────
+
+
+@router.get("/n8n-mcp/status")
+async def n8n_mcp_status():
+    """State of the built-in n8n-mcp integration (docker available, registered,
+    running, mode). Drives the 'Enable n8n intelligence' card."""
+    from backend.modules.assistant import n8n_mcp_provision
+    return await n8n_mcp_provision.status()
+
+
+@router.post("/n8n-mcp/enable", dependencies=[Depends(require_role("operator"))])
+async def n8n_mcp_enable():
+    """One-click: start n8n-mcp in docs mode and register it. Best-effort."""
+    from backend.modules.assistant import n8n_mcp_provision
+    return await n8n_mcp_provision.enable()
+
+
+@router.post("/n8n-mcp/upgrade", dependencies=[Depends(require_role("operator"))])
+async def n8n_mcp_upgrade():
+    """Recreate n8n-mcp wired to the active instance (full workflow tools)."""
+    from backend.modules.assistant import n8n_mcp_provision
+    return await n8n_mcp_provision.upgrade()
+
+
+@router.post("/n8n-mcp/disable", dependencies=[Depends(require_role("operator"))])
+async def n8n_mcp_disable():
+    """Stop + remove the managed n8n-mcp container and unregister it."""
+    from backend.modules.assistant import n8n_mcp_provision
+    return await n8n_mcp_provision.disable()
 
 
 @router.get("/tools")

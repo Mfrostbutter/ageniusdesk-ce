@@ -81,6 +81,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("skills ensure_skills failed: %s", e)
 
+    # Built-in n8n-mcp: best-effort auto-install (docs mode) when Docker is
+    # available, so Code Lab has node intelligence out of the box. Runs in the
+    # background — the image pull must not block serving.
+    try:
+        import asyncio as _aio
+
+        from backend.modules.assistant.n8n_mcp_provision import ensure_n8n_mcp
+        _aio.create_task(ensure_n8n_mcp())
+    except Exception as e:
+        logger.debug("n8n-mcp auto-provision kickoff failed: %s", e)
+
     # Cost observability: refresh the LLM price book from OpenRouter in the
     # background (best-effort; bundled defaults + last-good cache cover failures).
     try:
