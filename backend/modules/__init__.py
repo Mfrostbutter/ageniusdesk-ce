@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 BUILTIN_DIR = Path(__file__).parent
 
+# Isolated-module spawns deferred from import-time registration to the lifespan
+# (after the host bridge is listening). Each entry: (module_id, parent, caps).
+_pending_isolated: list[tuple] = []
+
 
 def _isolation_mode() -> str:
     """Community-module isolation mode: 'in_process' (default) or 'subprocess'.
@@ -163,15 +167,15 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
     No host import of the module here: the worker imports it in a separate
     process with a scrubbed env and a blocked `backend` import. The host only
     spawns it and forwards /api/{id}/* to its loopback/UDS bind.
-    """
-    from backend.modules._runtime import proxy, supervisor
 
-    # Do NOT source the worker env from the module's declared capabilities.env: a
-    # module could name a host secret and have it forwarded. The worker gets only
-    # the base allowlist; privileged actions go through the capability-scoped host
-    # bridge (token minted from manifest.capabilities).
+    The reverse-proxy route is registered now (routes must exist before the app
+    serves), but the worker SPAWN is deferred to the lifespan via
+    start_isolated_workers(): a worker that calls the host bridge during startup
+    must find it already listening, and the bridge only starts in the lifespan.
+    """
+    from backend.modules._runtime import proxy
+
     try:
-        supervisor.start_worker(manifest.id, child.parent, capabilities=manifest.capabilities, forward_env=[])
         proxy.register_proxy_route(app, manifest.id)
         missing = check_secrets(manifest)
         status = "missing_secrets" if missing else "loaded"
@@ -182,7 +186,12 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
             missing_secrets=missing,
             path=entry_path,
         ))
-        logger.info("Registered community module (isolated subprocess): %s", manifest.id)
+        # Do NOT source the worker env from the module's declared capabilities.env:
+        # a module could name a host secret and have it forwarded. The worker gets
+        # only the base allowlist; privileged actions go through the
+        # capability-scoped host bridge (token minted from manifest.capabilities).
+        _pending_isolated.append((manifest.id, child.parent, manifest.capabilities))
+        logger.info("Registered community module (isolated, spawn deferred): %s", manifest.id)
     except Exception as e:
         module_registry.register(RegistryEntry(
             manifest=manifest,
@@ -191,7 +200,48 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
             error=str(e),
             path=entry_path,
         ))
-        logger.warning("Failed to start isolated community module %s: %s", manifest.id, e)
+        logger.warning("Failed to register isolated community module %s: %s", manifest.id, e)
+
+
+async def start_isolated_workers() -> None:
+    """Spawn the deferred isolated-module workers (called from the app lifespan,
+    AFTER the host bridge is listening).
+
+    Each spawn runs in a thread executor: supervisor.start_worker blocks on a
+    synchronous health wait, and a worker may call the bridge during its own
+    startup. Running the wait off the event loop keeps the loop free to serve that
+    bridge call instead of deadlocking against it.
+    """
+    if not _pending_isolated:
+        return
+    import asyncio
+    import functools
+
+    from backend.modules._runtime import supervisor
+
+    loop = asyncio.get_running_loop()
+    pending = list(_pending_isolated)
+    _pending_isolated.clear()
+    for module_id, parent, caps in pending:
+        try:
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    supervisor.start_worker, module_id, parent, capabilities=caps, forward_env=[]
+                ),
+            )
+            logger.info("Started isolated community module: %s", module_id)
+        except Exception as e:
+            entry = module_registry.get_registry().get(module_id)
+            if entry is not None:
+                module_registry.register(RegistryEntry(
+                    manifest=entry.manifest,
+                    status="failed",
+                    source="community",
+                    error=str(e),
+                    path=entry.path,
+                ))
+            logger.warning("Failed to start isolated community module %s: %s", module_id, e)
 
 
 def register_modules(app: FastAPI) -> list[str]:

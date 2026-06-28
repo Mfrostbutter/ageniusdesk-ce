@@ -99,7 +99,11 @@ async def complete(system: str, user: str, *, model: str = "", max_tokens: int =
                 if nxt and nxt not in tried:
                     attempt = nxt
                     continue
-            raise CompletionError(f"Provider HTTP {status}: {body[:300]}") from e
+            # Do NOT forward the provider's raw error body to the worker: it is an
+            # information path from the provider into the sandbox (a misbehaving
+            # endpoint could echo the Authorization header). Log it host-side only.
+            logger.warning("provider HTTP %s on completion: %s", status, body[:500])
+            raise CompletionError(f"Provider returned HTTP {status}") from e
         except httpx.TimeoutException as e:
             raise CompletionError(f"Provider timed out after {TIMEOUT}s") from e
 

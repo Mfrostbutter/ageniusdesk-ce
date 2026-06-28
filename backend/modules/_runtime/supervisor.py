@@ -276,6 +276,23 @@ def start_worker(
     return worker
 
 
+def stop_worker(module_id: str) -> bool:
+    """Stop and deregister a single worker (uninstall path).
+
+    ModuleWorker.stop() revokes the worker's host-bridge token, so this fully
+    tears the worker down. Returns False (no-op, no pidfile write) when no worker
+    is tracked, so it is safe to call in default in_process mode.
+    """
+    worker = _workers.pop(module_id, None)
+    if worker is None:
+        return False
+    try:
+        worker.stop()
+    finally:
+        _save_pidfile()
+    return True
+
+
 def stop_all() -> None:
     if not _workers:
         return  # nothing was started: no side effects in default (in_process) mode

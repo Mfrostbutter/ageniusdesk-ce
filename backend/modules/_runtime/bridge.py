@@ -111,13 +111,34 @@ def _resolve_dir(rel: str) -> tuple[str, Path]:
     return "/".join(parts), abs_path
 
 
+def _resolved_under(abs_path: Path, prefixes: list[str]) -> bool:
+    """Scope check against the RESOLVED on-disk location.
+
+    `storage.resolve`/`_resolve_dir` validate the requested STRING and confirm it
+    stays under the vault, but `Path.resolve()` follows symlinks: a link inside
+    the vault (e.g. `research/evil -> ../user`, dropped by an Obsidian sync or a
+    prior in-process module) would let an in-scope-looking request land outside
+    the module's prefixes. We re-check where I/O actually lands, not just the
+    requested path, so a symlink cannot redirect a write/read/move out of scope.
+    """
+    try:
+        resolved_rel = abs_path.relative_to(storage.VAULT_DIR.resolve()).as_posix()
+    except ValueError:
+        return False
+    return _under(resolved_rel, prefixes)
+
+
 def _note_rel_in_scope(path: str, prefixes: list[str]) -> str:
-    """Note-safe resolve (storage.resolve) + scope check. Returns vault-rel path."""
+    """Note-safe resolve (storage.resolve) + scope check. Returns vault-rel path.
+
+    Both the requested string AND the resolved on-disk location must be in scope
+    (see _resolved_under) so a symlink inside the vault cannot defeat scoping.
+    """
     try:
         vp = storage.resolve(path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"invalid path: {e}")
-    if not _under(vp.rel, prefixes):
+    if not (_under(vp.rel, prefixes) and _resolved_under(vp.abs, prefixes)):
         raise HTTPException(status_code=403, detail=f"path '{vp.rel}' is outside the module's declared scope")
     return vp.rel
 
@@ -127,7 +148,7 @@ def _dir_rel_in_scope(rel: str, prefixes: list[str]) -> tuple[str, Path]:
         nrel, abspath = _resolve_dir(rel)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"invalid path: {e}")
-    if not _under(nrel, prefixes):
+    if not (_under(nrel, prefixes) and _resolved_under(abspath, prefixes)):
         raise HTTPException(status_code=403, detail=f"path '{nrel}' is outside the module's declared scope")
     return nrel, abspath
 
@@ -150,6 +171,11 @@ async def _require_grant(request: Request) -> BridgeGrant:
 # ── Bridge app: notes.* namespace ─────────────────────────────────────────────
 
 bridge_app = FastAPI(title="agd-host-bridge", docs_url=None, redoc_url=None)
+
+# Per-write byte cap. Disk exhaustion is not fully contained in v1 (see the spec
+# enforcement matrix), but a coarse per-call limit cheaply raises the bar against
+# a module filling the disk through the notes bridge.
+MAX_NOTE_BYTES = 1_000_000
 
 
 class _WritePayload(BaseModel):
@@ -177,6 +203,8 @@ async def _health():
 
 @bridge_app.post("/api/_host/notes/write")
 async def notes_write(payload: _WritePayload, grant: BridgeGrant = Depends(_require_grant)):
+    if len(payload.content.encode("utf-8")) > MAX_NOTE_BYTES:
+        raise HTTPException(status_code=413, detail=f"note exceeds the {MAX_NOTE_BYTES}-byte write limit")
     rel = _note_rel_in_scope(payload.path, grant.write_paths)
     return await storage.write(rel, payload.content)
 
@@ -224,7 +252,11 @@ async def notes_list_folders(payload: _RelPayload, grant: BridgeGrant = Depends(
     nrel, abspath = _dir_rel_in_scope(payload.rel, grant.read_paths)
     if not abspath.is_dir():
         return {"folders": []}
-    folders = sorted(c.name for c in abspath.iterdir() if c.is_dir() and not c.name.startswith("."))
+    # Skip symlinks: c.is_dir() follows them, so a link could surface a name that
+    # points outside the listed scope (see _resolved_under for the I/O guard).
+    folders = sorted(
+        c.name for c in abspath.iterdir() if c.is_dir() and not c.is_symlink() and not c.name.startswith(".")
+    )
     return {"folders": folders}
 
 
@@ -233,7 +265,9 @@ async def notes_list_files(payload: _RelPayload, grant: BridgeGrant = Depends(_r
     nrel, abspath = _dir_rel_in_scope(payload.rel, grant.read_paths)
     if not abspath.is_dir():
         return {"files": []}
-    files = sorted(c.name for c in abspath.iterdir() if c.is_file() and not c.name.startswith("."))
+    files = sorted(
+        c.name for c in abspath.iterdir() if c.is_file() and not c.is_symlink() and not c.name.startswith(".")
+    )
     return {"files": files}
 
 
@@ -288,23 +322,53 @@ def bridge_url() -> str:
 
 async def start_bridge() -> str:
     """Start the loopback bridge listener (idempotent). Called from the app
-    lifespan when isolation is enabled."""
-    global _server
+    lifespan when isolation is enabled, BEFORE any worker is spawned.
+
+    The pre-reserved port can in theory be grabbed by another process between
+    reservation and bind (a TOCTOU window). If the bind fails we pick a fresh
+    port and retry; because workers are spawned only after this returns, they
+    always read the final, actually-bound port from bridge_url().
+    """
+    global _server, _bridge_port
     if _server is not None:
         return bridge_url()
     import asyncio
 
     import uvicorn
 
-    config = uvicorn.Config(bridge_app, host="127.0.0.1", port=_ensure_port(), log_level="warning")
-    _server = uvicorn.Server(config)
-    asyncio.create_task(_server.serve())
-    for _ in range(100):
-        if getattr(_server, "started", False):
-            break
-        await asyncio.sleep(0.05)
-    logger.info("host bridge listening on %s", bridge_url())
-    return bridge_url()
+    last_err: object = "did not start in time"
+    for _attempt in range(5):
+        config = uvicorn.Config(bridge_app, host="127.0.0.1", port=_ensure_port(), log_level="warning")
+        server = uvicorn.Server(config)
+        task = asyncio.create_task(server.serve())
+        for _ in range(200):
+            if getattr(server, "started", False):
+                _server = server
+                _publish_bound_port(server)
+                logger.info("host bridge listening on %s", bridge_url())
+                return bridge_url()
+            if task.done():
+                break
+            await asyncio.sleep(0.025)
+        # Bind likely failed (port taken) or the server never came up: capture the
+        # cause, drop the reserved port, and retry with a fresh one.
+        last_err = task.exception() if task.done() else last_err
+        if not task.done():
+            server.should_exit = True
+        _bridge_port = None
+    raise RuntimeError(f"host bridge failed to start after retries: {last_err}")
+
+
+def _publish_bound_port(server) -> None:
+    """Adopt the port uvicorn actually bound as authoritative (closes the gap
+    between the pre-reserved port and the real listener)."""
+    global _bridge_port
+    try:
+        actual = server.servers[0].sockets[0].getsockname()[1]
+        if actual:
+            _bridge_port = actual
+    except (AttributeError, IndexError, OSError):  # pragma: no cover - version-dependent
+        pass
 
 
 async def stop_bridge() -> None:

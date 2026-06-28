@@ -282,8 +282,15 @@ class _FileScanner(ast.NodeVisitor):
             return
         if name == "__import__" or name == "importlib.import_module":
             first = node.args[0] if node.args else None
-            if first is not None and _const_str(first) is None:
+            literal = _const_str(first) if first is not None else None
+            if first is not None and literal is None:
                 self._add("CRITICAL", "dynamic-import", line, f"{name}() with a non-literal module name")
+            elif literal:
+                # A literal dynamic import is as reachable as a plain `import`
+                # statement, so run it through the same capability checks: e.g.
+                # __import__("backend")... must still raise host-import HIGH, and
+                # a dynamically imported network/subprocess module is caught too.
+                self._note_import(literal, line)
             return
         if name in _UNSAFE_LOADS:
             self._add("CRITICAL", "deserialization", line, f"{name}() deserializes data (can execute code)")

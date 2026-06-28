@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass. LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
+Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass + a dedicated host-bridge pass (Copilot, `2026-06-27-host-bridge-review.md`, closed). LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). Host-bridge review fixes: symlink-resolved scope check (a vault symlink cannot redirect notes I/O out of scope), uninstall stops the worker + revokes its bridge token, worker spawn deferred to the lifespan after the bridge is listening (in a thread executor), per-write 1 MB cap, list endpoints skip symlinks, generic provider error to the worker, literal `__import__("backend")` now scanned. All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: youtube-research re-port (6), supervised crash-restart watchdog (5.7), dual-mode UI + container tier.
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -391,10 +391,13 @@ shared schema, no name collisions with host tables.
 
 ### 5.7 Lifecycle
 
-- **Spawn:** on `register_modules`, for each compatible community module, spawn a
-  worker (eager) or on first request (lazy). Eager is simpler to reason about and
-  surfaces failures at boot; lazy saves memory with many modules. v1: eager, with
-  a `lazy` flag reserved.
+- **Spawn:** eager. `register_modules` registers the reverse-proxy route at import
+  time but DEFERS the worker spawn to the app lifespan, via
+  `start_isolated_workers()` called AFTER `start_bridge()` (host-bridge review
+  MEDIUM-1): a worker that calls the bridge during its own startup must find the
+  bridge already listening. Each spawn runs in a thread executor so the blocking
+  health wait does not deadlock the event loop against that startup bridge call.
+  A `lazy` flag is reserved.
 - **Health:** worker exposes `/_worker/health`; host probes before marking
   `status=loaded`. Probe failure -> `status=failed`, host stays up (parity with
   today's import-failure behavior).
@@ -405,8 +408,11 @@ shared schema, no name collisions with host tables.
   (`start_worker`) exist, but supervised auto-restart is a tracked follow-up
   before isolated modules ship (phase 6). It needs a non-blocking respawn (the
   current `spawn` health-poll is synchronous) plus the breaker state.
-- **Uninstall / disable:** host SIGTERMs the worker, removes the proxy route,
-  revokes the token, optionally purges `_data/`.
+- **Uninstall / disable:** `installer.uninstall` stops the worker (SIGTERM) and
+  revokes its bridge token before removing files (host-bridge review HIGH-2). The
+  proxy route CANNOT be removed at runtime (FastAPI limitation); it 502s on the
+  now-dead worker until the next host restart clears it, so the token revocation
+  is the real control. `_data/` is removed with the module dir.
 - **Orphans:** host records worker PIDs; on boot it kills any stale workers from a
   previous run before respawning. UDS files are unlinked on stop and on boot.
 - The existing `POST /api/admin/restart` (SIGTERM self under `restart:

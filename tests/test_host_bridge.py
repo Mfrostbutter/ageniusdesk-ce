@@ -6,12 +6,24 @@ operation validated + scoped to the module's declared vault paths on the host
 (never trusted from the caller).
 """
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.module_registry import Capabilities, FilesystemCapability, HostBridgeCapability
 from backend.modules._runtime import bridge
 from backend.modules.notes import storage
+
+
+def _try_symlink(link: Path, target: Path, *, dir_link: bool = True) -> None:
+    """Create a symlink or skip the test (Windows needs privilege/dev mode)."""
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    try:
+        link.symlink_to(target, target_is_directory=dir_link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
 
 
 @pytest.fixture
@@ -138,6 +150,91 @@ def test_make_folder_outside_scope_forbidden(bridge_client):
     token = mint(write_paths=["research"])
     assert client.post("/api/_host/notes/make-folder",
                        json={"rel": "user/evil"}, headers=_h(token)).status_code == 403
+
+
+# ── HIGH-1: a symlink inside the vault must not defeat scoping ─────────────────
+
+
+def test_symlink_escape_blocked(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"], read_paths=["research"])
+    research = storage.VAULT_DIR / "research"
+    research.mkdir(parents=True, exist_ok=True)
+    (storage.VAULT_DIR / "user").mkdir(parents=True, exist_ok=True)
+    # research/evil -> ../user : an in-scope-looking path that lands out of scope.
+    link = research / "evil"
+    _try_symlink(link, Path("..") / "user")
+    try:
+        # Write THROUGH the symlink would land in user/secret.md (out of scope).
+        w = client.post("/api/_host/notes/write",
+                        json={"path": "research/evil/secret.md", "content": "x"}, headers=_h(token))
+        assert w.status_code == 403, w.text
+        assert not (storage.VAULT_DIR / "user" / "secret.md").exists()  # nothing written
+        # Read and make-folder through the symlink are likewise refused.
+        assert client.post("/api/_host/notes/read",
+                           json={"path": "research/evil/secret.md"}, headers=_h(token)).status_code == 403
+        assert client.post("/api/_host/notes/make-folder",
+                           json={"rel": "research/evil/sub"}, headers=_h(token)).status_code == 403
+    finally:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+
+
+def test_list_excludes_symlinks(bridge_client):
+    client, mint = bridge_client
+    token = mint(read_paths=["research"])
+    research = storage.VAULT_DIR / "research"
+    research.mkdir(parents=True, exist_ok=True)
+    (research / "realdir").mkdir(exist_ok=True)
+    (storage.VAULT_DIR / "user").mkdir(parents=True, exist_ok=True)
+    link = research / "linkdir"
+    _try_symlink(link, Path("..") / "user")
+    try:
+        folders = client.post("/api/_host/notes/list-folders",
+                              json={"rel": "research"}, headers=_h(token)).json()["folders"]
+        assert "realdir" in folders
+        assert "linkdir" not in folders  # symlink dir omitted
+    finally:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+
+
+# ── LOW-1: per-write size cap ─────────────────────────────────────────────────
+
+
+def test_write_size_limit(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    big = "a" * (bridge.MAX_NOTE_BYTES + 1)
+    r = client.post("/api/_host/notes/write",
+                    json={"path": "research/big.md", "content": big}, headers=_h(token))
+    assert r.status_code == 413
+
+
+# ── Token lifecycle: revoke + empty-caps deny ─────────────────────────────────
+
+
+def test_revoked_token_rejected(bridge_client):
+    client, mint = bridge_client
+    token = mint(write_paths=["research"])
+    assert client.post("/api/_host/notes/write",
+                       json={"path": "research/a.md", "content": "x"}, headers=_h(token)).status_code == 200
+    bridge.revoke_module("testmod")  # the fixture mints under module_id "testmod"
+    assert client.post("/api/_host/notes/write",
+                       json={"path": "research/a.md", "content": "x"}, headers=_h(token)).status_code == 401
+
+
+def test_empty_caps_deny_every_endpoint(bridge_client):
+    client, mint = bridge_client
+    token = mint()  # no write/read paths, host.assistant False
+    assert client.post("/api/_host/notes/write",
+                       json={"path": "research/a.md", "content": "x"}, headers=_h(token)).status_code == 403
+    assert client.post("/api/_host/notes/read",
+                       json={"path": "research/a.md"}, headers=_h(token)).status_code == 403
+    assert client.post("/api/_host/notes/list-folders",
+                       json={"rel": "research"}, headers=_h(token)).status_code == 403
+    assert client.post("/api/_host/assistant/complete",
+                       json={"user": "hi"}, headers=_h(token)).status_code == 403
 
 
 # ── assistant.complete (capability gate + max_tokens clamp) ──────────────────

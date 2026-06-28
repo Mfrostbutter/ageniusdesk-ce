@@ -183,3 +183,29 @@ def test_default_isolation_mode_is_in_process(monkeypatch):
     from backend.modules import _isolation_mode
 
     assert _isolation_mode() == "in_process"
+
+
+def test_uninstall_stops_worker_and_revokes_token(tmp_path, monkeypatch):
+    # HIGH-2: uninstall must stop the subprocess and revoke its bridge token, not
+    # leave the module fully operational until the host restarts. chdir so the
+    # relative data/ roots (supervisor + installer) resolve under tmp_path.
+    from backend.modules._runtime import bridge
+    from backend.modules.modules import installer
+
+    monkeypatch.chdir(tmp_path)
+    parent = tmp_path / "mods"
+    moddir = parent / "downmod"
+    moddir.mkdir(parents=True)
+    (moddir / "__init__.py").write_text(_FIXTURE.replace("trivialmod", "downmod"))
+
+    worker = supervisor.start_worker("downmod", parent)
+    token = worker.bridge_token
+    assert worker.is_alive()
+    assert bridge.grant_for(token) is not None  # token live while installed
+
+    result = installer.uninstall("downmod")
+
+    assert result["id"] == "downmod"
+    assert not worker.is_alive()                    # subprocess stopped
+    assert supervisor.get("downmod") is None        # deregistered
+    assert bridge.grant_for(token) is None          # host-bridge token revoked

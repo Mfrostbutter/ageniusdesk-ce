@@ -73,3 +73,19 @@ async def test_missing_key_errors(set_cfg):
     set_cfg(provider="openai", model="gpt-4o", api_key="")
     with pytest.raises(completion.CompletionError):
         await completion.complete("s", "u")
+
+
+@respx.mock
+async def test_provider_error_body_not_forwarded(set_cfg):
+    # LOW-3: the provider's raw error body must NOT reach the worker (it could
+    # echo the Authorization header). The CompletionError is generic; the body is
+    # logged host-side only.
+    set_cfg(provider="openrouter", model="m", api_key="sk-secret")
+    leak = "error: your key Bearer sk-secret is invalid"
+    respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(401, text=leak))
+    with pytest.raises(completion.CompletionError) as exc:
+        await completion.complete("s", "u", max_tokens=500)
+    msg = str(exc.value)
+    assert "401" in msg
+    assert "Bearer" not in msg and "sk-secret" not in msg

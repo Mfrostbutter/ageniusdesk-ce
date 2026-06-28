@@ -429,12 +429,35 @@ async def install(
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _teardown_isolated(module_id: str) -> None:
+    """Stop a running subprocess worker and revoke any host-bridge grant.
+
+    Best-effort and a no-op in default in_process mode (no workers, no grants).
+    The reverse-proxy route registered for the module cannot be removed at runtime
+    (FastAPI does not support route removal); a host restart clears it. The token
+    revocation here is the real control: it makes the worker's bridge access dead
+    immediately, even before the route stops 502-ing.
+    """
+    try:
+        from backend.modules._runtime import bridge, supervisor
+        supervisor.stop_worker(module_id)
+        bridge.revoke_module(module_id)
+    except Exception as e:  # pragma: no cover - teardown is best-effort
+        logger.warning("isolated worker teardown for %s failed: %s", module_id, e)
+
+
 def uninstall(module_id: str) -> dict[str, Any]:
-    """Remove a community module directory and lock entry."""
+    """Remove a community module directory and lock entry.
+
+    Stops the isolated worker and revokes its bridge token BEFORE removing files:
+    otherwise the subprocess keeps running with the module's code in memory and
+    its bridge token stays valid until the host restarts.
+    """
     target = _safe_community_dir(module_id)
     if not target.exists():
         raise RuntimeError(f"Module {module_id!r} not installed")
 
+    _teardown_isolated(module_id)
     shutil.rmtree(target)
 
     lock = _load_lock()
