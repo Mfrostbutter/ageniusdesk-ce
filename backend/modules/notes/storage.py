@@ -12,6 +12,7 @@ signatures stable.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import time
@@ -25,6 +26,34 @@ logger = logging.getLogger(__name__)
 VAULT_DIR: Path = Path("data/workspace")
 LEGACY_VAULT_DIR: Path = Path("data/notes")
 ARCHIVE_DIRNAME = ".archive"
+
+# sha256 of every PRIOR pristine README seed we have shipped. A README whose
+# content still matches one of these has never been touched by the operator, so
+# it is safe to refresh to the current seed on boot (keeps existing installs
+# current without clobbering edits). The current seed is intentionally NOT in
+# this set, so a refreshed file never re-triggers.
+_PRIOR_README_SEED_HASHES = frozenset({
+    "1f1d4754c5c6f1d6694ac35cbb6fc937fcb4cf46de0eea421d529437e706b67e",  # original
+    "0093127aef854f5bfe9a3245759b32b0ee3bda005fa8aee6944e76754c6420f9",  # + skills/ folder row
+})
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _refresh_pristine_readme(readme: Path) -> None:
+    """Upgrade a pristine (unedited) harness README to the current seed.
+
+    No-op if the file was edited (hash not a known prior seed) or already current.
+    """
+    try:
+        current = readme.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if _sha256(current) in _PRIOR_README_SEED_HASHES and current != _SEED_README:
+        readme.write_text(_SEED_README, encoding="utf-8")
+        logger.info("workspace: refreshed pristine README to the current seed")
 
 
 @dataclass
@@ -68,7 +97,9 @@ def ensure_vault() -> None:
     # the baseline loader so it carries the constitution frontmatter.
     readme = VAULT_DIR / "README.md"
     if not readme.exists():
-        readme.write_text(_SEED_README)
+        readme.write_text(_SEED_README, encoding="utf-8")
+    else:
+        _refresh_pristine_readme(readme)
     # Harness folder layout: human notes (user/), agent scratch (agent/),
     # canonical facts (shared/), session logs (sessions/), plus the harness
     # working areas docs/ workflows/ research/ that agents and add-ins write to.
@@ -227,6 +258,16 @@ in the Harness.
 
 `AGENTS.md` at the root holds the instructions that steer every agent.
 Edit it here, or from the Harness Instructions panel.
+
+## n8n skills + tools
+
+`skills/` holds a curated library of focused n8n skills (one folder each:
+a `SKILL.md` plus reference docs). The in-app assistant and Code Lab read
+them on demand to build and debug workflows correctly. Start at
+`skills/README.md` (the router). They are seeded once and yours to edit or
+extend. Paired with the built-in n8n-mcp server (Settings -> MCP Servers ->
+n8n Intelligence), the assistant gets live node knowledge and workflow
+validation. Skills + n8n-mcp by czlonkowski (MIT).
 
 ## Syntax
 

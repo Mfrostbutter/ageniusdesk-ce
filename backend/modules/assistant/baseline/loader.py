@@ -21,22 +21,33 @@ C1 hook: the ``tenant_id`` parameter exists from day one.  When C1 lands,
 from __future__ import annotations
 
 import datetime
+import hashlib
 import logging
 import os
 from pathlib import Path
 
 from fastapi import HTTPException
 
+from backend.modules.assistant.baseline.merge import apply_overrides
+from backend.modules.assistant.baseline.seed import render_seed
 from backend.modules.notes import storage as _ws
 from backend.modules.notes.parser import parse_frontmatter
-from backend.modules.assistant.baseline.seed import render_seed
-from backend.modules.assistant.baseline.merge import apply_overrides
 
 logger = logging.getLogger(__name__)
 
 AGENTS_FILENAME = "AGENTS.md"
 LEGACY_BASELINE = Path("data/baseline/baseline.md")
 _MAX_BYTES = 64 * 1024  # 64 KiB
+
+# sha256 of the BODY (frontmatter stripped) of every PRIOR pristine constitution
+# seed. An AGENTS.md still at version 1 (never saved via the editor, which bumps
+# the version) AND whose body matches one of these has not been customized, so we
+# refresh it to the current seed on boot. Both conditions must hold, so an
+# operator edit (higher version, or a changed body) is never overwritten.
+_PRIOR_BASELINE_BODY_HASHES = frozenset({
+    "560ac8deb1d10b4ce694193717f2177938530c1d88de36cbf117cdbd8b36da6f",  # original
+    "98fcf34e76d0fce404b699912d8ce14ecda9edfcc7a1c3a610313dd4d51fd8aa",  # + skills pointer
+})
 
 
 def _constitution_enabled() -> bool:
@@ -56,6 +67,39 @@ def _now_utc() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _refresh_pristine_baseline(path: Path) -> None:
+    """Upgrade a pristine (unedited) AGENTS.md to the current seed.
+
+    Pristine = still version 1 (the editor bumps version on save) AND the body
+    matches a known prior seed. No-op otherwise, so operator customizations —
+    whether saved via the editor or edited directly — are never overwritten.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+        fm, body = parse_frontmatter(raw)
+    except Exception as e:  # noqa: BLE001 - best effort; never block boot
+        logger.debug("constitution: refresh parse skipped: %s", e)
+        return
+    try:
+        version = int(fm.get("version", 1))
+    except (TypeError, ValueError):
+        version = 1
+    if version != 1:
+        return
+    body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    if body_hash not in _PRIOR_BASELINE_BODY_HASHES:
+        return
+    seed = render_seed()
+    _, seed_body = parse_frontmatter(seed)
+    if hashlib.sha256(seed_body.encode("utf-8")).hexdigest() == body_hash:
+        return  # already current
+    try:
+        path.write_text(seed, encoding="utf-8")
+        logger.info("constitution: refreshed pristine AGENTS.md to the current seed")
+    except OSError as e:
+        logger.warning("constitution: refresh write failed: %s", e)
+
+
 async def ensure_baseline() -> None:
     """Ensure the workspace AGENTS.md exists. Idempotent; safe per boot.
 
@@ -65,6 +109,7 @@ async def ensure_baseline() -> None:
     _ws.ensure_vault()
     path = _path_for("default")
     if path.exists():
+        _refresh_pristine_baseline(path)
         return
     if LEGACY_BASELINE.exists():
         try:

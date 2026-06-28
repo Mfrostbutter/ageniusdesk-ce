@@ -5,6 +5,7 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 ## [Unreleased]
 
 ### Fixed
+- **Harness seed docs stay current on existing installs.** The root `README.md` and `AGENTS.md` are seeded only on first run, so improvements (the new `skills/` library, the n8n-mcp pointer) never reached vaults created earlier. They are now refreshed to the current seed on boot **only when still pristine** — an unedited README (content matches a known prior seed) or an unedited constitution (`AGENTS.md` still at version 1 with a known prior body). Any operator edit — via the editor (version bumped) or directly in Obsidian (body changed) — is detected by hash and never overwritten.
 - **The dashboard can no longer destroy or stop its own container.** Container management can act on any container via the mounted Docker socket, which meant the dashboard's own container could be destroyed/stopped/recreated from inside the app — taking AgeniusDesk down. It now detects the self-container and refuses destroy, stop, restart, pause, and recreate on it (403, "manage it from Docker Desktop / the host"); the container list flags it (`is_self`) and the UI shows a "this dashboard" marker instead of destructive controls. Harmless actions (logs, inspect, start) and all other containers are unaffected.
 
 ### Added

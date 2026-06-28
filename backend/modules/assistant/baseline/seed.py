@@ -73,7 +73,8 @@ prompt explicitly overrides a section marked overrideable above.
 - For any n8n workflow task (building or editing a workflow, configuring nodes,
   writing expressions or Code nodes, error handling, debugging a failure),
   consult the n8n skill library in `skills/` first (start at `skills/README.md`),
-  and pair it with the n8n-mcp tools.
+  then verify node types and validate the workflow with the n8n-mcp tools (the
+  built-in n8n-mcp server, by czlonkowski) before returning it.
 - Before calling a destructive tool (delete, overwrite, recreate), state what
   you are about to do and wait for confirmation unless the operator has already
   confirmed in this turn.
