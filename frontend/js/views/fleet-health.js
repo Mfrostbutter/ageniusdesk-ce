@@ -1,13 +1,22 @@
 /**
- * Fleet Health — workflow health aggregated across ALL configured n8n instances.
+ * Fleet Health — workflow health + errors aggregated across ALL n8n instances.
  *
- * One pane for the "one client becomes ten" case. The backend fans out to every
- * instance in parallel (live), so a degraded or unreachable instance is shown as
- * such and never fails the whole view. Read-only operator convenience; the
+ * Two tabs:
+ *  - Health: live parallel fan-out per instance (workflows, error rate, unhealthy
+ *    workflows) with a combined roll-up. A degraded/unreachable instance is shown,
+ *    not fatal.
+ *  - Errors: every collected error across all instances in one list
+ *    (GET /api/errors?instance_id=all), badged by client. The errors store is
+ *    already cross-instance, so this is a unified view, not per-instance.
+ *
+ * Read-only operator convenience for the "one client becomes ten" case; the
  * per-client access/audit governance layer is an enterprise concern, not this.
  */
 
 import { get } from '../api.js';
+
+let _tab = 'health';
+let _instMap = {};
 
 function esc(s) {
   const d = document.createElement('span');
@@ -20,6 +29,16 @@ function rateColor(rate) {
   if (rate >= 5) return '#fbbf24';
   return '#34d399';
 }
+
+function fmtWhen(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso.replace(' ', 'T') + 'Z').toLocaleString(undefined,
+      { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+// ── Health tab ────────────────────────────────────────────────────────────────
 
 function instanceCard(inst) {
   if (!inst.reachable) {
@@ -54,58 +73,113 @@ function instanceCard(inst) {
     </div>`;
 }
 
+async function loadHealth(content) {
+  content.innerHTML = '<div class="spinner"></div>';
+  try {
+    const data = await get('/api/n8n/fleet/health');
+    const t = data.totals || {};
+    const insts = data.instances || [];
+    _instMap = Object.fromEntries(insts.map(i => [i.id, { name: i.name || i.id, color: i.color || '#60a5fa' }]));
+    if (!insts.length) {
+      content.innerHTML = `<div style="opacity:0.6;font-size:13px">No instances configured. Add one under Instances.</div>`;
+      return;
+    }
+    const trc = rateColor(t.error_rate || 0);
+    const cells = [
+      ['Instances', `${t.reachable}/${t.instances}`, 'reachable'],
+      ['Workflows', `${t.workflows_active}/${t.workflows_total}`, 'active'],
+      ['Error rate', `<span style="color:${trc}">${t.error_rate}%</span>`, 'recent runs'],
+      ['Runs', `${t.exec_total}`, 'sampled'],
+    ];
+    content.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
+        ${cells.map(([k, v, sub]) => `
+          <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:12px;text-align:center">
+            <div style="font-size:22px;font-weight:700">${v}</div>
+            <div style="font-size:11px;opacity:0.6">${esc(k)} · ${esc(sub)}</div>
+          </div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">${insts.map(instanceCard).join('')}</div>`;
+  } catch (e) {
+    content.innerHTML = `<div class="error-banner">Failed to load fleet health: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Errors tab ────────────────────────────────────────────────────────────────
+
+function errorRow(err) {
+  const inst = _instMap[err.instance_id] || { name: err.instance_id || 'unknown', color: '#8a94a6' };
+  return `
+    <div style="display:flex;gap:10px;align-items:flex-start;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:10px 12px">
+      <span title="${esc(inst.name)}" style="flex-shrink:0;margin-top:3px;width:8px;height:8px;border-radius:50%;background:${esc(inst.color)}"></span>
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(err.workflow_name || 'Unknown workflow')}</span>
+          <span style="font-size:11px;color:var(--text-muted);flex-shrink:0">${esc(fmtWhen(err.occurred_at))}</span>
+        </div>
+        <div style="font-size:12px;color:#fca5a5;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(err.error_message || '')}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+          <span class="badge" style="background:${esc(inst.color)}22;color:${esc(inst.color)};border:1px solid ${esc(inst.color)}55;font-size:10px">${esc(inst.name)}</span>
+          ${err.node_name ? ` · node ${esc(err.node_name)}` : ''}${err.error_type ? ` · ${esc(err.error_type)}` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function loadErrors(content) {
+  content.innerHTML = '<div class="spinner"></div>';
+  try {
+    // Ensure the instance map exists (id -> name/color) for badging.
+    if (!Object.keys(_instMap).length) {
+      const inst = await get('/api/n8n/instances').catch(() => ({ instances: [] }));
+      _instMap = Object.fromEntries((inst.instances || []).map(i => [i.id, { name: i.name || i.id, color: i.color || '#60a5fa' }]));
+    }
+    const data = await get('/api/errors?instance_id=all&limit=100');
+    const errors = data.errors || [];
+    const header = `<div style="font-size:12px;opacity:0.65;margin-bottom:10px">${errors.length} recent error${errors.length === 1 ? '' : 's'} across all instances · ${esc(data.count_24h || 0)} in the last 24h</div>`;
+    if (!errors.length) {
+      content.innerHTML = header + `<div style="opacity:0.6;font-size:13px">No errors collected. Errors flow in once an instance's Global Error Handler is installed (auto-installed on connect).</div>`;
+      return;
+    }
+    content.innerHTML = header + `<div style="display:flex;flex-direction:column;gap:8px">${errors.map(errorRow).join('')}</div>`;
+  } catch (e) {
+    content.innerHTML = `<div class="error-banner">Failed to load errors: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── View shell ─────────────────────────────────────────────────────────────────
+
 export async function render(container) {
   container.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap">
       <div>
         <h2 style="margin:0">Fleet Health</h2>
-        <div style="font-size:13px;color:var(--text-secondary);margin-top:2px">Workflow health across every connected n8n instance, fetched live.</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-top:2px">Workflow health and errors across every connected n8n instance.</div>
       </div>
       <button id="fleet-refresh" class="btn btn-sm">Refresh</button>
     </div>
-    <div id="fleet-totals" style="margin-bottom:16px"></div>
-    <div id="fleet-grid"><div class="spinner"></div></div>
+    <div style="display:flex;gap:6px;border-bottom:1px solid var(--border-dim);margin-bottom:14px">
+      <button class="fleet-tab" data-tab="health" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer">Health</button>
+      <button class="fleet-tab" data-tab="errors" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer">Errors</button>
+    </div>
+    <div id="fleet-content"><div class="spinner"></div></div>
   `;
+  const content = container.querySelector('#fleet-content');
 
-  const load = async () => {
-    const grid = container.querySelector('#fleet-grid');
-    const totals = container.querySelector('#fleet-totals');
-    const btn = container.querySelector('#fleet-refresh');
-    grid.innerHTML = '<div class="spinner"></div>';
-    if (btn) btn.disabled = true;
-    try {
-      const data = await get('/api/n8n/fleet/health');
-      const t = data.totals || {};
-      const insts = data.instances || [];
-      if (!insts.length) {
-        totals.innerHTML = '';
-        grid.innerHTML = `<div style="opacity:0.6;font-size:13px">No instances configured. Add one under Instances.</div>`;
-        return;
-      }
-      const trc = rateColor(t.error_rate || 0);
-      const cells = [
-        ['Instances', `${t.reachable}/${t.instances}`, 'reachable'],
-        ['Workflows', `${t.workflows_active}/${t.workflows_total}`, 'active'],
-        ['Error rate', `<span style="color:${trc}">${t.error_rate}%</span>`, 'recent runs'],
-        ['Runs', `${t.exec_total}`, 'sampled'],
-      ];
-      totals.innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
-          ${cells.map(([k, v, sub]) => `
-            <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:12px;text-align:center">
-              <div style="font-size:22px;font-weight:700">${v}</div>
-              <div style="font-size:11px;opacity:0.6">${esc(k)} · ${esc(sub)}</div>
-            </div>`).join('')}
-        </div>`;
-      grid.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">${insts.map(instanceCard).join('')}</div>`;
-    } catch (e) {
-      totals.innerHTML = '';
-      grid.innerHTML = `<div class="error-banner">Failed to load fleet health: ${esc(e.message)}</div>`;
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+  const paint = () => {
+    container.querySelectorAll('.fleet-tab').forEach(b => {
+      const on = b.dataset.tab === _tab;
+      b.style.borderBottomColor = on ? 'var(--accent,#60a5fa)' : 'transparent';
+      b.style.color = on ? 'var(--text-primary)' : 'var(--text-muted)';
+    });
   };
+  const load = () => (_tab === 'errors' ? loadErrors(content) : loadHealth(content));
 
+  container.querySelectorAll('.fleet-tab').forEach(b => {
+    b.addEventListener('click', () => { _tab = b.dataset.tab; paint(); load(); });
+  });
   container.querySelector('#fleet-refresh').addEventListener('click', load);
+
+  paint();
   await load();
 }
