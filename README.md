@@ -1,10 +1,12 @@
 # AgeniusDesk Community Edition
 
-An open-source command center for n8n automation. Manage multiple instances, monitor errors, write code with AI assistance, build and run your own LangGraph / PydanticAI agents, and connect knowledge sources from a single dashboard.
+An open-source command center for **n8n** automation. Manage multiple instances, monitor errors, trace executions node by node, write workflow code with AI assistance, and connect knowledge sources, all from one dashboard.
 
 ## Why AgeniusDesk CE
 
 Running n8n for clients or multiple teams means juggling multiple logins, scattered logs, and no unified picture of what's broken. AgeniusDesk CE is a lightweight control plane that brings all your instances into one place.
+
+**n8n-first.** Everything centers on your n8n workflows: the dashboard, the error feed, OpenTelemetry traces, Code Lab, and insights all revolve around them. There is also an **optional** agent layer (build and run your own LangGraph / PydanticAI agents), but it is **off by default**, so a default install is a focused n8n control plane, nothing extra to learn or run. Turn it on only if you want it (see [With the Agent Fleet](#with-the-agent-fleet-langgraph--pydanticai-agents)).
 
 ## Screenshots
 
@@ -50,7 +52,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 - One-click "Send to n8n" to deploy directly
 - **Agent Builder:** build LangGraph or PydanticAI agents (ReAct, human-in-the-loop, and parallel fan-out starters) with AI assist, then Register them to the Agent Fleet
 
-**Agent Fleet**
+**Agent Fleet** (optional, off by default)
 - A managed fleet of agents, operated the way AgeniusDesk operates n8n: a catalog, run with a **live graph + a normalized run waterfall**, **human-in-the-loop** approve/resume, and **LangSmith tracing** with per-call token/cost
 - Built-ins out of the box (ops-triage, fix-proposer, health-reporter); **build your own in Code Lab** (LangGraph or PydanticAI) and Register them
 - Your agents are files in your vault under `agents/` that you own, edit, and export, discovered live with no restart

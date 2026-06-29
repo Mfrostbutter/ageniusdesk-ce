@@ -6,9 +6,9 @@ Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
 ## Current Release: v0.4.0 (2026-06-28)
 
-v0.4 turns AgeniusDesk from an n8n control plane into an agent platform: build real LangGraph and PydanticAI agents and run + monitor them the way you run workflows, with batteries-included n8n intelligence. Highlights:
+v0.4 keeps AgeniusDesk **n8n-first** and adds an **optional** agent layer on top (off by default): build real LangGraph and PydanticAI agents and run + monitor them the way you run workflows, plus batteries-included n8n intelligence. Highlights:
 
-- **Agent Fleet (core built-in)**: a managed fleet of LangGraph + PydanticAI agents — catalog, run with a live graph and a normalized run waterfall, human-in-the-loop approve/resume, optional LangSmith tracing, and per-run token/cost. The agent stack is an opt-in dependency extra (`AGD_EXTRAS="assistant,langgraph"`); the view loads without it, a run reports the missing extra.
+- **Agent Fleet (core built-in)**: a managed fleet of LangGraph + PydanticAI agents — catalog, run with a live graph and a normalized run waterfall, human-in-the-loop approve/resume, optional LangSmith tracing, and per-run token/cost. The agent stack is an opt-in dependency extra (`AGD_EXTRAS="assistant,langgraph"`) and **off by default**: a default install is n8n-only; the Agent Fleet + Agent Builder appear when the extra is installed (or `AGD_AGENTS_ENABLED=true`).
 - **Agent Builder in Code Lab**: a third mode that builds agents (framework toggle, ReAct / human-in-the-loop / parallel-fan-out starters) and Registers them to the fleet. Agents live in your vault as files you own, edit, or delete.
 - **Built-in n8n-mcp, auto-installed**: real n8n node knowledge, search, and workflow validation in Code Lab and the assistant out of the box (docs-only by default; one-click wire to the active instance).
 - **n8n skill library in the Harness**: a curated `skills/` library seeded into the vault that the assistant loads on demand; the default Code Lab instructions route to it and the n8n-mcp tools.
