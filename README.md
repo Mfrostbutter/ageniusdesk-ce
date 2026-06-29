@@ -129,6 +129,20 @@ Open http://localhost:3000. A setup wizard walks you through adding your first n
 >
 > The container always listens on 3000 internally; `PORT` only changes the host port. If `docker compose up` prints `Bind for 0.0.0.0:3000 failed: port is already allocated`, that is the collision, set `PORT` to a free port and re-run.
 
+### With the Agent Fleet (LangGraph + PydanticAI agents)
+
+Agents are opt-in; the install above is n8n-only. To build with the agent stack so the **Agent Fleet** and Code Lab's **Agent Builder** appear, add the extra before building:
+
+```bash
+git clone https://github.com/Mfrostbutter/ageniusdesk-ce.git
+cd ageniusdesk-ce
+cp .env.example .env
+echo "AGD_EXTRAS=assistant,langgraph" >> .env
+docker compose up -d --build
+```
+
+The surface auto-detects the extra (no extra flag needed). The built-in agents run on Claude, so set an Anthropic key: uncomment `ANTHROPIC_KEY=` in `.env`, or add it after first boot in Settings → Secrets. To force the n8n-only experience even with the extra installed, set `AGD_AGENTS_ENABLED=false`.
+
 ### Bare Metal
 
 Requires Python 3.10 or later.
