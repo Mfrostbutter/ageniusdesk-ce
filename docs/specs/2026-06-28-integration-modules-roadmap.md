@@ -1,10 +1,18 @@
 # Roadmap: Next Integration Modules
 
-Status: ROADMAP / scoping only. Nothing here is committed to a release yet — this
+Status: ROADMAP / scoping. Nothing here is committed to a release yet — this
 captures direction + locked decisions + open questions so the build is fast when
 we start.
 
-Date: 2026-06-28
+Date: 2026-06-28 (updated 2026-06-28 with confirmed direction)
+
+> **Update 2026-06-28:** Agent Fleet (section 1) has **shipped** as a core built-in
+> (`backend/modules/agent_fleet/`); it is no longer scoping. Proxmox, the secret
+> backends, and scheduled backups are confirmed near-term. The community-module
+> landscape, per-candidate buildability verdicts, and the Homelab Pack live in
+> `2026-06-28-community-module-candidates.md`. The credential-under-isolation
+> blocker called out below in "Isolation & credentials" is now specced as the
+> `http.request` bridge: `2026-06-28-http-request-bridge.md`.
 
 ## Frame: build on what we have
 
@@ -138,12 +146,13 @@ a sandboxed Proxmox module cannot just be handed the cluster token.
 
 Three ways to reconcile (pick during build, not now):
 
-1. **Extend the bridge (recommended, keeps the philosophy):** add host-mediated
-   capabilities so the credential stays host-side — e.g. a generic
-   `http.request` bridge method scoped to the module's declared `network.hosts`
-   with the host injecting the consented auth, or a per-integration bridge
-   namespace. The module orchestrates; the host makes the authenticated call.
-   Same shape as `assistant.complete`.
+1. **Extend the bridge (CHOSEN — keeps the philosophy):** add host-mediated
+   capabilities so the credential stays host-side — a generic `http.request`
+   bridge method scoped to the module's declared, operator-consented endpoints with
+   the host injecting the consented auth. The module orchestrates; the host makes
+   the authenticated call. Same shape as `assistant.complete`. **Now specced:
+   `2026-06-28-http-request-bridge.md`.** This is the path for the credential-holding
+   REST modules (Proxmox + the homelab pack).
 2. **Consented-secret tier:** the operator explicitly accepts that this module
    receives specific secrets in-process (a trust step at install). Less pure;
    simplest to ship.

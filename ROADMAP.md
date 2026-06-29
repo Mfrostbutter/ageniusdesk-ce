@@ -4,7 +4,19 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
-## Current Release: v0.3.0 (2026-06-28)
+## Current Release: v0.4.0 (2026-06-28)
+
+v0.4 turns AgeniusDesk from an n8n control plane into an agent platform: build real LangGraph and PydanticAI agents and run + monitor them the way you run workflows, with batteries-included n8n intelligence. Highlights:
+
+- **Agent Fleet (core built-in)**: a managed fleet of LangGraph + PydanticAI agents — catalog, run with a live graph and a normalized run waterfall, human-in-the-loop approve/resume, optional LangSmith tracing, and per-run token/cost. The agent stack is an opt-in dependency extra (`AGD_EXTRAS="assistant,langgraph"`); the view loads without it, a run reports the missing extra.
+- **Agent Builder in Code Lab**: a third mode that builds agents (framework toggle, ReAct / human-in-the-loop / parallel-fan-out starters) and Registers them to the fleet. Agents live in your vault as files you own, edit, or delete.
+- **Built-in n8n-mcp, auto-installed**: real n8n node knowledge, search, and workflow validation in Code Lab and the assistant out of the box (docs-only by default; one-click wire to the active instance).
+- **n8n skill library in the Harness**: a curated `skills/` library seeded into the vault that the assistant loads on demand; the default Code Lab instructions route to it and the n8n-mcp tools.
+- **Reliability fixes**: cross-port CSRF self-heal, strict-n8n workflow import, container port-collision warnings, the dashboard self-container guard, and pristine harness-seed refresh.
+
+Full detail under "What shipped in v0.4.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
+
+## Previous Release: v0.3.0 (2026-06-28)
 
 v0.3 lands real isolation for community modules (the boundary the v0.2 scan/consent layer bridged), the agency multi-instance view, and a broader AI provider set, on top of the v0.2 core. Highlights:
 
@@ -15,7 +27,7 @@ v0.3 lands real isolation for community modules (the boundary the v0.2 scan/cons
 
 Full detail is under "What shipped in v0.3.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
 
-## Previous Release: v0.2.0 (2026-06-27)
+## Earlier Release: v0.2.0 (2026-06-27)
 
 v0.2 lands full execution observability, the community-module install pipeline and its first module, and the authentication and onboarding layer, all on top of the v0.1 core. Highlights:
 
@@ -26,7 +38,7 @@ v0.2 lands full execution observability, the community-module install pipeline a
 
 Full detail and checkboxes are under "What shipped in v0.2.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
 
-## Earlier Release: v0.1.0 (2026-06-23)
+## Initial Release: v0.1.0 (2026-06-23)
 
 ### Completed Features
 
@@ -48,6 +60,35 @@ Full detail and checkboxes are under "What shipped in v0.2.0" below; see the [CH
 - Comprehensive documentation and contributing guidelines
 
 ---
+
+## What shipped in v0.4.0
+
+The headline: AgeniusDesk operates AI agents the way it operates n8n.
+
+### 1. Agent Fleet (core built-in) ([spec](docs/specs/2026-06-28-agent-fleet-langgraph-spec.md))
+
+- [x] One managed-agents surface with **LangGraph** and **PydanticAI** adapters behind one run contract + catalog; built-ins ops-triage (ReAct tool loop), fix-proposer (human-in-the-loop), health-reporter (parallel fan-out).
+- [x] Run + stream: the live LangGraph node graph **plus** a normalized run waterfall that renders the same for either framework; per-run token + cost. LangSmith tracing is optional (the OTel waterfall + price-book cost work without it).
+- [x] Human-in-the-loop interrupt then approve/resume.
+- [x] Agents live in your vault under `agents/<id>/` (a pure `graph.py` factory + an `agent.json` manifest); discovered live, no restart. **Delete** from the catalog (built-ins protected, blocked during a live run). Framework chip + "built-in" tag on cards.
+- [x] Opt-in dependency extra (`AGD_EXTRAS="assistant,langgraph"`) keeps the default image lean.
+
+### 2. Agent Builder in Code Lab
+
+- [x] A third Code Lab mode: framework toggle (LangGraph | PydanticAI), per-framework starters, agent-aware AI assist, and **Register to Agent Fleet** writing the vault files. Build where you build n8n logic; monitor in the fleet.
+
+### 3. Batteries-included n8n intelligence
+
+- [x] **Built-in n8n-mcp** ([czlonkowski/n8n-mcp](https://github.com/czlonkowski/n8n-mcp), MIT), auto-installed in its own container when Docker is available (docs-only by default; one-click wire-to-instance for create/update/manage). Opt out with `AGD_N8N_MCP_AUTO=false`.
+- [x] **n8n skill library** vendored from [czlonkowski/n8n-skills](https://github.com/czlonkowski/n8n-skills) (MIT) and seeded into the Harness; the default Code Lab instructions route to it and the n8n-mcp tools so workflows are built correctly the first time.
+
+### 4. Reliability
+
+- [x] Cross-port **CSRF self-heal**: two dashboards on `localhost` no longer 403 every mutation.
+- [x] **Workflow import** survives n8n's strict create schema (top-level + nested `settings` allowlist).
+- [x] **Container port-collision** pre-check plus a friendly bind-error message.
+- [x] **Self-container guard**: the dashboard can no longer destroy or stop its own container.
+- [x] **Harness seed refresh**: README / AGENTS refreshed on existing installs only while still pristine.
 
 ## What shipped in v0.2.0
 
@@ -99,14 +140,14 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 
 ## Near-Term (Next 2-3 Months)
 
-- [ ] **More container templates**: MySQL, MongoDB, Minio, additional databases and services
-- [ ] **Richer Code Lab**: code snippets library, n8n node documentation sidebar, template expansion
+- [ ] **More container templates**: MySQL and more services (PostgreSQL, MongoDB, Redis, MinIO, Qdrant, Ollama, Flowise already ship as built-in templates)
+- [ ] **Richer Code Lab**: a curated code-snippets library and an in-app n8n node-documentation sidebar (template expansion and `$`-autocomplete already ship; deep node knowledge is available now via the built-in n8n-mcp)
 - [ ] **Additional knowledge connectors**: HTTP fetch, GitHub, API connectors beyond Qdrant
 - [x] **Harness skills section**: a library of skills in the Harness (`skills/`) that agent instructions point at, so an agent loads focused, domain-specific guidance on demand. Seeded into the vault on first run; router note at `skills/README.md` (shipped — see CHANGELOG [Unreleased])
 - [x] **Curate high-quality n8n skills**: the full czlonkowski/n8n-skills set (MIT) — workflow patterns, node config, expressions, Code nodes, error handling, validation, agents, and more — vendored as the starting content for the Harness skills section
 - [ ] **Workflow version history**: snapshot on import, diff viewer, restore from snapshot
 - [ ] **Scheduled backups**: automated per-instance backup with configurable retention
-- [ ] **Health monitoring**: configurable endpoint polling, uptime tracking, SLA dashboards
+- [ ] **Health monitoring**: surface uptime via an **Uptime Kuma connector** (read the operator's existing monitors over Kuma's API and fold up/down + uptime % into Fleet Health) rather than rebuilding generic endpoint polling. Native HTTP/TCP checks remain a later fallback for operators not already on Kuma. See [community-module candidates](docs/specs/2026-06-28-community-module-candidates.md).
 - [ ] **Expanded notification sinks**: email, PagerDuty, webhook routing per instance
 - [ ] **Workflow security audit scan**: detect missing error handlers, unused credentials, exposed webhooks (this audits n8n workflows; distinct from the community-module code scanner in v0.2)
 - [ ] **Project landing page**: a public web page introducing AgeniusDesk CE (overview, screenshots, install, docs and repo links)
@@ -139,6 +180,25 @@ The headline is real isolation for community modules, the boundary the v0.2 scan
 - [x] Modules-management and error-mutating endpoints gated at the operator role; `notes.search` scoped by resolved (symlink-safe) path; container/volume teardown made mode-independent.
 - [x] Fixed a stored-XSS class in the shared error item (attribute/JS-context escaping of attacker-influenced ids from the error webhook); added a behavioral regression test.
 
+## Community Modules & Homelab Pack (Concept)
+
+AgeniusDesk's chrome (Fleet Health, Errors, Ask AI, Observe, Notes) is the reuse
+surface: the highest-value community modules fold into it rather than standing alone,
+moving CE from "an n8n control plane" toward "the homelab / automation control
+plane." Full landscape, per-candidate buildability verdicts, and the pack contents:
+[community-module candidates](docs/specs/2026-06-28-community-module-candidates.md).
+
+Two **host investments** gate the whole quadrant (do these before the modules):
+
+- [ ] **`http.request` bridge** (highest leverage): host-mediated outbound HTTP with the credential injected host-side, so a credential-holding module is safe under isolation instead of `in_process`-only. Unlocks the entire REST quadrant — Cloudflare, NocoDB/Baserow/Airtable, Qdrant, object storage, Uptime Kuma, **Proxmox**, **Home Assistant**, reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, TrueNAS — at once. [Spec](docs/specs/2026-06-28-http-request-bridge.md).
+- [ ] **Fleet Health contribution API**: let a loaded module publish `{label, status, metrics}` rows that `fleet_health()` merges, so module health (cluster nodes, queue workers, NAS disks, tunnel status) renders in the Fleet Health pane.
+
+**Homelab Pack v1 core**: Proxmox, Remote Docker/Portainer, NAS health (TrueNAS), Uptime Kuma, Cloudflare, Home Assistant. **Extended**: reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, Authentik. Distributed via the existing bundle mechanism.
+
+The **Redis/queue monitor** and a **database viewer** are wanted but hit the native-wire-protocol wall (no driver delivered by the installer); the DB viewer is better as a built-in. Tracked in the candidates doc.
+
+---
+
 ## Medium-Term (v0.3+ Concept)
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
@@ -157,9 +217,9 @@ The headline is real isolation for community modules, the boundary the v0.2 scan
 - External secret sources (1Password, AWS Secrets Manager, Vault)
 - Git integration (export workflows to repos, branch-based environments)
 - SAML/LDAP for team authentication
-- Agentic workflow management (LangChain integration, agent monitoring)
+- Agentic workflow management — **shipped** as the Agent Fleet core built-in (LangGraph + PydanticAI adapters, live graph view, LangSmith tracing); `backend/modules/agent_fleet/`
 - Client-facing portal (scoped workflow access for non-operators)
-- Home Assistant integration for homelab automation centers
+- Home Assistant integration — now part of the Homelab Pack (see "Community Modules & Homelab Pack" above)
 - Support for other automation platforms (Make, Zapier)
 
 ---
