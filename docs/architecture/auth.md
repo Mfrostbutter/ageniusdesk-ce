@@ -77,6 +77,8 @@ DB-backed in `auth_sessions` (see [Data Model](data-model.md)); only `SHA-256(ra
 
 Bootstrap endpoints are exempt because there is no valid session yet and a stale/foreign `agd_session` cookie must not block first-run setup: `/api/auth/setup`, `/api/auth/login`, `/api/auth/login/totp`, `/api/auth/forgot`, `/api/auth/reset`. Bearer/API-key callers and unauthenticated/edge-only requests are never cookie-CSRF exposed, so they are skipped.
 
+**CSRF self-heal.** Cookies are not isolated by port, so a second AgeniusDesk on another `localhost` port (or its login screen) can clear the shared, readable `agd_csrf` cookie for the whole domain while the HttpOnly `agd_session` survives — leaving a logged-in session whose every mutation 403s. To recover without a re-login, `GET /api/auth/status` and `GET /api/auth/me` re-mint `agd_csrf` (via `issue_csrf_cookie`) when a valid session lacks it. The token is a pure double-submit value, not bound to the session, so re-issuing is safe. The frontend also retries once after re-fetching `/status` (see [Frontend](frontend.md)).
+
 ## TOTP 2FA and recovery codes
 
 Pure stdlib RFC 6238 (`backend/totp.py`): HMAC-SHA1, 30-second step, 6 digits, base32 secret. `verify` accepts +/- one step for clock skew and compares every candidate without an early break to keep timing uniform. The QR code is rendered browser-side from the `otpauth://` URI; there is no server-side image library.

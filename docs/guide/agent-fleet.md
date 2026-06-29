@@ -11,16 +11,19 @@ you build yourself.
 
 Agent Fleet needs two things in the AgeniusDesk environment:
 
-1. **The agent dependency extra.** The LangGraph / PydanticAI stack is opt-in so
-   the default image stays lean. Build the image with the extra:
+1. **The agent dependency extra.** The LangGraph / PydanticAI stack is opt-in, so
+   AgeniusDesk is **n8n-only by default** and the agent surface stays hidden until
+   you opt in. Build the image with the extra:
 
    ```bash
    AGD_EXTRAS="assistant,langgraph" docker compose up -d --build
    ```
 
-   (or `pip install '.[langgraph]'` on bare metal). Without it the **Agent Fleet**
-   view still loads, but a run reports the missing extra and Code Lab's Agent
-   Builder shows an "install the extra" nudge.
+   (or `pip install '.[langgraph]'` on bare metal). The dashboard auto-detects the
+   extra: without it, the **Agent Fleet** nav and Code Lab's **Agent Builder** mode
+   are not shown; install it and they appear. To override the auto-detect, set
+   `AGD_AGENTS_ENABLED` (`false` keeps the n8n-only experience even with the extra
+   installed; `true` forces the surface on). See [Configuration](../CONFIG.md).
 
 2. **An Anthropic API key.** The built-in agents run on Claude. The key resolves
    from the environment (`ANTHROPIC_API_KEY` / `ANTHROPIC_KEY`) or the encrypted

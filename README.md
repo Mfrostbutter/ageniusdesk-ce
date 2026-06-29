@@ -54,7 +54,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 - A managed fleet of agents, operated the way AgeniusDesk operates n8n: a catalog, run with a **live graph + a normalized run waterfall**, **human-in-the-loop** approve/resume, and **LangSmith tracing** with per-call token/cost
 - Built-ins out of the box (ops-triage, fix-proposer, health-reporter); **build your own in Code Lab** (LangGraph or PydanticAI) and Register them
 - Your agents are files in your vault under `agents/` that you own, edit, and export, discovered live with no restart
-- The LangGraph/PydanticAI stack is an opt-in dependency extra so the default image stays lean: build with `AGD_EXTRAS="assistant,langgraph"` (or `pip install '.[langgraph]'`); without it the module loads and the view shows an "install the extra" nudge
+- The LangGraph/PydanticAI stack is an opt-in dependency extra, so **AgeniusDesk is n8n-only by default** — the Agent Fleet and Agent Builder stay hidden until you opt in. Enable agents by building with the extra: `AGD_EXTRAS="assistant,langgraph"` (or `pip install '.[langgraph]'`). `AGD_AGENTS_ENABLED` overrides the auto-detect (`false` keeps it n8n-only even with the extra; `true` forces it on)
 
 **AI Assistant**
 - Chat with context from your workflows and error history

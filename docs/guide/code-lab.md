@@ -15,15 +15,17 @@ The view has two panels.
 
 The editor uses a dark theme with n8n-aware autocomplete: typing `$` surfaces n8n globals (`$input`, `$json`, `$node`, `$env`, `$now`, and others) plus snippets for common patterns (transform items, filter items, fetch).
 
-## Three modes
+## Modes
 
-A toggle at the top left switches the whole view between three modes.
+A toggle at the top left switches the whole view between modes.
 
 | Mode | Button | What the editor holds | Send button |
 |---|---|---|---|
 | Code Node | "Code Node" | A JavaScript/TypeScript/Python snippet for one n8n Code node | "Send to n8n" |
 | Workflow Builder | "Workflow Builder" | A complete n8n workflow as JSON | "Import to n8n" |
 | Agent Builder | "Agent Builder" | A LangGraph or PydanticAI agent (Python) | "Register to Agent Fleet" |
+
+**Agent Builder is conditional.** It appears only when agents are enabled (the agent extra is installed, or `AGD_AGENTS_ENABLED=true`). On a default, n8n-only install Code Lab shows just Code Node and Workflow Builder. See [Agent Fleet](agent-fleet.md).
 
 Switching modes swaps the editor language and, if the current content does not match the new mode, loads a starter (a code template in Code Node mode, a one-node manual-trigger scaffold in Workflow Builder mode, an agent scaffold in Agent Builder mode). Content that already matches is preserved. The template + language pickers show in Code Node mode; a framework + starter picker shows in Agent Builder mode.
 
@@ -89,7 +91,7 @@ Agent Builder mode builds a LangGraph or PydanticAI agent that runs in the [Agen
 3. Write the agent. A LangGraph agent is a pure factory — `build(llm, tools, checkpointer=None)` returning a compiled graph — importing only langgraph/langchain; AgeniusDesk injects the model and the tools you select. The AI sidebar is agent-aware (quick actions: Explain, Add a tool, Make it HITL, Fix).
 4. Click **Register to Agent Fleet**. Name it, pick its model, select the tools it may call, and toggle human-in-the-loop. It is written to your vault under `agents/<id>/` (a pure `graph.py` factory + an `agent.json` manifest) and appears in the Agent Fleet immediately, no restart.
 
-Agent Builder mode needs the agent dependency extra installed (`AGD_EXTRAS="assistant,langgraph"`); without it the Register button still saves the files, but running needs the extra. Full details, including running + monitoring, are in [Agent Fleet](agent-fleet.md).
+Agent Builder appears only when agents are enabled (the agent extra is installed, or `AGD_AGENTS_ENABLED=true`); otherwise Code Lab shows just Code Node and Workflow Builder. Full details, including running + monitoring, are in [Agent Fleet](agent-fleet.md).
 
 ## Using the AI Code Assistant
 

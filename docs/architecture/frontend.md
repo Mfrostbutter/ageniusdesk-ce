@@ -21,6 +21,8 @@ Two backend handlers in `backend/main.py` make this work and keep deploys fresh:
 
 App version is read separately from `GET /api/status` (`status.version`) and stashed on `window.__appVersion`; it is not the same value as `BUILD_ID`.
 
+The same `GET /api/status` carries `agents_enabled` (the backend's auto-detect of the agent extra, overridable by `AGD_AGENTS_ENABLED`). On boot `app.js` stashes it on `window.__agentsEnabled`; when it is `false` it removes the Agent Fleet nav button and deletes its entry from the `views` map (so a deep-link falls back to the dashboard), and Code Lab drops its Agent Builder mode. A missing field (older backend) is treated as enabled. This is how a default, n8n-only install presents without the agent surface.
+
 ## View contract
 
 Every view is an ES module under `frontend/js/views/` that exports an async `render(container)` function. The router calls it with the `#app-content` element and awaits it. The view owns everything inside that container: it writes `innerHTML`, wires its own listeners, and subscribes to WebSocket events as needed.
@@ -105,6 +107,8 @@ Two things make it load-bearing:
 2. **A global `window.fetch` shim.** `patchFetchForCsrf()` monkey-patches `window.fetch` exactly once (guarded by `window.__agdFetchPatched`). For same-origin, non-GET/HEAD requests it injects the `X-AGD-CSRF` header if not already present. This covers raw `fetch()` callers that bypass `api()` (workflow delete, container actions, the player). Without it, anything not routed through `api()` would break under the CSRF middleware.
 
 `api()` also handles **mid-session expiry**: on a `401` for a non-auth path, when the `agd_csrf` cookie is present (meaning a session was once issued), it reloads the page once (`_authRedirecting` guard) to bounce back to the auth gate. Pre-login boot, where many background calls 401 by design, never reloads because the cookie is absent. Errors are normalized: the thrown `Error` carries `.status` and, when the server returns a structured `detail` object, `.errorClass`.
+
+`api()` also **self-heals CSRF**: on a `403` `CSRF check failed` for a non-auth mutation, it re-fetches `GET /api/auth/status` once (the backend re-mints `agd_csrf` for a valid session) and retries the original call once (`_retried` guard). This recovers the cross-port cookie-clobber case with no reload. See [Authentication & RBAC](auth.md#csrf).
 
 ## WebSocket client
 
