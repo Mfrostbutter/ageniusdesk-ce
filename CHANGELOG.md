@@ -4,6 +4,9 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+### Added
+- **n8n-only by default; the agent surface is conditional.** The Agent Fleet view and Code Lab's **Agent Builder** mode now appear only when the optional agent extra (`AGD_EXTRAS="...,langgraph"`) is installed, so a default install reads as a pure n8n control plane (the default image already ships without the agent dependencies). `AGD_AGENTS_ENABLED` overrides the auto-detect: `false` hides the agent surface even with the extra present, `true` forces it on. The gate is UI-only (nav + Code Lab mode); it changes no dependencies, and `GET /api/status` now carries `agents_enabled` for the frontend.
+
 ## [0.4.0] - 2026-06-28
 
 ### Added

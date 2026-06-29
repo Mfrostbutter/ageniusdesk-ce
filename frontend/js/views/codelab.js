@@ -958,6 +958,11 @@ function setupHandlers() {
   document.getElementById('mode-code')?.addEventListener('click', () => applyMode('code'));
   document.getElementById('mode-workflow')?.addEventListener('click', () => applyMode('workflow'));
   document.getElementById('mode-agent')?.addEventListener('click', () => applyMode('agent'));
+  // Agent surface gate (see app.js): no agent extra -> no Agent Builder mode.
+  if (window.__agentsEnabled === false) {
+    document.getElementById('mode-agent')?.remove();
+    document.getElementById('agent-mode-tools')?.remove();
+  }
 
   const setAgentTpl = () => {
     if (!editor) return;

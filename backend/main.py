@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import (
+    agents_enabled,
     get_active_instance,
     get_active_theme,
     harden_file_permissions,
@@ -388,6 +389,7 @@ async def status():
         "version": APP_VERSION,
         "websocket_clients": manager.count,
         "health_endpoints": config.get("health_endpoints", []),
+        "agents_enabled": agents_enabled(),
     }
 
 

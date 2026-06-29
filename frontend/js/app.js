@@ -592,6 +592,16 @@ async function init() {
     window.__n8nUrl = (status.n8n_url || '').replace(/\/$/, '');
     window.__appVersion = status.version || '';
 
+    // Agent surface gate: when the agent extra isn't installed (or it's disabled
+    // via AGD_AGENTS_ENABLED), the dashboard reads as a pure n8n control plane —
+    // drop the Agent Fleet nav + route. Code Lab hides its Agent Builder mode too.
+    // Default (flag absent on an older backend) leaves agents shown.
+    window.__agentsEnabled = status.agents_enabled !== false;
+    if (!window.__agentsEnabled) {
+      document.querySelector('.nav-btn[data-view="agent-fleet"]')?.remove();
+      delete views['agent-fleet'];
+    }
+
     if (status.theme) await loadTheme(status.theme);
     await Promise.all([loadInstances(), loadThemeDropdown(), loadAccount()]);
 

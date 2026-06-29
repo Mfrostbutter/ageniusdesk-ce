@@ -142,10 +142,33 @@ class Settings(BaseSettings):
     # last-good fallback; operator overrides and a bundled default layer over it.
     agd_pricebook_refresh_hours: int = 24
 
+    # Agent Fleet / Agent Builder UI surface. None = auto (shown when the optional
+    # agent dependency extra is installed), so a default install presents as a pure
+    # n8n control plane. AGD_AGENTS_ENABLED=false forces the n8n-only experience
+    # even with the extra present; true forces the surface on.
+    agd_agents_enabled: Optional[bool] = None
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()
+
+
+def agents_enabled() -> bool:
+    """Whether the Agent Fleet + Code Lab Agent Builder UI is shown.
+
+    Explicit ``AGD_AGENTS_ENABLED`` wins; otherwise auto-detect by whether the
+    optional agent extra (langgraph) is importable, so a default install (no
+    extra) is a clean n8n-only experience and adding the extra lights agents up.
+    """
+    if settings.agd_agents_enabled is not None:
+        return settings.agd_agents_enabled
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("langgraph") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def harden_file_permissions() -> None:

@@ -35,6 +35,12 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
 
 All of the above except Ollama are OpenAI-compatible and route through the same chat path. Each assistant area (Code Lab / Error Triage / General Assistant) selects its own provider and model independently.
 
+## Agent Fleet
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGD_AGENTS_ENABLED` | (auto) | Controls the Agent Fleet view and Code Lab's Agent Builder mode. Unset = **auto**: shown only when the optional agent extra (`AGD_EXTRAS="...,langgraph"`) is installed, so a default install reads as a pure n8n control plane. Set `false` to hide the agent surface even with the extra present (n8n-only experience); set `true` to force it on. Hiding is UI-only; it does not change which dependencies are installed. |
+
 ## Knowledge & RAG
 
 | Variable | Default | Description |
