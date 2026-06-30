@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 RangeKey = Literal["24h", "7d", "30d"]
 Bucket = Literal["hour", "day"]
 
-_RANGE_HOURS: dict[str, int] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+# 'all' uses a far-past window so the page cap (not the date) bounds the scan.
+_RANGE_HOURS: dict[str, int] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30, "90d": 24 * 90, "all": 24 * 365 * 50}
 # Per-range hard caps on n8n pagination so a single API call can't run away on
 # a noisy instance. The slim v1 prefers truncated-but-fresh over complete-but-stale.
-_RANGE_MAX_PAGES: dict[str, int] = {"24h": 4, "7d": 16, "30d": 40}
+_RANGE_MAX_PAGES: dict[str, int] = {"24h": 4, "7d": 16, "30d": 40, "90d": 40, "all": 40}
 _PAGE_SIZE = 250
 
 
@@ -151,8 +152,12 @@ async def _build_payload(instance_id: str, range_key: str) -> dict[str, Any]:
 
     # ── Timeseries (bucketed counts) ───────────────────────────────────────
     bucket: Bucket = "hour" if range_key == "24h" else "day"
+    # Bound the bucket span to the data actually scanned so a wide window
+    # ('all' / '90d') doesn't allocate thousands of empty leading buckets.
+    _ts_list = [t for t in (_parse_iso(e.get("started_at", "")) for e in executions) if t]
+    ts_since = max(since, min(_ts_list)) if _ts_list else since
     series: dict[str, dict[str, int]] = {}
-    for k in _iter_buckets(since, until, bucket):
+    for k in _iter_buckets(ts_since, until, bucket):
         series[k] = {"success": 0, "error": 0, "running": 0}
     for e in executions:
         ts = _parse_iso(e.get("started_at", ""))

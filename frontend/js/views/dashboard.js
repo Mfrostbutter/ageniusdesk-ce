@@ -10,6 +10,7 @@ import * as assistantDock from '../components/assistant-dock.js';
 import { renderErrorItem } from '../components/error-item.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
 import * as getstarted from '../components/getstarted.js';
+import { getErrorLookback, setErrorLookback, lookbackShort, lookbackOptionsHtml } from '../error-prefs.js';
 
 // ── Widget registry ──────────────────────────────────────────────────────────
 
@@ -452,7 +453,10 @@ function mountErrors(el) {
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
       <span id="error-pulse-dot" class="status-dot offline hidden" style="width:6px;height:6px"></span>
       <span id="error-count-badge" class="badge hidden">0</span>
-      <div style="margin-left:auto;display:flex;gap:6px">
+      <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        <select id="dash-errors-range" title="How far back error reporting goes" style="width:auto;margin:0;padding:4px 8px;font-size:11px">
+          ${lookbackOptionsHtml(getErrorLookback())}
+        </select>
         <button id="sync-errors-btn" class="btn btn-sm btn-ghost" onclick="window.__syncErrors(this)">Sync from n8n</button>
         <button class="btn btn-sm btn-ghost" onclick="window.__nav('errors')">View All</button>
       </div>
@@ -462,6 +466,13 @@ function mountErrors(el) {
          surfaces older rows without pushing every dashboard widget below. -->
     <div id="dashboard-errors" style="max-height:40vh;overflow-y:auto;padding-right:4px"></div>
   `;
+  const rangeSel = el.querySelector('#dash-errors-range');
+  if (rangeSel) {
+    rangeSel.addEventListener('change', () => {
+      setErrorLookback(rangeSel.value);
+      loadDashboardData();
+    });
+  }
 }
 
 function mountHealth(el) {
@@ -492,10 +503,12 @@ function mountAssistant(el) {
 
 async function loadDashboardData() {
   try {
-    const [wfData, errData, execData, statusData, instData] = await Promise.all([
+    const lookback = getErrorLookback();
+    const [wfData, errData, execData, insData, statusData, instData] = await Promise.all([
       get('/api/n8n/workflows?limit=250'),
-      get('/api/errors?limit=5'),
+      get(`/api/errors?limit=5&range=${encodeURIComponent(lookback)}`),
       get('/api/n8n/executions?limit=50'),
+      get(`/api/insights?range=${encodeURIComponent(lookback)}`).catch(() => ({ summary: {} })),
       get('/api/status'),
       get('/api/n8n/instances').catch(() => ({ instances: [] })),
     ]);
@@ -506,28 +519,41 @@ async function loadDashboardData() {
 
     const workflows = wfData.workflows || [];
     const errors = errData.errors || [];
-    const executions = execData.executions || [];
+    const executions = execData.executions || [];   // last 50, for the timeline + health grid
     const activeCount = workflows.filter(w => w.active).length;
-    const successCount = executions.filter(e => e.status === 'success').length;
-    const errorCount = executions.filter(e => e.status === 'error').length;
-    const totalExec = executions.length;
-    const failRate = totalExec ? Math.round((errorCount / totalExec) * 100) : 0;
-    const successRate = totalExec ? Math.round((successCount / totalExec) * 100) : 0;
 
     _executions = executions;
-    renderStats(workflows.length, activeCount, errData.count_24h || 0, totalExec, successRate, failRate, statusData);
+    // The two execution cards mirror Insights (same cached aggregator), so the
+    // Overview and the Insights page always agree: windowed run totals over the
+    // picker, with the local error log reconciled against n8n's failed-execution
+    // count (the "8 failed · 23 in log" framing).
+    const sum = insData.summary || {};
+    const execTotal = sum.total_executions || 0;
+    const nErr = sum.error || 0;            // n8n failed executions in window
+    const localErr = sum.local_errors || 0; // collected error records in window
+    const failRate = execTotal ? Math.max(nErr > 0 ? 1 : 0, Math.round((nErr / execTotal) * 100)) : 0;
+    const base = {
+      total: workflows.length, active: activeCount, status: statusData,
+      execTotal, nSuccess: sum.success || 0, nErr, nRunning: sum.running || 0, localErr, failRate,
+    };
+    renderStats(base, lookback);
     renderTimeline(executions.slice(0, 30));
     renderHealthGrid(workflows, executions);
-    renderErrors(errors, errData.count_24h || 0);
+    const errCount = (errData.count_range !== undefined) ? errData.count_range : (errData.count_24h || 0);
+    renderErrors(errors, errCount);
   } catch (e) {
     const sg = document.getElementById('stats-grid');
     if (sg) sg.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><p>Failed to load dashboard: ${esc(e.message)}</p></div>`;
   }
-  // Auto-sync errors from n8n in the background; reload only the errors widget if new ones found
+  // Auto-sync errors from n8n in the background; reload only the errors widget if new ones found.
+  // The stat cards read n8n executions directly, so a store sync doesn't change them.
   post('/api/errors/sync').then(async res => {
     if (res.synced > 0) {
-      const errData = await get('/api/errors?limit=5');
-      renderErrors(errData.errors || [], errData.count_24h || 0);
+      const lookback = getErrorLookback();
+      const errData = await get(`/api/errors?limit=5&range=${encodeURIComponent(lookback)}`);
+      const errs = errData.errors || [];
+      const errCount = (errData.count_range !== undefined) ? errData.count_range : (errData.count_24h || 0);
+      renderErrors(errs, errCount);
     }
   }).catch(() => {});
 }
@@ -709,10 +735,41 @@ window.__dashSwitch = async (id) => {
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
-function renderStats(total, active, errors24h, runs, successRate, failRate, status) {
+// Compact number for stat tiles, matching the Insights view (e.g. 1419 -> "1.4k").
+function fmtNum(n) {
+  if (n === null || n === undefined) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function renderStats(base, lookback) {
+  const { total, active, execTotal, nSuccess, nErr, nRunning, localErr, failRate, status } = base;
   const el = document.getElementById('stats-grid');
   if (!el) return;
   const instanceName = status.active_instance ? status.active_instance.name : '';
+  const windowLabel = lookbackShort(lookback);
+  // Failure Rate + Executions mirror the Insights tiles over the same window
+  // (one cached aggregator), so the two cards agree with each other and the
+  // Insights page. The Failure Rate is n8n's failed-execution rate; its subtext
+  // reconciles n8n failures against the local error log so the numbers never
+  // look contradictory. (The Execution Timeline stays a fixed last-50 sample.)
+  let failTrend, failClass;
+  if (nErr > 0 || localErr > 0) {
+    failTrend = `${nErr} failed · ${localErr} in log (${windowLabel})`;
+    failClass = failRate > 0 ? 'stat-trend--down' : 'stat-trend--neutral';
+  } else {
+    failTrend = `all clear (${windowLabel})`;
+    failClass = 'stat-trend--up';
+  }
+  const execTrend = execTotal
+    ? `${nSuccess} ok · ${nErr} err · ${nRunning} running`
+    : `no runs (${windowLabel})`;
+  const successRate = execTotal ? Math.round((nSuccess / execTotal) * 100) : 0;
+  const execClass = !execTotal ? 'stat-trend--neutral'
+    : successRate >= 80 ? 'stat-trend--up'
+    : successRate >= 50 ? 'stat-trend--neutral'
+    : 'stat-trend--down';
   el.innerHTML = `
     <div class="stat-card-accent stat-card-accent--info" style="cursor:pointer" onclick="window.__nav('workflows', { filter: 'all' })" title="View all workflows">
       <div class="stat-value">${total}</div>
@@ -727,12 +784,12 @@ function renderStats(total, active, errors24h, runs, successRate, failRate, stat
     <div class="stat-card-accent stat-card-accent--error" style="cursor:pointer" onclick="window.__nav('errors')" title="View errors">
       <div class="stat-value" style="color:${failRate > 0 ? 'var(--error)' : 'var(--text-primary)'}">${failRate}%</div>
       <div class="stat-label">Failure Rate</div>
-      <div class="stat-trend ${(errors24h > 0 || failRate > 20) ? 'stat-trend--down' : 'stat-trend--up'}">${errors24h > 0 ? `${errors24h} errors (24h)` : failRate > 20 ? `${failRate}% of recent runs failed` : 'All clear'}</div>
+      <div class="stat-trend ${failClass}">${esc(failTrend)}</div>
     </div>
-    <div class="stat-card-accent stat-card-accent--warning" style="cursor:pointer" onclick="window.__nav('workflows')" title="View executions">
-      <div class="stat-value">${runs}</div>
+    <div class="stat-card-accent stat-card-accent--warning" style="cursor:pointer" onclick="window.__nav('insights')" title="Executions in ${esc(windowLabel)}">
+      <div class="stat-value">${esc(fmtNum(execTotal))}</div>
       <div class="stat-label">Executions</div>
-      <div class="stat-trend ${successRate >= 80 ? 'stat-trend--up' : successRate >= 50 ? 'stat-trend--neutral' : 'stat-trend--down'}">${successRate}% success</div>
+      <div class="stat-trend ${execClass}">${esc(execTrend)}</div>
     </div>
   `;
 }
@@ -889,19 +946,19 @@ function renderHealthGrid(workflows, executions) {
 
 // ── Error Feed ───────────────────────────────────────────────────────────────
 
-function renderErrors(errors, count24h) {
+function renderErrors(errors, count) {
   const el = document.getElementById('dashboard-errors');
   const badge = document.getElementById('error-count-badge');
   if (!el) return;
 
-  if (badge && count24h > 0) {
-    badge.textContent = count24h;
-    badge.classList.remove('hidden');
+  if (badge) {
+    badge.textContent = count;
+    badge.classList.toggle('hidden', !(count > 0));
   }
 
   el.innerHTML = errors.length
-    ? errors.map(renderErrorItem).join('')
-    : '<div class="empty-state" style="padding:20px 0"><p>No recent errors</p></div>';
+    ? errors.map(e => renderErrorItem(e, { instanceMap: _instanceMap })).join('')
+    : '<div class="empty-state" style="padding:20px 0"><p>No errors in this window</p></div>';
 }
 
 function prependError(error) {

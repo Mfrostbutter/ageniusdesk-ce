@@ -10,6 +10,7 @@
 import { get, post, del, onEvent } from '../api.js';
 import { openTraceModal } from '../components/trace-waterfall.js';
 import { renderErrorItem } from '../components/error-item.js';
+import { getErrorLookback, setErrorLookback, lookbackOptionsHtml } from '../error-prefs.js';
 
 let unsub = null;
 
@@ -21,19 +22,15 @@ window.__observeError = (btn) => {
   openTraceModal({ execId, title: `Trace · ${btn.dataset.wf || 'workflow'} · exec ${execId}` });
 };
 
-const RANGE_STORAGE_KEY = 'ageniusdesk:errors_range';
 const VIEW_STORAGE_KEY = 'ageniusdesk:errors_view';
-const VALID_RANGES = new Set(['24h', '7d', '30d']);
 const VALID_VIEWS = new Set(['grouped', 'flat']);
 
 let _instanceMap = {};
 
+// The lookback range is the shared, persistent "error reporting window" setting
+// (see error-prefs.js), so this view, the Overview, and Settings agree on the span.
 function getInitialRange() {
-  try {
-    const stored = sessionStorage.getItem(RANGE_STORAGE_KEY);
-    if (stored && VALID_RANGES.has(stored)) return stored;
-  } catch { /* sessionStorage may be unavailable */ }
-  return '24h';
+  return getErrorLookback();
 }
 
 function getInitialView() {
@@ -47,6 +44,8 @@ function getInitialView() {
 function rangeLabel(range) {
   if (range === '7d') return 'last 7 days';
   if (range === '30d') return 'last 30 days';
+  if (range === '90d') return 'last 90 days';
+  if (range === 'all') return 'all time';
   return 'last 24h';
 }
 
@@ -88,9 +87,7 @@ export async function render(container) {
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;color:var(--text-secondary)">
           <span>Range</span>
           <select id="errors-range-select" style="width:auto;margin-top:0;padding:6px 10px;font-size:12px">
-            <option value="24h"${initialRange === '24h' ? ' selected' : ''}>Last 24 hours</option>
-            <option value="7d"${initialRange === '7d' ? ' selected' : ''}>Last 7 days</option>
-            <option value="30d"${initialRange === '30d' ? ' selected' : ''}>Last 30 days</option>
+            ${lookbackOptionsHtml(initialRange)}
           </select>
         </label>
         <button class="btn btn-sm btn-danger" id="clear-errors-btn">Clear All</button>
@@ -121,9 +118,7 @@ export async function render(container) {
 
   const rangeSelect = document.getElementById('errors-range-select');
   rangeSelect.addEventListener('change', () => {
-    const value = rangeSelect.value;
-    if (!VALID_RANGES.has(value)) return;
-    try { sessionStorage.setItem(RANGE_STORAGE_KEY, value); } catch { /* ignore */ }
+    setErrorLookback(rangeSelect.value);
     loadErrors();
   });
 
@@ -145,8 +140,7 @@ export async function render(container) {
 
 function getCurrentRange() {
   const select = document.getElementById('errors-range-select');
-  const value = select ? select.value : getInitialRange();
-  return VALID_RANGES.has(value) ? value : '24h';
+  return select ? select.value : getInitialRange();
 }
 
 function getCurrentView() {

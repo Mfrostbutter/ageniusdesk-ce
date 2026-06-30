@@ -80,11 +80,16 @@ _RANGE_SQL = {
     "24h": "-1 day",
     "7d": "-7 days",
     "30d": "-30 days",
+    "90d": "-90 days",
 }
 
 
 def _range_modifier(range_key: str) -> str | None:
-    """Map a range key ('24h'/'7d'/'30d') to the SQLite datetime modifier. None = no filter."""
+    """Map a range key to the SQLite datetime modifier. None = no time filter.
+
+    ``"all"`` (and an empty key) resolve to None so callers count/list every
+    stored error regardless of age.
+    """
     if not range_key:
         return None
     return _RANGE_SQL.get(range_key)
@@ -131,18 +136,22 @@ async def get_error_count_24h(instance_id: str = "") -> int:
 
 
 async def get_error_count_range(range_key: str, instance_id: str = "") -> int:
-    """Count errors within a named range, optionally scoped to one instance."""
-    modifier = _range_modifier(range_key) or _RANGE_SQL["24h"]
+    """Count errors within a named range, optionally scoped to one instance.
+
+    A range with no time modifier ("all", or an empty key) counts every stored
+    error rather than silently narrowing to 24h.
+    """
+    modifier = _range_modifier(range_key)
     db = await get_db()
+    clauses: list[str] = []
+    params: list = []
     if instance_id:
-        cursor = await db.execute(
-            f"SELECT COUNT(*) as cnt FROM errors WHERE instance_id = ? AND occurred_at >= datetime('now', '{modifier}')",
-            (instance_id,),
-        )
-    else:
-        cursor = await db.execute(
-            f"SELECT COUNT(*) as cnt FROM errors WHERE occurred_at >= datetime('now', '{modifier}')"
-        )
+        clauses.append("instance_id = ?")
+        params.append(instance_id)
+    if modifier:
+        clauses.append(f"occurred_at >= datetime('now', '{modifier}')")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    cursor = await db.execute(f"SELECT COUNT(*) as cnt FROM errors {where}", tuple(params))
     row = await cursor.fetchone()
     return row["cnt"] if row else 0
 

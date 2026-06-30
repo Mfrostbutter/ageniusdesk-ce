@@ -10,6 +10,7 @@ import { renderModules } from './settings-modules.js';
 import { openModal } from '../components/modal.js';
 import { renderQR } from '../vendor/qrcode.js';
 import { mountChecklist } from '../components/password-policy.js';
+import { getErrorLookback, setErrorLookback, lookbackOptionsHtml } from '../error-prefs.js';
 
 const COLORS = ['#ff6d5a', '#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6', '#38bdf8', '#fb923c'];
 
@@ -1495,7 +1496,31 @@ function renderErrorHandler(el) {
         </div>
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Error reporting window</span>
+      </div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+        How far back error reporting looks across the dashboard. Sets the span for the Overview
+        Recent Errors widget, the Failure Rate card, and the Errors view. Saved in this browser.
+      </p>
+      <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:13px">
+        <span>Report errors from the</span>
+        <select id="error-lookback-select" style="width:auto;margin:0;padding:6px 10px;font-size:12px">
+          ${lookbackOptionsHtml(getErrorLookback())}
+        </select>
+      </label>
+    </div>
   `;
+
+  const lookbackSel = document.getElementById('error-lookback-select');
+  if (lookbackSel) {
+    lookbackSel.addEventListener('change', () => {
+      setErrorLookback(lookbackSel.value);
+      toast.success('Error reporting window updated');
+    });
+  }
 
   const btn = document.getElementById('eh-install-btn');
   const res = document.getElementById('eh-result');

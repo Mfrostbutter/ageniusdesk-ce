@@ -4,6 +4,9 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Configurable error-reporting window on the Overview.** A persistent lookback picker (24h / 7d / 30d / 90d / All time, default 30 days), on the Recent Errors widget and in Settings > Error Handler, now drives the whole Overview together: the Recent Errors feed, the Failure Rate card, and the Executions card all report over the chosen window, and the Errors view's range selector uses the same setting. The two execution cards mirror the Insights view (one shared, cached aggregator), so the Overview and Insights always agree: Executions shows the windowed run total with an "N ok, M err, K running" breakdown, and Failure Rate shows n8n's failed-execution rate reconciled against the local error log ("M failed, N in log"), so it is never 0% while errors are listed. The Insights API gained `90d` and `all` ranges, and counting "all" errors no longer narrows to 24h.
+
 ## [0.4.1] - 2026-06-30
 
 ### Added

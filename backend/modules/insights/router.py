@@ -30,7 +30,7 @@ def _resolve_instance(scope: str) -> str:
 
 @router.get("")
 async def get_insights_payload(
-    range: str = Query("24h", regex="^(24h|7d|30d)$"),
+    range: str = Query("24h", regex="^(24h|7d|30d|90d|all)$"),
     instance_id: str = Query("active"),
 ):
     """Full insights payload for a single (range, instance_id)."""
