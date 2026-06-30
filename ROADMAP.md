@@ -206,6 +206,7 @@ The **Redis/queue monitor** and a **database viewer** are wanted but hit the nat
 ## Medium-Term (v0.3+ Concept)
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
+- [ ] **Agency support inbox**: a home inside AgeniusDesk for inbound client support email. Agencies running AgeniusDesk already field support over a shared address (`support@...`); route that mailbox in (IMAP poll or forward-to-webhook) so each thread becomes a ticket that lives next to the instances, workflows, and errors it is usually about. AI triage classifies and drafts a reply through the existing assistant, a ticket can be linked to the failing workflow or execution it concerns, and status runs open to resolved. Reuses the message bus, the assistant, and the notes vault; pairs with multi-tenancy for per-client routing, and closes the incident-to-resolution loop (every incident becomes a tracked issue with status, root cause, and a client-ready record).
 - [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
 - [ ] **Cost tracking** — folded into Observability ([cost-observability spec](docs/specs/2026-06-27-cost-observability.md)); LLM spend is the cost dimension of the trace store, not a standalone feature
 - [ ] **Workflow promotion**: promote workflows across dev, staging, production instances
