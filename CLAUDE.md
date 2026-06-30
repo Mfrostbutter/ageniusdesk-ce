@@ -19,17 +19,20 @@ An open-source command center for managing multiple n8n automation instances. MI
 - `backend/modules/` - auto-discovered packages, each exposes a `router` and `manifest.json`
   - `n8n_proxy/` - multi-instance proxy for workflows, executions, credentials
   - `errors/` - error collection, grouping by workflow, node, error type
-  - `assistant/` - AI chat with LLM providers (OpenRouter, OpenAI, Anthropic, Ollama), MCP client, RAG
+  - `assistant/` - AI chat with LLM providers (OpenRouter, OpenAI, Anthropic, Ollama, plus Perplexity, Groq, DeepSeek, Mistral, xAI, Together, and a Custom OpenAI-compatible endpoint), MCP client, RAG
+  - `agent_fleet/` - managed LangGraph + PydanticAI agent fleet (catalog, live graph, run waterfall, human-in-the-loop); opt-in `langgraph` extra, n8n-only by default
   - `docker_mgr/` - container lifecycle management, templates, deployment
   - `knowledge/` - external knowledge source management and RAG backends
   - `notes/` - markdown notes vault with search, tagging, backlinks
   - `insights/` - execution analytics, success rates, error trends
-  - `notifications/` - webhook-based message dispatch with optional Slack, Discord sinks
+  - `observability/` - OpenTelemetry OTLP receiver, trace waterfall, metrics strip, LLM cost enrichment
+  - `messages/` - inbound message-bus webhook persisted and broadcast as toasts (optional Slack, Discord env sinks)
   - `player/` - music player integration
+  - `auth/` - local accounts, sessions, optional TOTP 2FA, CSRF, role-based access
   - `admin/` - user management, encrypted secret store, settings
   - `public_api/` - versioned /api/v1 endpoints with X-API-Key authentication
   - `dashboard_mcp/` - built-in MCP server (FastMCP, streamable HTTP)
-  - `themes/`, `webhooks/`, `health/`, `modules/` - supporting modules
+  - `themes/`, `webhooks/`, `health/`, `modules/`, `n8n_credentials/` - supporting modules
 
 **Frontend:**
 - `frontend/index.html` - single-page app shell with sidebar navigation
