@@ -4,7 +4,11 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
-## Current Release: v0.4.0 (2026-06-28)
+## Current Release: v0.4.1 (2026-06-30)
+
+v0.4.1 is a patch that makes the **n8n-only-by-default** agent gate a tagged release: a default install now reads as a pure n8n control plane, and the Agent Fleet view + Code Lab's Agent Builder appear only when the optional agent extra is installed (or `AGD_AGENTS_ENABLED=true`). It sits on the v0.4.0 agent layer below.
+
+## Previous Release: v0.4.0 (2026-06-28)
 
 v0.4 keeps AgeniusDesk **n8n-first** and adds an **optional** agent layer on top (off by default): build real LangGraph and PydanticAI agents and run + monitor them the way you run workflows, plus batteries-included n8n intelligence. Highlights:
 
@@ -16,7 +20,7 @@ v0.4 keeps AgeniusDesk **n8n-first** and adds an **optional** agent layer on top
 
 Full detail under "What shipped in v0.4.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
 
-## Previous Release: v0.3.0 (2026-06-28)
+## Earlier Release: v0.3.0 (2026-06-28)
 
 v0.3 lands real isolation for community modules (the boundary the v0.2 scan/consent layer bridged), the agency multi-instance view, and a broader AI provider set, on top of the v0.2 core. Highlights:
 
