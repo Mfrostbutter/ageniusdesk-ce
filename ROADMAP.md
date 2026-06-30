@@ -202,12 +202,15 @@ Two **host investments** gate the whole quadrant (do these before the modules):
 
 The **Redis/queue monitor** and a **database viewer** are wanted but hit the native-wire-protocol wall (no driver delivered by the installer); the DB viewer is better as a built-in. Tracked in the candidates doc.
 
+Not every valuable module folds into the existing chrome; some **add their own surface**:
+
+- [ ] **Support / ticketing module** (opt-in community module, its own UI): a dedicated ticketing view where inbound client support email lands. Agencies running AgeniusDesk field support over a shared address (`support@...`); route that mailbox into the module (IMAP poll or forward-to-webhook) so each thread becomes a ticket in its own inbox, with a status lifecycle (open to resolved), AI triage and draft replies through the assistant, and optional cross-links to the workflow or execution a request concerns. Deliberately **separate from Errors**: error reporting is machine-generated workflow failures, support tickets are human requests; the ticket UI can reference an error but does not live in it. Distributed through the community-module pipeline; pairs with multi-tenancy for per-client routing and feeds the client-reporting loop.
+
 ---
 
 ## Medium-Term (v0.3+ Concept)
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
-- [ ] **Agency support inbox**: a home inside AgeniusDesk for inbound client support email. Agencies running AgeniusDesk already field support over a shared address (`support@...`); route that mailbox in (IMAP poll or forward-to-webhook) so each thread becomes a ticket that lives next to the instances, workflows, and errors it is usually about. AI triage classifies and drafts a reply through the existing assistant, a ticket can be linked to the failing workflow or execution it concerns, and status runs open to resolved. Reuses the message bus, the assistant, and the notes vault; pairs with multi-tenancy for per-client routing, and closes the incident-to-resolution loop (every incident becomes a tracked issue with status, root cause, and a client-ready record).
 - [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
 - [ ] **Cost tracking** — folded into Observability ([cost-observability spec](docs/specs/2026-06-27-cost-observability.md)); LLM spend is the cost dimension of the trace store, not a standalone feature
 - [ ] **Workflow promotion**: promote workflows across dev, staging, production instances
