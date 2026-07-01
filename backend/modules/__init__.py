@@ -208,6 +208,12 @@ def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path
         # only the base allowlist; privileged actions go through the
         # capability-scoped host bridge (token minted from manifest.capabilities).
         _pending_isolated.append((manifest.id, child.parent, manifest.capabilities))
+        # Fleet Health contribution: an isolated module with a fleet_health decl is
+        # PULLED by the host at /api/{id}/{route} (via the worker proxy transport).
+        # in_process community modules are not pulled yet (documented limitation).
+        if manifest.fleet_health and manifest.fleet_health.enabled:
+            from backend.modules.health import registry as health_registry
+            health_registry.register_pull_source(manifest.id, manifest.fleet_health.route)
         logger.info("Registered community module (isolated, spawn deferred): %s", manifest.id)
     except Exception as e:
         module_registry.register(RegistryEntry(

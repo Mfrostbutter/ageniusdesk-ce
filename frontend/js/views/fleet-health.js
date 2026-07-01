@@ -66,33 +66,76 @@ function instanceCard(inst) {
     </div>`;
 }
 
+// A contributed fleet source (Proxmox, homelab pack, …). Untrusted data from a
+// module: every field is escaped. Rows come pre-validated/capped by the host.
+function sourceCard(s) {
+  const reachable = s.reachable && s.status !== 'down';
+  const link = s.detail_url
+    ? `<a href="${esc(s.detail_url)}" style="font-size:11px;color:var(--accent,#60a5fa)">open ↗</a>` : '';
+  if (!reachable) {
+    return `
+      <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-left:3px solid #ff6d5a;border-radius:var(--radius);padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <strong style="font-size:14px">${esc(s.label)}</strong>
+          <span class="badge" style="background:#ff6d5a22;color:#ff6d5a;border:1px solid #ff6d5a55;font-size:11px">${esc(s.error || 'down')}</span>
+        </div>
+      </div>`;
+  }
+  const color = s.status === 'degraded' ? '#fbbf24' : '#34d399';
+  const metrics = (s.metrics || []).map(m => `
+    <div><div style="font-size:20px;font-weight:700">${esc(m.value)}</div><div style="font-size:11px;opacity:0.6">${esc(m.label)}</div></div>`).join('');
+  return `
+    <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-left:3px solid ${color};border-radius:var(--radius);padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
+        <strong style="font-size:14px">${esc(s.label)}${s.status === 'degraded' ? ' <span style="font-size:10px;color:#fbbf24">degraded</span>' : ''}</strong>
+        ${link}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(${Math.max(1, Math.min((s.metrics || []).length, 4))},1fr);gap:8px;text-align:center">${metrics}</div>
+    </div>`;
+}
+
 async function loadHealth(content) {
   content.innerHTML = '<div class="spinner"></div>';
   try {
-    const data = await get('/api/n8n/fleet/health');
+    const data = await get('/api/health/fleet');
     const t = data.totals || {};
     const insts = data.instances || [];
+    const sources = data.sources || [];
     _instMap = Object.fromEntries(insts.map(i => [i.id, { name: i.name || i.id, color: i.color || '#60a5fa' }]));
-    if (!insts.length) {
+    if (!insts.length && !sources.length) {
       content.innerHTML = `<div style="opacity:0.6;font-size:13px">No instances configured. Add one under Instances.</div>`;
       return;
     }
-    const trc = rateColor(t.error_rate || 0);
-    const cells = [
-      ['Instances', `${t.reachable}/${t.instances}`, 'reachable'],
-      ['Workflows', `${t.workflows_active}/${t.workflows_total}`, 'active'],
-      ['Error rate', `<span style="color:${trc}">${t.error_rate}%</span>`, 'recent runs'],
-      ['Runs', `${t.exec_total}`, 'sampled'],
-    ];
-    content.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
-        ${cells.map(([k, v, sub]) => `
-          <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:12px;text-align:center">
-            <div style="font-size:22px;font-weight:700">${v}</div>
-            <div style="font-size:11px;opacity:0.6">${esc(k)} · ${esc(sub)}</div>
-          </div>`).join('')}
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">${insts.map(instanceCard).join('')}</div>`;
+    let html = '';
+    if (insts.length) {
+      const trc = rateColor(t.error_rate || 0);
+      const cells = [
+        ['Instances', `${t.reachable}/${t.instances}`, 'reachable'],
+        ['Workflows', `${t.workflows_active}/${t.workflows_total}`, 'active'],
+        ['Error rate', `<span style="color:${trc}">${t.error_rate}%</span>`, 'recent runs'],
+        ['Runs', `${t.exec_total}`, 'sampled'],
+      ];
+      html += `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
+          ${cells.map(([k, v, sub]) => `
+            <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:12px;text-align:center">
+              <div style="font-size:22px;font-weight:700">${v}</div>
+              <div style="font-size:11px;opacity:0.6">${esc(k)} · ${esc(sub)}</div>
+            </div>`).join('')}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">${insts.map(instanceCard).join('')}</div>`;
+    }
+    if (sources.length) {
+      const sm = data.summary || {};
+      const degraded = (sm.sources_degraded || 0) + (sm.sources_down || 0);
+      html += `
+        <div style="display:flex;align-items:baseline;gap:8px;margin:${insts.length ? '22px' : '0'} 0 10px">
+          <h3 style="margin:0;font-size:14px">Sources</h3>
+          <span style="font-size:12px;opacity:0.6">${esc(sm.sources_total || sources.length)} contributed${degraded ? ` · ${degraded} degraded` : ''}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${sources.map(sourceCard).join('')}</div>`;
+    }
+    content.innerHTML = html;
   } catch (e) {
     content.innerHTML = `<div class="error-banner">Failed to load fleet health: ${esc(e.message)}</div>`;
   }

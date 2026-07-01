@@ -440,8 +440,10 @@ def _teardown_isolated(module_id: str) -> None:
     """
     try:
         from backend.modules._runtime import bridge, supervisor
+        from backend.modules.health import registry as health_registry
         supervisor.stop_worker(module_id)
         bridge.revoke_module(module_id)
+        health_registry.unregister_module(module_id)  # drop its Fleet Health rows
     except Exception as e:  # pragma: no cover - teardown is best-effort
         logger.warning("isolated worker teardown for %s failed: %s", module_id, e)
 

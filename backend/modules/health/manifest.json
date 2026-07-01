@@ -1,9 +1,10 @@
 {
   "id": "health",
   "name": "Health",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "min_app_version": "0.1.0",
-  "description": "Endpoint health polling (placeholder, not yet implemented).",
+  "description": "Fleet Health aggregator: merges module-contributed health rows into the fleet roll-up.",
   "author": "AgeniusDesk",
+  "routes_prefix": "/api/health",
   "builtin": true
 }

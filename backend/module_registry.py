@@ -142,6 +142,15 @@ class Capabilities(BaseModel):
     host: HostBridgeCapability = Field(default_factory=HostBridgeCapability)
 
 
+class FleetHealthDecl(BaseModel):
+    # A module that contributes rows to the Fleet Health roll-up. The host PULLS
+    # `{routes_prefix}/{route}` (returning `{"rows": [...]}`) and merges the rows;
+    # the module never pushes. See docs/specs/2026-07-01-fleet-health-contribution-api.md.
+    enabled: bool = False
+    route: str = "fleet-health"   # relative to routes_prefix
+    label: str = ""               # optional display group label
+
+
 class ModuleManifest(BaseModel):
     id: str
     name: str
@@ -156,6 +165,9 @@ class ModuleManifest(BaseModel):
     python_entry: str = "__init__.py"
     secrets_required: list[SecretRequirement] = Field(default_factory=list)
     frontend: FrontendDecl | None = None
+    # Optional Fleet Health contribution: the module serves a health route the host
+    # pulls and merges into the roll-up.
+    fleet_health: FleetHealthDecl | None = None
     builtin: bool = False
     homepage: str = ""
     # Declared capability surface. None means "declares nothing" (see above) —
