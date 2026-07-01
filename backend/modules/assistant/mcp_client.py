@@ -13,6 +13,7 @@ import httpx
 
 from backend.config import decrypt_value, load_config, save_config
 from backend.module_registry import APP_VERSION
+from backend.modules.assistant.providers import UnsafeProbeURL, assert_safe_probe_url
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,13 @@ def _normalize_mcp_urls(raw: str) -> tuple[str, str]:
     Treats `http://host/mcp` and `http://host` as equivalent — callers get a
     `base` for legacy /tools|/health probes and a `mcp_url` for the MCP
     streamable-HTTP endpoint so we never double-append `/mcp`.
+
+    SSRF guard: the URL is operator-supplied and fetched server-side, so reject
+    cloud-metadata / link-local / reserved targets before any request goes out.
+    Self-hosted MCP on loopback or a LAN/Docker host stays allowed (the same
+    posture as the Ollama probe). Raises UnsafeProbeURL on a blocked target.
     """
+    assert_safe_probe_url(raw)
     raw = raw.rstrip("/")
     if raw.endswith("/mcp"):
         return raw[: -len("/mcp")], raw
@@ -173,7 +180,10 @@ async def test_server(server: dict) -> dict:
     connect" toast.
     """
     resolved = _resolve_server(server)
-    base, mcp_url = _normalize_mcp_urls(resolved["url"])
+    try:
+        base, mcp_url = _normalize_mcp_urls(resolved["url"])
+    except UnsafeProbeURL as e:
+        return {"connected": False, "error": f"Blocked URL: {e}"}
 
     # Track the best-signal error we see so the UI can suggest a remediation.
     best_status: int | None = None
@@ -263,7 +273,11 @@ async def test_server(server: dict) -> dict:
 async def discover_tools(server: dict) -> list[dict]:
     """Discover available tools from an MCP server."""
     resolved = _resolve_server(server)
-    base, mcp_url = _normalize_mcp_urls(resolved["url"])
+    try:
+        base, mcp_url = _normalize_mcp_urls(resolved["url"])
+    except UnsafeProbeURL:
+        logger.warning("MCP discover blocked unsafe URL for %s", server.get("name"))
+        return []
 
     # Try MCP streamable HTTP
     try:
@@ -346,7 +360,10 @@ async def execute_tool(server_id: str, tool_name: str, arguments: dict) -> str:
         return f"MCP server '{server_id}' not found"
 
     resolved = _resolve_server(server)
-    base, mcp_url = _normalize_mcp_urls(resolved["url"])
+    try:
+        base, mcp_url = _normalize_mcp_urls(resolved["url"])
+    except UnsafeProbeURL as e:
+        return f"Error: blocked MCP server URL ({e})"
 
     # Try MCP streamable HTTP — initialize session, then call
     try:

@@ -489,6 +489,29 @@ TEMPLATES_BY_ID: dict[str, Template] = {t.id: t for t in TEMPLATES}
 
 # ── Community template loader ─────────────────────────────────────────────────
 
+
+def _apply_subs(obj, subs: dict[str, str]):
+    """Recursively substitute `{key}` placeholders in the STRING LEAVES of an
+    already-parsed JSON structure.
+
+    Operating on the parsed object (not the serialized JSON text) is what makes
+    this safe: an operator-supplied field value containing quotes or braces can
+    only ever land as a plain string value — it can never break out and inject
+    new JSON structure (e.g. a `HostConfig.Privileged` / bind mount). Every
+    placeholder in a template file is authored inside a JSON string already, so
+    leaf-only substitution is behavior-preserving for all valid templates.
+    """
+    if isinstance(obj, str):
+        for key, val in subs.items():
+            obj = obj.replace(f"{{{key}}}", val)
+        return obj
+    if isinstance(obj, list):
+        return [_apply_subs(v, subs) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _apply_subs(v, subs) for k, v in obj.items()}
+    return obj
+
+
 def _build_community(template_def: dict):
     """Return a build function for a JSON-defined community template.
 
@@ -523,10 +546,7 @@ def _build_community(template_def: dict):
             "volume_name": volume_name,
         }
 
-        config_str = json.dumps(template_def.get("container_config", {}))
-        for key, val in subs.items():
-            config_str = config_str.replace(f"{{{key}}}", val)
-        config = json.loads(config_str)
+        config = _apply_subs(template_def.get("container_config", {}), subs)
 
         volumes_raw: list[str] = template_def.get("volumes", [])
         volumes = []
@@ -577,10 +597,7 @@ def _build_community_bundle(template_def: dict):
             for other in template_def["containers"]:
                 spec_subs[f"bundle_host:{other['name']}"] = other["name"]
 
-            config_str = json.dumps(entry.get("config", {}))
-            for k, v in spec_subs.items():
-                config_str = config_str.replace(f"{{{k}}}", v)
-            config = json.loads(config_str)
+            config = _apply_subs(entry.get("config", {}), spec_subs)
 
             # expose_port may be a string template like "{port}"; coerce.
             expose_port: int | None = None

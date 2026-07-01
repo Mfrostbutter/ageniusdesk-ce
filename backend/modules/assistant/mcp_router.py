@@ -9,7 +9,16 @@ from backend.auth_gate import require_role
 from backend.config import encrypt_value
 from backend.modules.assistant import mcp_client
 
-router = APIRouter(prefix="/api/mcp", tags=["mcp"])
+# Operator-only: every server add/update/test/discover triggers a server-side
+# fetch to an operator-supplied URL (SSRF surface), and the responses are
+# reflected back to the caller. Keep this off the read-only `viewer` role. The
+# n8n-mcp subroutes below already re-assert operator; the router-level floor
+# covers /servers* which previously had none.
+router = APIRouter(
+    prefix="/api/mcp",
+    tags=["mcp"],
+    dependencies=[Depends(require_role("operator"))],
+)
 
 
 class AddServer(BaseModel):

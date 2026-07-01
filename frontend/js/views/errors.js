@@ -267,7 +267,9 @@ window.__askErrorAI = async function (btn) {
       context: '',
       surface: 'triage',
     });
-    const md = (resp.response || 'No response')
+    // esc() FIRST so a prompt-injected LLM reply containing markup (e.g.
+    // <img src=x onerror=...>) is neutralized before the markdown regexes run.
+    const md = esc(resp.response || 'No response')
       .replace(/\n/g, '<br>')
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:11px">$1</code>');

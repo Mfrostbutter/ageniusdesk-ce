@@ -25,7 +25,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.auth_gate import require_trusted_request
+from backend.auth_gate import require_role
 
 from . import registry, runner, storage
 
@@ -36,10 +36,16 @@ def _slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")[:64]
 
 
+# Admin-only: registering and running a vault agent imports and executes
+# operator-authored graph.py IN-PROCESS (vault_agents._load_module ->
+# exec_module) with full host privileges. Even the read paths build a vault
+# agent's graph (agent_graph) or run it, so there is no safe "viewer" subset —
+# gate the whole surface at admin. `require_role` is a no-op only on an open
+# install (AGD_DISABLE_LOGIN=true), the documented trusted-localhost mode.
 router = APIRouter(
     prefix="/api/agent-fleet",
     tags=["agent-fleet"],
-    dependencies=[Depends(require_trusted_request)],
+    dependencies=[Depends(require_role("admin"))],
 )
 
 
