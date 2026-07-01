@@ -213,3 +213,57 @@ def test_unsafe_bundle_entry_rejected(tmp_path, monkeypatch):
     _write_template(tmp_path, "bundle.json", bundle)
     loaded = {t.id for t in templates.load_community_templates()}
     assert "bundle-tpl" not in loaded
+
+
+# ── #6 secret scope bound to instance URL host ───────────────────────────────
+
+
+def test_scope_host_fingerprint_detects_repoint():
+    from backend import config
+
+    original = config.load_scope_hosts()
+    try:
+        config.save_scope_hosts({"inst1": "n8n.local:5678"})
+        # Same host -> not stale; repointed host -> stale.
+        assert config.instance_scope_host_stale("inst1", "http://n8n.local:5678") is False
+        assert config.instance_scope_host_stale("inst1", "http://attacker.example") is True
+        # No fingerprint recorded -> not stale (TOFU baseline can still be set).
+        assert config.instance_scope_host_stale("unknown", "http://whatever") is False
+    finally:
+        config.save_scope_hosts(original)
+
+
+def test_record_scope_hosts_from_instance():
+    from backend import config
+
+    orig_cfg = config.load_config()
+    orig_hosts = config.load_scope_hosts()
+    try:
+        config.add_instance({"id": "scope-i1", "name": "S1", "url": "http://n8n.lan:5678", "api_key": "k"})
+        config.record_scope_hosts(["scope-i1"])
+        assert config.load_scope_hosts().get("scope-i1") == "n8n.lan:5678"
+        # After a repoint, the recorded fingerprint flags the change.
+        config.update_instance("scope-i1", {"url": "http://elsewhere.example"})
+        assert config.instance_scope_host_stale("scope-i1", "http://elsewhere.example") is True
+    finally:
+        config.save_config(orig_cfg)
+        config.save_scope_hosts(orig_hosts)
+
+
+# ── #7 instance-URL SSRF floor on test-creds ─────────────────────────────────
+
+
+def test_test_creds_blocks_metadata_url(anon, monkeypatch):
+    _as_role(monkeypatch, "operator")
+    r = anon.post("/api/n8n/test-creds", json={"url": "http://169.254.169.254/latest/meta-data/", "api_key": "x"})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error_class"] == "blocked"
+
+
+def test_test_creds_allows_lan_url(anon, monkeypatch):
+    _as_role(monkeypatch, "operator")
+    # A loopback URL is allowed past the SSRF floor (n8n self-hosts on LAN); the
+    # connection itself will fail, but not with the "blocked" 400.
+    r = anon.post("/api/n8n/test-creds", json={"url": "http://127.0.0.1:5678", "api_key": "x"})
+    if r.status_code == 400:
+        assert r.json().get("detail", {}).get("error_class") != "blocked"

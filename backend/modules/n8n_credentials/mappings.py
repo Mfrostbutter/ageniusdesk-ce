@@ -290,7 +290,9 @@ async def fetch_live_schemas(url: str, api_key: str, timeout: float = 8.0) -> di
         except (httpx.HTTPError, ValueError):
             pass  # 404 / network / decode — drop quietly
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    from backend.modules.n8n_proxy.client import _verify as _tls_verify
+
+    async with httpx.AsyncClient(timeout=timeout, verify=_tls_verify()) as client:
         await asyncio.gather(*[_one(client, name) for name, _, _ in KNOWN_TYPES])
 
     return results

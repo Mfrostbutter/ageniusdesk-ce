@@ -253,7 +253,20 @@ class TestCredsRequest(BaseModel):
 @router.post("/test-creds")
 async def test_creds(req: TestCredsRequest):
     """Test a URL+API-key pair without saving. Used by the setup wizard."""
-    return await client.test_connection_with(req.url.rstrip("/"), req.api_key)
+    from backend.modules.assistant.providers import UnsafeProbeURL, assert_safe_probe_url
+
+    url = req.url.rstrip("/")
+    # SSRF floor: block cloud-metadata / link-local / reserved targets so the
+    # error-class response can't be used as a blind oracle against those. LAN /
+    # loopback stay allowed (n8n legitimately self-hosts there). (#7)
+    try:
+        assert_safe_probe_url(url)
+    except UnsafeProbeURL as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": f"URL not allowed: {exc}", "error_class": "blocked"},
+        ) from exc
+    return await client.test_connection_with(url, req.api_key)
 
 
 # ── Workflow & execution proxies ─────────────────────────────────────────────

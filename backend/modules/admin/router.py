@@ -233,6 +233,11 @@ async def set_secret_scope(name: str, req: ScopeUpdate):
     else:
         scopes.pop(name, None)
     save_secret_scopes(scopes)
+    # Fingerprint each scoped instance's current URL host so a later URL repoint
+    # can't silently redirect this secret's mirror to a new host (#6).
+    from backend.config import record_scope_hosts
+
+    record_scope_hosts(scopes.get(name, []))
     return {"success": True, "name": name, "allowed_instances": scopes.get(name, [])}
 
 
