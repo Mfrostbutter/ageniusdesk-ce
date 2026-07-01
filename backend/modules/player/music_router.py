@@ -13,8 +13,10 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
+
+from backend.auth_gate import require_role
 
 from backend.modules.player.music_config import (
     DEFAULT_MUSIC,
@@ -29,6 +31,11 @@ from backend.modules.player.music_config import (
 from backend.modules.player.sanitizer import KNOWN_EMBED_HOSTS, sanitize_embed
 
 router = APIRouter(prefix="/api/music", tags=["music"])
+
+# Mutations and the token-exposing triggers read require operator+. Reads stay
+# open to any identity, and /triggers/fire self-authenticates with its own token
+# (allowlisted in the internal-API middleware), so it must NOT carry this floor.
+_operator = [Depends(require_role("operator"))]
 
 
 # ── Built-in embed templates ──────────────────────────────────────────────────
@@ -174,7 +181,7 @@ async def get_config() -> dict[str, Any]:
     return load_music_config()
 
 
-@router.put("/config")
+@router.put("/config", dependencies=_operator)
 async def put_config(update: ConfigUpdate) -> dict[str, Any]:
     """Patch appearance / behavior / history_cap. Collection sections use their own routes."""
     music = load_music_config()
@@ -187,7 +194,7 @@ async def put_config(update: ConfigUpdate) -> dict[str, Any]:
     return save_music_config(music)
 
 
-@router.post("/config/reset")
+@router.post("/config/reset", dependencies=_operator)
 async def reset_config() -> dict[str, Any]:
     """Reset appearance + behavior to defaults. Does not touch embeds/vibes/history."""
     music = load_music_config()
@@ -217,7 +224,7 @@ async def preview_embed(req: EmbedCreate) -> dict[str, Any]:
     return result
 
 
-@router.post("/embeds")
+@router.post("/embeds", dependencies=_operator)
 async def create_embed(req: EmbedCreate) -> dict[str, Any]:
     result = sanitize_embed(req.raw)
     if not result.get("ok"):
@@ -236,7 +243,7 @@ async def create_embed(req: EmbedCreate) -> dict[str, Any]:
     return add_to_collection("custom_embeds", item)
 
 
-@router.put("/embeds/{embed_id}")
+@router.put("/embeds/{embed_id}", dependencies=_operator)
 async def update_embed(embed_id: str, req: EmbedUpdate) -> dict[str, Any]:
     patch: dict[str, Any] = {}
     if req.name is not None:  patch["name"]  = req.name.strip() or "Untitled"
@@ -257,7 +264,7 @@ async def update_embed(embed_id: str, req: EmbedUpdate) -> dict[str, Any]:
     return updated
 
 
-@router.delete("/embeds/{embed_id}")
+@router.delete("/embeds/{embed_id}", dependencies=_operator)
 async def delete_embed(embed_id: str) -> dict[str, Any]:
     if not remove_from_collection("custom_embeds", embed_id):
         raise HTTPException(status_code=404, detail="Embed not found")
@@ -271,7 +278,7 @@ async def list_vibes() -> dict[str, Any]:
     return {"items": load_music_config().get("vibes", [])}
 
 
-@router.post("/vibes")
+@router.post("/vibes", dependencies=_operator)
 async def create_vibe(req: VibeCreate) -> dict[str, Any]:
     item = {
         "name":        req.name.strip() or "Untitled",
@@ -283,7 +290,7 @@ async def create_vibe(req: VibeCreate) -> dict[str, Any]:
     return add_to_collection("vibes", item)
 
 
-@router.put("/vibes/{vibe_id}")
+@router.put("/vibes/{vibe_id}", dependencies=_operator)
 async def update_vibe(vibe_id: str, req: VibeUpdate) -> dict[str, Any]:
     patch = {k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None}
     if "urls" in patch:
@@ -294,7 +301,7 @@ async def update_vibe(vibe_id: str, req: VibeUpdate) -> dict[str, Any]:
     return updated
 
 
-@router.delete("/vibes/{vibe_id}")
+@router.delete("/vibes/{vibe_id}", dependencies=_operator)
 async def delete_vibe(vibe_id: str) -> dict[str, Any]:
     if not remove_from_collection("vibes", vibe_id):
         raise HTTPException(status_code=404, detail="Vibe not found")
@@ -321,7 +328,7 @@ async def list_history(q: str = "", tag: str = "", pinned: bool | None = None) -
     return {"items": items, "cap": music.get("history_cap", 100)}
 
 
-@router.post("/history")
+@router.post("/history", dependencies=_operator)
 async def add_history(req: HistoryAdd) -> dict[str, Any]:
     music = load_music_config()
     hist: list[dict[str, Any]] = list(music.get("history", []))
@@ -363,7 +370,7 @@ async def add_history(req: HistoryAdd) -> dict[str, Any]:
     return {"items": trimmed}
 
 
-@router.patch("/history/{item_id}")
+@router.patch("/history/{item_id}", dependencies=_operator)
 async def patch_history(item_id: str, req: HistoryPatch) -> dict[str, Any]:
     patch = {k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None}
     updated = update_in_collection("history", item_id, patch)
@@ -372,14 +379,14 @@ async def patch_history(item_id: str, req: HistoryPatch) -> dict[str, Any]:
     return updated
 
 
-@router.delete("/history/{item_id}")
+@router.delete("/history/{item_id}", dependencies=_operator)
 async def delete_history(item_id: str) -> dict[str, Any]:
     if not remove_from_collection("history", item_id):
         raise HTTPException(status_code=404, detail="History item not found")
     return {"success": True}
 
 
-@router.delete("/history")
+@router.delete("/history", dependencies=_operator)
 async def clear_history(keep_pinned: bool = True) -> dict[str, Any]:
     music = load_music_config()
     if keep_pinned:
@@ -403,12 +410,13 @@ async def export_history() -> dict[str, Any]:
 
 # ── Triggers (n8n webhook + workflow map) ─────────────────────────────────────
 
-@router.get("/triggers")
+@router.get("/triggers", dependencies=_operator)
 async def get_triggers() -> dict[str, Any]:
+    # Exposes triggers.token, which self-authenticates /triggers/fire; operator+.
     return load_music_config().get("triggers", {})
 
 
-@router.put("/triggers")
+@router.put("/triggers", dependencies=_operator)
 async def update_triggers(req: TriggerUpdate) -> dict[str, Any]:
     music = load_music_config()
     triggers = music.get("triggers", {})
@@ -425,7 +433,7 @@ async def update_triggers(req: TriggerUpdate) -> dict[str, Any]:
     return triggers
 
 
-@router.post("/triggers/token/rotate")
+@router.post("/triggers/token/rotate", dependencies=_operator)
 async def rotate_token() -> dict[str, Any]:
     return {"token": rotate_trigger_token()}
 

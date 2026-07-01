@@ -202,7 +202,7 @@ function renderSearchResults(items) {
     row.style.cssText = 'padding:6px 6px;cursor:pointer;border-bottom:1px solid var(--border-dim)';
     row.innerHTML = `<div style="font-weight:500">${escape(item.title || item.path)}</div>
                      <div style="color:var(--text-dim);font-size:11px;font-family:var(--font-mono)">${escape(item.path)}</div>
-                     ${item.snippet ? `<div style="color:var(--text-secondary);font-size:11px;margin-top:2px">${item.snippet}</div>` : ''}`;
+                     ${item.snippet ? `<div style="color:var(--text-secondary);font-size:11px;margin-top:2px">${escapeSnippet(item.snippet)}</div>` : ''}`;
     row.addEventListener('click', () => openNote(item.path));
     el.appendChild(row);
   }
@@ -416,4 +416,13 @@ function escape(s) {
   const d = document.createElement('span');
   d.textContent = s == null ? '' : String(s);
   return d.innerHTML;
+}
+
+// Search snippets are note body content wrapped by FTS5 in literal <mark>…</mark>
+// tags. Escape the whole thing (neutralizing any HTML in the note body, e.g.
+// <img onerror=…>), then restore only the intended highlight tags.
+function escapeSnippet(s) {
+  return escape(s)
+    .replaceAll('&lt;mark&gt;', '<mark>')
+    .replaceAll('&lt;/mark&gt;', '</mark>');
 }
