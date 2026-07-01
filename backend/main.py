@@ -136,6 +136,15 @@ async def lifespan(app: FastAPI):
                 "create an owner account. Edge identity (Cloudflare Access) still "
                 "satisfies the gate without a local account."
             )
+        # #12: the OTLP trace receiver is login-exempt (machine ingest). Without a
+        # token it accepts spans from anyone who can reach the port. Warn loudly,
+        # like AGD_DISABLE_LOGIN, so a naked-port self-host knows.
+        if _settings.agd_otel_enabled and not _settings.agd_otel_token:
+            logger.warning(
+                "AGD_OTEL_ENABLED is on but AGD_OTEL_TOKEN is unset: the OTLP trace "
+                "ingest at /api/otel/v1/traces accepts spans from any caller that can "
+                "reach this port. Set AGD_OTEL_TOKEN unless this is a trusted LAN."
+            )
     except Exception:
         pass
     if _mcp_sm is not None:

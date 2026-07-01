@@ -267,3 +267,60 @@ def test_test_creds_allows_lan_url(anon, monkeypatch):
     r = anon.post("/api/n8n/test-creds", json={"url": "http://127.0.0.1:5678", "api_key": "x"})
     if r.status_code == 400:
         assert r.json().get("detail", {}).get("error_class") != "blocked"
+
+
+# ── #17 TOTP intra-window replay lockout ─────────────────────────────────────
+
+
+def test_totp_verify_step_returns_matched_step():
+    from backend import totp
+
+    secret = totp.generate_secret()
+    at = 50_000_000.0
+    step = int(at // 30)
+    code = totp._hotp(totp._b32decode(secret), step)
+    assert totp.verify_step(secret, code, at=at) == step
+    assert totp.verify_step(secret, "000000", at=at) in (None, step)  # wrong code
+    assert totp.verify(secret, code, at=at) is True
+
+
+def test_totp_second_factor_rejects_replay():
+    import time
+
+    from backend import config, totp
+    from backend.modules.auth import service
+
+    original = service.load_users()
+    try:
+        secret = totp.generate_secret()
+        users = [u for u in original if u.get("username") != "totp-replay-test"]
+        users.append({
+            "username": "totp-replay-test",
+            "role": "admin",
+            "totp": {"enabled": True, "secret_enc": config.encrypt_value(secret), "recovery_codes": []},
+        })
+        service.save_users(users)
+
+        code = totp._hotp(totp._b32decode(secret), int(time.time()) // 30)
+        ok1, _ = service.verify_second_factor("totp-replay-test", code)
+        ok2, _ = service.verify_second_factor("totp-replay-test", code)
+        assert ok1 is True
+        assert ok2 is False  # same code, same step -> replay rejected
+    finally:
+        service.save_users(original)
+
+
+# ── #19 template_state secrets encrypted at rest ─────────────────────────────
+
+
+def test_template_state_encrypts_secret_leaves():
+    from backend.modules.docker_mgr import template_state
+
+    template_state.save("n8n", "review-inst", {"N8N_ENCRYPTION_KEY": "topsecret-key", "port": 5678})
+    raw = template_state._path_for("n8n", "review-inst").read_text(encoding="utf-8")
+    assert "topsecret-key" not in raw       # not plaintext on disk
+    assert "fernet:" in raw                  # encrypted marker present
+    # load() transparently decrypts; non-string leaves are untouched.
+    state = template_state.load("n8n", "review-inst")
+    assert state["N8N_ENCRYPTION_KEY"] == "topsecret-key"
+    assert state["port"] == 5678

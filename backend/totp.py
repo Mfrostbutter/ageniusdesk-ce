@@ -52,29 +52,36 @@ def _hotp(key: bytes, counter: int) -> str:
     return str(code).zfill(_DIGITS)
 
 
-def verify(secret: str, code: str, window: int = 1, at: float | None = None) -> bool:
-    """Verify a 6-digit TOTP. Accepts +/- `window` steps for clock skew.
+def verify_step(secret: str, code: str, window: int = 1, at: float | None = None) -> int | None:
+    """Return the timestep counter a valid code matched, else None.
 
-    Constant-time compare on each candidate so a timing side-channel cannot
-    distinguish a near-miss from a far-miss.
+    Exposing the matched step lets the caller enforce single-use-per-step
+    (intra-window replay lockout): a 30s code must not be replayable while it is
+    still inside its validity window. Constant-time compare on each candidate,
+    no early break, so timing does not distinguish a near-miss from a far-miss.
     """
     if not secret or not code:
-        return False
+        return None
     code = code.strip().replace(" ", "")
     if len(code) != _DIGITS or not code.isdigit():
-        return False
+        return None
     try:
         key = _b32decode(secret)
     except Exception:
-        return False
+        return None
     now = int((at if at is not None else time.time()) // _STEP)
-    ok = False
+    matched: int | None = None
     for drift in range(-window, window + 1):
-        candidate = _hotp(key, now + drift)
-        # Compare every candidate (no early break) to keep timing uniform.
+        step = now + drift
+        candidate = _hotp(key, step)
         if hmac.compare_digest(candidate, code):
-            ok = True
-    return ok
+            matched = step
+    return matched
+
+
+def verify(secret: str, code: str, window: int = 1, at: float | None = None) -> bool:
+    """Verify a 6-digit TOTP. Accepts +/- `window` steps for clock skew."""
+    return verify_step(secret, code, window, at) is not None
 
 
 def generate_recovery_codes(n: int = 10) -> list[str]:
