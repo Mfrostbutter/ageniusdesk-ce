@@ -37,15 +37,72 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class EndpointGrant:
+    """One operator-consented outbound HTTP target, resolved host-side at mint.
+
+    The worker names this endpoint's `id` + a relative path; the host owns the
+    base URL, the credential (by ref, resolved per call), the allowed methods,
+    and the pinned address set. The worker can change none of them.
+    """
+    id: str
+    base_url: str            # scheme://host[:port][/base path], no trailing slash
+    scheme: str
+    host: str                # lowercased hostname or literal IP
+    port: int
+    methods: set[str]
+    verify_tls: bool
+    auth: dict               # {type, secret_ref, header, format, param, user, user_ref}
+    pinned_ips: set[str]     # resolved once at mint; empty when host is unresolvable
+
+
+@dataclass
 class BridgeGrant:
     module_id: str
     write_paths: list[str] = field(default_factory=list)
     read_paths: list[str] = field(default_factory=list)  # effective: includes write_paths
     host_assistant: bool = False
     host_broadcast: bool = False
+    http_endpoints: dict[str, EndpointGrant] = field(default_factory=dict)
 
 
 _grants: dict[str, BridgeGrant] = {}
+
+
+def _build_endpoint_grant(ep) -> EndpointGrant | None:
+    """Resolve one declared HttpEndpoint into an EndpointGrant (host-side)."""
+    import urllib.parse
+
+    base_url = (getattr(ep, "base_url", "") or "").rstrip("/")
+    ep_id = getattr(ep, "id", "") or ""
+    if not base_url or not ep_id:
+        return None
+    parts = urllib.parse.urlsplit(base_url)
+    host = (parts.hostname or "").lower()
+    if not host:
+        return None
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    methods = {m.upper() for m in (getattr(ep, "methods", None) or ["GET", "HEAD"])}
+    auth_obj = getattr(ep, "auth", None)
+    auth = {
+        "type": (getattr(auth_obj, "type", "") or "").lower(),
+        "secret_ref": getattr(auth_obj, "secret_ref", "") or "",
+        "header": getattr(auth_obj, "header", "") or "Authorization",
+        "format": getattr(auth_obj, "format", "") or "{value}",
+        "param": getattr(auth_obj, "param", "") or "",
+        "user": getattr(auth_obj, "user", "") or "",
+        "user_ref": getattr(auth_obj, "user_ref", "") or "",
+    } if auth_obj else {"type": ""}
+    return EndpointGrant(
+        id=ep_id,
+        base_url=base_url,
+        scheme=parts.scheme,
+        host=host,
+        port=port,
+        methods=methods,
+        verify_tls=bool(getattr(ep, "verify_tls", True)),
+        auth=auth,
+        pinned_ips=_resolve_ips(host),
+    )
 
 
 def mint(module_id: str, capabilities) -> str:
@@ -55,6 +112,13 @@ def mint(module_id: str, capabilities) -> str:
     write_paths = [p.strip("/").strip() for p in (getattr(fs, "write_paths", []) or []) if p.strip("/").strip()]
     read_only = [p.strip("/").strip() for p in (getattr(fs, "read_paths", []) or []) if p.strip("/").strip()]
     read_paths = list(dict.fromkeys(read_only + write_paths))  # write paths are readable
+    http_cap = getattr(host, "http", None)
+    http_endpoints: dict[str, EndpointGrant] = {}
+    if http_cap and getattr(http_cap, "enabled", False):
+        for ep in getattr(http_cap, "endpoints", None) or []:
+            grant = _build_endpoint_grant(ep)
+            if grant is not None:
+                http_endpoints[grant.id] = grant
     token = secrets.token_urlsafe(32)
     _grants[token] = BridgeGrant(
         module_id=module_id,
@@ -62,6 +126,7 @@ def mint(module_id: str, capabilities) -> str:
         read_paths=read_paths,
         host_assistant=bool(getattr(host, "assistant", False)),
         host_broadcast=bool(getattr(host, "broadcast", False)),
+        http_endpoints=http_endpoints,
     )
     return token
 
@@ -331,6 +396,203 @@ async def assistant_complete(payload: _CompletePayload, grant: BridgeGrant = Dep
     except CompletionError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"text": text}
+
+
+# ── http.request namespace (host-mediated outbound HTTP, host-injected creds) ──
+#
+# The worker names an operator-consented endpoint id + a relative path; the host
+# owns the base URL, the credential (resolved per call), the allowed methods, the
+# TLS policy, and the address pin. The credential never enters the worker. See the
+# http.request bridge spec.
+
+# Response body cap: a module cannot pull an unbounded body back through the bridge.
+MAX_HTTP_BYTES = 5_000_000
+HTTP_TIMEOUT = 30.0
+
+# Worker-supplied request headers we always strip: the host owns auth + host
+# identity, and hop-by-hop headers must not be forwarded. The injected auth is
+# applied AFTER this, so it always wins.
+_FORBIDDEN_REQ_HEADERS = {
+    "authorization", "host", "cookie", "content-length",
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailer", "transfer-encoding", "upgrade",
+}
+
+# Response headers safe to echo back to the worker (allowlist, everything else
+# dropped). set-cookie / www-authenticate / the injected auth are never echoed.
+_RESP_HEADER_ALLOW = {
+    "content-type", "content-length", "content-encoding",
+    "etag", "last-modified", "retry-after",
+}
+
+
+def _is_ip(host: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_ips(host: str) -> set[str]:
+    """Resolve a hostname to its IP set (empty on failure). A literal IP resolves
+    to itself. Used to pin an endpoint's address at mint and detect rebinding."""
+    if not host:
+        return set()
+    if _is_ip(host):
+        return {host}
+    try:
+        infos = socket.getaddrinfo(host, None)
+        return {info[4][0] for info in infos}
+    except (socket.gaierror, OSError):
+        return set()
+
+
+def _validate_rel_path(path: str) -> str:
+    """A worker-supplied path must be relative and cannot pivot the target. Reject
+    an embedded scheme/authority, parent traversal, and control/escape chars."""
+    p = (path or "").strip()
+    if not p:
+        return ""
+    if "\x00" in p or "\\" in p:
+        raise HTTPException(status_code=400, detail="invalid characters in path")
+    if "://" in p or p.startswith("//"):
+        raise HTTPException(status_code=400, detail="path may not contain a scheme or authority")
+    if "@" in p.split("?", 1)[0]:
+        raise HTTPException(status_code=400, detail="path may not contain '@'")
+    # No parent traversal in the path portion (climbing above the base path).
+    path_part = p.split("?", 1)[0].split("#", 1)[0]
+    if any(seg == ".." for seg in path_part.split("/")):
+        raise HTTPException(status_code=400, detail="path may not contain '..'")
+    return p
+
+
+def _build_url(ep: EndpointGrant, path: str, query: dict | None) -> str:
+    """base_url + relative path (+ query), then assert the result still points at
+    the consented scheme+host+port — the worker cannot pivot off the endpoint."""
+    import urllib.parse
+
+    rel = _validate_rel_path(path)
+    joined = ep.base_url + ("/" + rel.lstrip("/") if rel else "")
+    if query:
+        qs = urllib.parse.urlencode({str(k): str(v) for k, v in query.items()})
+        if qs:
+            joined += ("&" if "?" in joined else "?") + qs
+    parts = urllib.parse.urlsplit(joined)
+    host = (parts.hostname or "").lower()
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    if parts.scheme != ep.scheme or host != ep.host or port != ep.port:
+        # Defense in depth: a validated relative path cannot get here, but never
+        # issue a call whose target host differs from the consented one.
+        raise HTTPException(status_code=400, detail="path resolves outside the consented endpoint host")
+    return joined
+
+
+def _inject_auth(ep: EndpointGrant, headers: dict, url: str) -> str:
+    """Resolve the endpoint's secret host-side and inject it. Returns the URL
+    (possibly with a query-auth param appended). The worker never sees the value."""
+    from backend.config import decrypt_value
+
+    auth = ep.auth or {}
+    atype = auth.get("type", "")
+    if not atype:
+        return url
+    ref = auth.get("secret_ref", "")
+    value = decrypt_value(f"${ref}") if ref else ""
+    if atype == "bearer":
+        headers["Authorization"] = f"Bearer {value}"
+    elif atype == "header":
+        fmt = auth.get("format") or "{value}"
+        headers[auth.get("header") or "Authorization"] = fmt.replace("{value}", value)
+    elif atype == "basic":
+        import base64 as _b64
+        user = decrypt_value(f"${auth['user_ref']}") if auth.get("user_ref") else auth.get("user", "")
+        token = _b64.b64encode(f"{user}:{value}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
+    elif atype == "query":
+        import urllib.parse
+        param = auth.get("param") or "token"
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{urllib.parse.urlencode({param: value})}"
+    return url
+
+
+class _HttpRequestPayload(BaseModel):
+    endpoint: str
+    method: str = "GET"
+    path: str = ""
+    query: dict | None = None
+    headers: dict | None = None
+    body: object = None  # str → sent as-is; dict/list → JSON-encoded
+
+
+@bridge_app.post("/api/_host/http/request")
+async def http_request(payload: _HttpRequestPayload, grant: BridgeGrant = Depends(_require_grant)):
+    import httpx
+
+    ep = grant.http_endpoints.get(payload.endpoint)
+    if ep is None:
+        raise HTTPException(status_code=403, detail=f"unknown or undeclared endpoint {payload.endpoint!r}")
+    method = (payload.method or "GET").upper()
+    if method not in ep.methods:
+        raise HTTPException(status_code=403, detail=f"method {method} not permitted on endpoint {ep.id!r}")
+
+    # DNS-rebind guard: an endpoint pinned to an address set at mint must still
+    # resolve to one of those addresses. A literal-IP endpoint has no DNS to
+    # rebind; an unresolvable-at-mint endpoint (empty pins) skips the check and
+    # relies on the host-lock in _build_url. (Connection-level IP pinning via a
+    # custom transport is a follow-up; this pre-flight check raises the bar now.)
+    if ep.pinned_ips and not _is_ip(ep.host):
+        current = _resolve_ips(ep.host)
+        if current and not (current & ep.pinned_ips):
+            raise HTTPException(
+                status_code=502,
+                detail=f"endpoint {ep.id!r} host resolves to an unpinned address; re-approve the endpoint",
+            )
+
+    # Sanitize worker headers, then inject host-owned auth (auth wins).
+    headers: dict[str, str] = {}
+    for k, v in (payload.headers or {}).items():
+        if str(k).lower() not in _FORBIDDEN_REQ_HEADERS:
+            headers[str(k)] = str(v)
+    url = _build_url(ep, payload.path, payload.query)
+    url = _inject_auth(ep, headers, url)
+
+    # Body: a string is sent verbatim; a dict/list is JSON-encoded (with a default
+    # content-type the worker can override via its own header).
+    content = None
+    if isinstance(payload.body, str):
+        content = payload.body.encode("utf-8")
+    elif payload.body is not None:
+        import json as _json
+        content = _json.dumps(payload.body).encode("utf-8")
+        headers.setdefault("Content-Type", "application/json")
+
+    try:
+        async with httpx.AsyncClient(verify=ep.verify_tls, timeout=HTTP_TIMEOUT, follow_redirects=False) as client:
+            resp = await client.request(method, url, headers=headers, content=content)
+            raw = resp.content
+    except httpx.HTTPError as e:
+        # A transport/timeout failure is returned as an error, not raised to a 500.
+        raise HTTPException(status_code=502, detail=f"upstream request failed: {type(e).__name__}")
+
+    truncated = len(raw) > MAX_HTTP_BYTES
+    raw = raw[:MAX_HTTP_BYTES]
+    # Text if it decodes as UTF-8; otherwise base64 with a flag.
+    content_encoding = None
+    try:
+        body_out = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        import base64 as _b64
+        body_out = _b64.b64encode(raw).decode("ascii")
+        content_encoding = "base64"
+
+    out_headers = {k.lower(): v for k, v in resp.headers.items() if k.lower() in _RESP_HEADER_ALLOW}
+    result = {"status": resp.status_code, "headers": out_headers, "body": body_out, "truncated": truncated}
+    if content_encoding:
+        result["content_encoding"] = content_encoding
+    return result
 
 
 # ── Loopback listener ─────────────────────────────────────────────────────────

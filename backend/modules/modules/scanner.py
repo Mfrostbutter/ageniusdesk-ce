@@ -74,6 +74,7 @@ _SECRET_PATH_MARKERS = (
 # bridge enforces path scoping regardless).
 _BRIDGE_ASSISTANT = "/api/_host/assistant/complete"
 _BRIDGE_NOTES = "/api/_host/notes/"
+_BRIDGE_HTTP = "/api/_host/http/request"
 
 # A "large opaque literal" heuristic: long strings that are pure base64/hex are a
 # common obfuscation carrier. Tuned to avoid flagging ordinary prose/templates.
@@ -454,6 +455,16 @@ class _FileScanner(ast.NodeVisitor):
                     )
                 else:
                     self._add("INFO", "host-bridge", node.lineno, "uses the host bridge assistant.complete")
+            elif _BRIDGE_HTTP in norm:
+                if not self.caps.host.http.enabled:
+                    self._add(
+                        "HIGH",
+                        "undeclared-host",
+                        node.lineno,
+                        "calls the host bridge http.request but the manifest does not declare host.http",
+                    )
+                else:
+                    self._add("INFO", "host-bridge", node.lineno, "uses the host bridge http.request")
             elif _BRIDGE_NOTES in norm:
                 self._add("INFO", "host-bridge", node.lineno, "uses the host notes bridge")
         self.generic_visit(node)
@@ -506,6 +517,25 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
         if key not in detected_env:
             _over(f"env var {key!r} declared but never read")
 
+    # http.request endpoints: surface each declared endpoint (transparency), and
+    # flag the security-relevant properties (mutating methods, disabled TLS verify)
+    # as INFO so they are visible in the report, not hidden in the manifest.
+    def _info(detail: str) -> None:
+        report.findings.append(
+            Finding(severity="INFO", category="host-bridge", file="manifest.json", line=0, detail=detail)
+        )
+
+    http_cap = caps.host.http
+    if http_cap.enabled:
+        for ep in http_cap.endpoints:
+            methods = ",".join(ep.methods)
+            _info(f"http endpoint {ep.id!r} → {ep.base_url} (methods: {methods})")
+            mutating = sorted(set(ep.methods) & {"POST", "PUT", "PATCH", "DELETE"})
+            if mutating:
+                _info(f"http endpoint {ep.id!r} permits mutating methods {mutating} (separate install consent)")
+            if not ep.verify_tls:
+                _info(f"http endpoint {ep.id!r} has verify_tls=false (self-signed TLS accepted)")
+
     report.declared_vs_detected = {
         "network": {
             "declared": caps.network.enabled,
@@ -519,6 +549,13 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
             "detected_writes": detected_writes,
         },
         "env": {"declared": sorted(declared_env), "detected": sorted(detected_env)},
+        "host": {
+            "assistant": caps.host.assistant,
+            "http_endpoints": [
+                {"id": ep.id, "base_url": ep.base_url, "methods": ep.methods, "verify_tls": ep.verify_tls}
+                for ep in caps.host.http.endpoints
+            ] if caps.host.http.enabled else [],
+        },
     }
 
     counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "INFO": 0}

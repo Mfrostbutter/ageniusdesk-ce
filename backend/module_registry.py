@@ -126,10 +126,68 @@ class FilesystemCapability(BaseModel):
     read_paths: list[str] = Field(default_factory=list)
 
 
+class HttpAuth(BaseModel):
+    # How the HOST injects credentials into an outbound http.request call. The
+    # module never sees the secret: it names a `secret_ref` (a key in the secret
+    # store), resolved host-side per call.
+    type: str = ""                 # bearer | header | basic | query | "" (none)
+    secret_ref: str = ""           # store key holding the credential value
+    header: str = "Authorization"  # for type=header
+    format: str = "{value}"        # for type=header, e.g. "PVEAPIToken={value}"
+    param: str = ""                # for type=query, the query param name
+    user: str = ""                 # for type=basic, literal username
+    user_ref: str = ""             # for type=basic, secret_ref holding the username
+
+
+class HttpEndpoint(BaseModel):
+    # One operator-consented outbound target. base_url + auth are host-owned; the
+    # worker supplies only a relative path + method/query/headers/body.
+    id: str
+    base_url: str
+    auth: HttpAuth | None = None
+    # Allowed methods. Default READ-ONLY; any mutating method is an explicit,
+    # separately-consented opt-in (see the http.request bridge spec §3/§6).
+    methods: list[str] = Field(default_factory=lambda: ["GET", "HEAD"])
+    verify_tls: bool = True
+
+    @field_validator("id")
+    @classmethod
+    def _validate_ep_id(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", v or ""):
+            raise ValueError(f"invalid endpoint id {v!r}: lowercase slug [a-z0-9_-], 1-64 chars")
+        return v
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, v: str) -> str:
+        if not re.match(r"^https?://[^/\s]+", v or ""):
+            raise ValueError(f"invalid base_url {v!r}: must be an http(s) URL")
+        return v.rstrip("/")
+
+    @field_validator("methods")
+    @classmethod
+    def _validate_methods(cls, v: list[str]) -> list[str]:
+        allowed = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}
+        out = [m.strip().upper() for m in (v or []) if m.strip()]
+        bad = [m for m in out if m not in allowed]
+        if bad:
+            raise ValueError(f"unsupported HTTP method(s): {bad}")
+        return out or ["GET", "HEAD"]
+
+
+class HttpBridgeCapability(BaseModel):
+    enabled: bool = False
+    endpoints: list[HttpEndpoint] = Field(default_factory=list)
+
+
 class HostBridgeCapability(BaseModel):
     # Host-bridge namespaces beyond notes the module may call under isolation.
     assistant: bool = False   # assistant.complete (tool-free LLM call; phase 4)
     broadcast: bool = False   # community:{id}: live events (future)
+    # http.request: host-mediated outbound HTTP with the credential injected
+    # host-side (the credential never enters the worker). See the http.request
+    # bridge spec.
+    http: HttpBridgeCapability = Field(default_factory=HttpBridgeCapability)
 
 
 class Capabilities(BaseModel):

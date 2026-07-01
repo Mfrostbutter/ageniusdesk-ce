@@ -1,6 +1,6 @@
 # Spec: Out-of-Process Backend Isolation for Community Modules
 
-Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass + a dedicated host-bridge pass (Copilot, `2026-06-27-host-bridge-review.md`, closed). LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). Host-bridge review fixes: symlink-resolved scope check (a vault symlink cannot redirect notes I/O out of scope), uninstall stops the worker + revokes its bridge token, worker spawn deferred to the lifespan after the bridge is listening (in a thread executor), per-write 1 MB cap, list endpoints skip symlinks, generic provider error to the worker, literal `__import__("backend")` now scanned. phase 6 (reference consumer youtube-research re-ported as a DUAL-MODE module on the bridge, verified live on 3066 in subprocess mode end to end). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: dual-mode operator UI + CHANGELOG/ROADMAP (7), supervised crash-restart watchdog (5.7), broadcast + container tier (8).
+Status: DRAFT, reviewed adversarially 5x (Codex) + a full-application pass + a dedicated host-bridge pass (Copilot, `2026-06-27-host-bridge-review.md`, closed). LANDED + pushed: prerequisite id fix, phase 1 (worker bootstrap + deps-only packaging), phase 2 (supervisor + reverse proxy), phase 3 (host capability bridge: loopback listener + per-module token store + scoped `notes.*` namespace; capability model gains `filesystem.read_paths` + `host.{assistant,broadcast}`), phase 4 (`assistant.complete`: a tool-free-by-construction LLM executor gated on `host.assistant`; host resolves the provider/key, the key never reaches the worker, the caller can't set the base URL, max_tokens clamped). phase 5 (scanner: `backend.*` host-import flipped INFO->HIGH "won't run isolated"; calling the bridge `assistant.complete` without declaring `host.assistant` is HIGH undeclared; declared bridge use is INFO). Host-bridge review fixes: symlink-resolved scope check (a vault symlink cannot redirect notes I/O out of scope), uninstall stops the worker + revokes its bridge token, worker spawn deferred to the lifespan after the bridge is listening (in a thread executor), per-write 1 MB cap, list endpoints skip symlinks, generic provider error to the worker, literal `__import__("backend")` now scanned. phase 6 (reference consumer youtube-research re-ported as a DUAL-MODE module on the bridge, verified live on 3066 in subprocess mode end to end). All default-off behind AGD_MODULE_ISOLATION (in_process). PENDING: dual-mode operator UI + CHANGELOG/ROADMAP (7), supervised crash-restart watchdog (5.7), broadcast + container tier (8), consented-secret tier + transactional grant store (9, spec `2026-06-30-consented-secret-tier.md`).
 Date: 2026-06-27
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition (host) + ageniusdesk-community-modules (reference consumer)
@@ -485,11 +485,19 @@ Extend `Capabilities` (in `backend/module_registry.py`):
   capability HIGH finding (same machinery as the network/fs diff today).
 - `isolation: "subprocess" | "container" | "in_process"` resolution is an
   **operator/host** decision, not a module self-declaration (a module cannot ask
-  to run in-process). Manifest may carry `min_app_version` to require the bridge.
+  to run in-process). It is **host-global** today (`_isolation_mode()`; per-module
+  is a later phase) — a fact the consented-secret tier (phase 9) inherits and must
+  be honest about. Manifest may carry `min_app_version` to require the bridge.
+- `worker_secrets: [{env, secret_ref, reason}]` (new, **phase 9**) - the credentials
+  a module must **hold in the worker** (vs the bridge's host-side model). Declared,
+  consented via a transactional grant store (§12), injected at spawn. Container-first;
+  under host-global subprocess mode it is gated behind a host-global override. Full
+  design in `2026-06-30-consented-secret-tier.md`.
 
-Scanner additions: detect bridge misuse, and (transition aid) downgrade
-`backend.*` host imports from INFO to a HIGH "will not run under isolation"
-finding once the contract flips.
+Scanner additions: detect bridge misuse; (transition aid) downgrade `backend.*` host
+imports from INFO to a HIGH "will not run under isolation" finding once the contract
+flips; and (phase 9) a HIGH finding per declared `worker_secrets` entry (a credential
+crosses into the worker), plus an INFO note for an empty `reason`.
 
 ## 7. Re-porting youtube-research (the reference)
 
@@ -609,9 +617,16 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
 
 ## 12. Data, schema, API, config changes
 
-- `Capabilities`: add `filesystem.read_paths`, `host.{assistant,broadcast}`.
+- `Capabilities`: add `filesystem.read_paths`, `host.{assistant,broadcast}`, and
+  (phase 9) `worker_secrets: [{env, secret_ref, reason}]`.
 - `RegistryEntry`: carry `isolation` mode + worker state (pid/health) for the UI.
 - New host bridge app + dispatcher + per-module token store (in-memory).
+- (Phase 9) New **`module_secret_grants`** table — the transactional consent grant
+  (`module_id → [{env, secret_ref}]`), written on operator consent, read by the
+  supervisor/container env builders at spawn. Distinct from the best-effort
+  `module_installs` **audit** row (which stays audit-only). Dropped on uninstall.
+- (Phase 9) Config: `AGD_ALLOW_WORKER_SECRETS_SUBPROCESS` (host-global, default off)
+  gating `worker_secrets` injection under the subprocess tier.
 - New worker bootstrap entrypoint as a top-level package OUTSIDE `backend` (e.g.
   `agd_module_worker/`), launched by path so process start does not import
   `backend` (Section 5.4). The loader (in `backend`, e.g. `backend/modules/
@@ -671,6 +686,22 @@ Explicit invitations to break it. Each is either mitigated or accepted-and-state
 7. Dual-mode flag, docs (honest matrix), CHANGELOG/ROADMAP, tests.
 8. (Later) `broadcast` namespace + the host->iframe WS relay (5.5c), then the
    container tier under the same bridge.
+9. (Later) **Consented-secret tier + the consent grant store.** The bridge keeps
+   credentials host-side; some modules must instead **hold** a credential in the
+   worker (native-wire protocols — IMAP/SMTP/Redis/Postgres — or an in-worker keyed
+   library like the Agent Fleet's LangSmith-traced ChatModel). This phase adds:
+   (a) a `capabilities.worker_secrets: [{env, secret_ref, reason}]` manifest surface;
+   (b) a **transactional consent grant store** (`module_secret_grants`, written on
+   consent, NOT the best-effort `module_installs` audit row) that the supervisor
+   reads at spawn; (c) resolve-at-spawn injection into the existing `injected` map in
+   both `supervisor._build_env` and `containers._injected_env` (no change to
+   `sandbox.build_worker_env` — injected is applied last, bypassing the allowlist
+   without widening it); (d) a scanner HIGH per declared secret; (e) a **host-level**
+   consent block, and a host-global `AGD_ALLOW_WORKER_SECRETS_SUBPROCESS` override
+   because the tier is host-global (§6). Container-first: held credentials belong in
+   a PID-namespaced container. **Full design: `2026-06-30-consented-secret-tier.md`.**
+   Its first customers are the Proxmox/homelab `in_process` fallbacks, the support-
+   ticketing IMAP fast-follow, and the Agent Fleet sandboxed migration (Option B).
 
 ## 14. Testing
 

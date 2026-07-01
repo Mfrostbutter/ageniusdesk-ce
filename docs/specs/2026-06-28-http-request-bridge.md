@@ -1,13 +1,41 @@
 # Spec: `http.request` host bridge capability
 
-Status: SPEC / proposed. Not committed to a release.
+Status: **CORE LANDED (2026-07-01)** on branch `feat/http-request-bridge`, behind the
+existing isolation flag. Shipped: the `host.http` capability model
+(`HttpAuth`/`HttpEndpoint`/`HttpBridgeCapability` in `module_registry.py`), the grant
+extension + `POST /api/_host/http/request` route in `bridge.py` (endpoint + method
+gating, relative-path validation + host-lock, host-side auth injection for
+`bearer`/`header`/`basic`/`query`, worker-header sanitation, redirects-off, response
+size cap + `truncated`, response-header allowlist, resolve-once-at-mint pins + a
+DNS-rebind pre-flight guard), the scanner rule (undeclared http.request → HIGH,
+declared → INFO, `verify_tls:false` + mutating methods surfaced), and `tests/
+test_http_bridge.py` (16 tests). Full suite green (285).
 
-Date: 2026-06-28
+**Deferred (NOT in this increment, tracked below):** operator-override of `base_url`
+at install + endpoint config *revisions* (endpoints are minted from the live manifest
+at spawn, same as the existing `write_paths`/`host.assistant` grants — the install-time
+override + revision store is the same host work as the consented-secret grant store,
+isolation-spec phase 9); **connection-level** IP pinning via a custom transport (the
+current guard is a resolve-once-at-mint + per-call re-resolve pre-flight check, which
+covers hostname rebinding; literal-IP base URLs — the homelab norm — have no DNS to
+rebind); streaming responses (§8, the HA prereq); operator-added dynamic endpoints
+(§9 v2); per-module rate limiting (§8). The module-side dual-mode `_host.http_request`
+SDK lives in the community-modules repo, not here.
+
+Date: 2026-06-28 (revised 2026-07-01: locked the endpoint model against the first
+consumers — dynamic endpoints deferred to v2, stateful/session auth ruled a
+non-goal, response-header allowlist locked; added the Consumers section; **then
+landed the core bridge**, see Status above).
 
 Related: `2026-06-28-community-module-candidates.md` (why this is the highest-leverage
 host investment), `2026-06-27-out-of-process-backend-isolation.md` (the isolation
 tiers + bridge this extends), `backend/modules/_runtime/bridge.py` (the surface to
-extend).
+extend). **Consumers grounding this spec:**
+`2026-06-30-proxmox-module.md` (flagship; the `PVEAPIToken` header, `verify_tls:false`,
+and the one-cluster-per-install finding that drove the endpoint-model lock below),
+`2026-06-30-support-ticketing-module.md` (reply-via-REST mail endpoint, a mutating
+POST), `2026-06-30-consented-secret-tier.md` (the complement: held credentials for
+the *non*-HTTP protocols this bridge deliberately does not cover).
 
 ## 1. Problem
 
@@ -176,8 +204,9 @@ On each `http/request` the host:
 6. **Makes the call** with httpx: `verify=endpoint.verify_tls`, a fixed connect/read
    **timeout** (e.g. 30s), **redirects disabled** (a 3xx is returned to the module
    as-is; following it could leak the credential to a redirected host).
-7. **Caps the response**: max body bytes (e.g. 5 MB) → `truncated`. Strips
-   `set-cookie` and the auth headers from the echoed response headers.
+7. **Caps the response**: max body bytes (e.g. 5 MB) → `truncated`. Echoes only the
+   **response-header allowlist** (§9 resolved #5); `set-cookie`, `www-authenticate`,
+   and the injected auth headers are always stripped, never returned to the worker.
 8. Returns `{status, headers, body, truncated}`. **Credentials never appear** in the
    returned request echo or response.
 
@@ -220,16 +249,45 @@ Qdrant, object storage (REST/SigV4), Uptime Kuma, **Proxmox**, **Home Assistant*
 reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, TrueNAS. This is the single host
 change that makes the Homelab Pack shippable as properly-isolated community modules.
 
+### 7.1 Consumers (what building these confirmed)
+
+Three consumer specs are now written against this bridge; each validated a piece of
+the contract and pushed one thing back:
+
+- **Proxmox** (`2026-06-30-proxmox-module.md`) — the flagship. Confirmed the `header`
+  auth type with `format: "PVEAPIToken={value}"` and `verify_tls:false` map cleanly.
+  Pushed back **two findings** now locked here: (a) the endpoint model is *one target
+  per declared endpoint per install* — the "add many clusters at runtime like n8n
+  instances" vision needs dynamic endpoints (§9, deferred to v2); (b) Proxmox realm
+  username/password login (ticket → cookie + CSRF) does **not** fit this bridge,
+  which crystallized the **stateful-auth non-goal** (§9).
+- **Support / ticketing** (`2026-06-30-support-ticketing-module.md`) — its reply path
+  option 2 is a `mail` endpoint using `bearer` auth with a mutating `POST`, exercising
+  the mutating-endpoint consent (§6). Confirms the read/write split works for a
+  send-only endpoint.
+- **Consented-secret tier** (`2026-06-30-consented-secret-tier.md`) — the deliberate
+  complement. This bridge covers credentials the **host can use on the module's
+  behalf over HTTP**. Credentials that must live **in the worker** (IMAP/SMTP/Redis/
+  Postgres wire, or an in-worker keyed library) are that tier's job, not this
+  bridge's. The two together cover the credential space; a module picks per-credential
+  (Proxmox: token via this bridge; a Redis monitor: AUTH password via the tier).
+
 ## 8. Phasing
 
 - **v1:** request/response only (the contract above). Covers all polling/REST use.
-- **Deferred:** streaming responses (SSE/chunked). Consequence: Home Assistant's
-  live WebSocket state cannot be relayed under isolation in v1 — the HA module polls
-  REST under isolation, or holds the WS only when `in_process`, until a streaming
-  bridge exists. Worth calling out in the HA module spec.
+  Endpoints are manifest-declared, one effective target per endpoint per install (§9).
+- **Deferred — streaming responses (SSE/chunked).** This is the **Home Assistant
+  prereq**: HA's live WebSocket state cannot be relayed under isolation until a
+  streaming bridge exists, so the HA module polls REST under isolation (or holds the
+  WS only when `in_process`) in the meantime. Tracked as its own future spec, not a
+  revision of this one.
+- **Deferred — dynamic / operator-added endpoints (v2, §9).** The Proxmox "one
+  cluster per install" limit is lifted by endpoint *instances* under a declared
+  endpoint *template*; specced at a high level in §9, built when a second consumer
+  needs many targets of one kind.
 - **Deferred:** per-module rate limiting / quota on the bridge.
 
-## 9. Resolved calls (2026-06-28) + remaining questions
+## 9. Resolved calls + remaining questions
 
 **Resolved (locked for build):**
 
@@ -242,13 +300,53 @@ change that makes the Homelab Pack shippable as properly-isolated community modu
 3. **DNS rebinding** — resolve-once-and-pin per endpoint config revision; an IP
    change fails closed pending explicit refresh/re-approval, never silently followed
    (principle 5, §5 step 5).
+4. **Endpoint cardinality — one target per declared endpoint per install (v1)**
+   *(locked 2026-07-01, driven by Proxmox §4).* A manifest declares a fixed set of
+   endpoints; each has exactly one effective target per install (the operator sets
+   its `base_url` + `secret_ref` value). A module that manages N targets of one kind
+   (N Proxmox clusters, N Cloudflare accounts) does **one install per target** in v1.
+   The worker names only the endpoint `id`. This keeps the grant, the pin, and the
+   consent one-to-one with a declared endpoint — the simplest thing that is safe.
+5. **Response headers — echo an allowlist, drop the rest** *(locked 2026-07-01)*.
+   Matching the env-scrub philosophy, the bridge echoes only a safe allowlist back to
+   the worker: `content-type`, `content-length`, `content-encoding`, `etag`,
+   `last-modified`, `retry-after`, and the `ratelimit-*` / `x-ratelimit-*` family.
+   Everything else is dropped; `set-cookie`, `www-authenticate`, and the injected
+   auth headers are **always** stripped (never echoed), as §5 step 7 already requires.
+6. **Stateful / session auth is a NON-GOAL** *(locked 2026-07-01, driven by Proxmox
+   §3).* The bridge injects **static, per-call** auth only (`bearer`/`header`/`basic`/
+   `query`, §3). It does **not** perform login round-trips that mint a session and
+   carry it forward: Proxmox `/access/ticket` → `PVEAuthCookie` + `CSRFPreventionToken`,
+   OAuth2 authorization-code / refresh-token dances, or anything requiring the bridge
+   to hold, refresh, and CSRF-echo session state. Those would turn the bridge into a
+   stateful auth client — a much larger surface and a different trust model. A module
+   needing them uses a **static API token** instead (the norm for Proxmox, Cloudflare,
+   HA, Pi-hole, etc.) or runs `in_process`. OAuth2 *client-credentials* (a POST to a
+   token endpoint for a short-lived bearer) is the one plausible future exception and
+   is noted below, not in v1.
+
+**Deferred to v2 — dynamic / operator-added endpoints (the shape).** Lift the
+one-per-install limit (resolved #4) with **endpoint instances under a declared
+endpoint template**: the manifest declares a *template* (the auth shape, allowed
+`methods`, `verify_tls` default, and a human label like "Proxmox cluster"); the
+operator **adds instances at runtime**, each its own `{base_url, secret_ref, pinned
+IP set, consent}` running the exact same endpoint-config-revision + pin + consent
+machinery as a declared endpoint does today. The worker then names **both** the
+endpoint (template) id **and** an instance id in the request. This is the clean path
+to "add a Proxmox cluster like you add an n8n instance" without weakening the
+per-target grant/pin/consent invariants. Build it when a second consumer needs many
+targets of one kind; until then, one install per target (resolved #4).
 
 **Still open:**
 
-- Multiple credentials per endpoint (e.g. basic auth user+pass as two refs).
-- Response header allowlist vs blocklist — which headers are safe to echo back.
-- Pinned-IP refresh UX: where the "re-approve endpoint" action lives (module manager
-  vs a Fleet-Health-style banner) when a pinned host's address changes.
+- **Multiple credentials per endpoint** (e.g. `basic` auth user + pass as two refs, or
+  a body-signing key alongside a header token). Today `auth` resolves one `secret_ref`.
+- **OAuth2 client-credentials token exchange** as a future auth `type` (bridge does the
+  token POST, caches the short-lived bearer host-side, injects it). Plausible extension
+  of the static-auth model without the full stateful-session surface non-goal #6 rules
+  out. Not v1.
+- **Pinned-IP refresh UX:** where the "re-approve endpoint" action lives (module
+  manager vs a Fleet-Health-style banner) when a pinned host's address changes.
 
 ## 10. Testing
 
@@ -256,6 +354,9 @@ change that makes the Homelab Pack shippable as properly-isolated community modu
   gate (default GET/HEAD only; a mutating method 403s unless the effective config
   opted in); header sanitation drops `Authorization`/`Host`/`Cookie`; auth injection
   per `type`; response size cap + truncation; redirect returned-not-followed.
+- Unit: the response-header **allowlist** (§9 #5) — an allowed header (e.g.
+  `retry-after`, `x-ratelimit-remaining`) is echoed; a non-listed header and
+  `set-cookie`/`www-authenticate`/the injected auth header are all dropped.
 - Unit: connection targets a pinned IP; a host that resolves to a non-pinned IP fails
   closed with the re-approve error rather than connecting to the new address.
 - Unit: effective config (not manifest) is the runtime source of truth — a manifest

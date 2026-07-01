@@ -44,7 +44,7 @@ only the host can close them:
 2. **Fleet Health is n8n-only.** `fleet_health()` lives in `n8n_proxy` and
    aggregates n8n instances. There is **no contribution API** for a module to
    publish a health row, so every "folds into Fleet Health" claim needs a new host
-   extension point first. (Future investment — not yet specced.)
+   extension point first. (Now specced: `2026-07-01-fleet-health-contribution-api.md`.)
 3. **No dependency install.** Restatement of Fact 1 as a host gap: there is no
    requirements step in the installer.
 
@@ -105,8 +105,10 @@ Docker/Portainer, NAS health (TrueNAS), Uptime Kuma, Cloudflare, Home Assistant.
    `in_process`-only into safe-under-isolation. **Highest leverage; spec at
    `2026-06-28-http-request-bridge.md`.**
 2. **Fleet Health contribution API** — a registry where a loaded module publishes
-   `{label, status, metrics}` rows that `fleet_health()` merges, so module health
-   actually renders in the pane the pack is pitched around. (Not yet specced.)
+   `{label, status, metrics}` rows that the roll-up merges, so module health
+   actually renders in the pane the pack is pitched around. (Specced:
+   `2026-07-01-fleet-health-contribution-api.md` — pull-over-proxy, degraded-not-fatal,
+   the `health/` builtin becomes the aggregator.)
 
 Redis/Postgres additionally need a **dependency policy** (vendor / optional extra
 like the `langgraph` extra / operator-installs) before they are clean — part of why
