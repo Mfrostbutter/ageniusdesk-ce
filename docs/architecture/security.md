@@ -42,9 +42,22 @@ The legacy machine-ingest endpoints `/api/errors/webhook` and `/api/messages/web
 - **JS static route.** `serve_js()` in `main.py` resolves the requested path against the `frontend/js` root, rejects anything that escapes the root (`relative_to` raises), and serves only `.js` files. Used so the import cache-busting rewrite cannot be turned into an arbitrary-file read.
 - **Themes.** Theme IDs are validated, theme paths are resolved under known theme roots only, custom theme names are slugified before saving, and a theme must exist before it can be activated (`backend/modules/themes/router.py`).
 
-### Ollama probe SSRF guard
+### Server-side-fetch SSRF guard
 
-When the server fetches an operator-supplied Ollama URL (model listing, connection test), `assert_safe_probe_url()` in `backend/modules/assistant/providers.py` validates it first. Loopback and private/LAN ranges stay allowed because Ollama legitimately runs there, but it resolves the hostname and blocks the cloud metadata service and link-local space (`169.254.0.0/16`, `fe80::/10`), multicast, and reserved/unspecified addresses. On a failed test the fetched response body is not reflected back to the caller, so the probe cannot be used as an SSRF read primitive.
+When the server fetches an operator-supplied URL, `assert_safe_probe_url()` (`backend/modules/assistant/providers.py`) validates it first. Loopback and private/LAN ranges stay allowed because self-hosted services (Ollama, MCP servers) legitimately run there, but it resolves the hostname and blocks the cloud metadata service and link-local space (`169.254.0.0/16`, `fe80::/10`), multicast, and reserved/unspecified addresses. It guards:
+
+- the Ollama URL (model listing, connection test) — on a failed test the fetched body is not reflected, so the probe is not an SSRF read primitive;
+- **every MCP management fetch** (add/test/discover/execute), routed through the shared `_normalize_mcp_urls` chokepoint in `backend/modules/assistant/mcp_client.py`, so a caller cannot point an MCP server URL at metadata/link-local/reserved space. This closed a viewer-reachable SSRF where MCP responses were reflected back (see #2 in the 2026-07-01 review).
+
+The operator-supplied n8n instance URL and the knowledge/RAG fetch paths are noted follow-ups for the same guard (Medium findings #6/#7 in the review).
+
+### Agent Fleet code execution is admin-gated
+
+Registering or viewing a vault agent imports and executes operator-authored `graph.py` in-process (full data/credential access, mounted Docker socket), so there is no safe read subset. The whole `/api/agent-fleet` router requires `require_role("admin")` (`backend/modules/agent_fleet/router.py`) rather than merely an authenticated identity.
+
+### Markdown rendering escapes first
+
+LLM/agent/MCP/RAG output can carry attacker-influenced HTML. The hand-rolled markdown renderers (`assistant.js`, `errors.js`, `codelab.js`) HTML-escape before their inline regex transforms and drop non-`http(s)` link hrefs (blocking `javascript:`); the Agent Fleet view sanitizes `marked` output with DOMPurify and fails safe to escaped text if the sanitizer can't load. The shared error item was hardened in v0.4.0.
 
 ### CSRF
 
@@ -95,7 +108,7 @@ Login policy knobs (`AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, the `
 |---|---|
 | Docker socket access | Root-equivalent by design. Only mount the socket where every console user is a fully-trusted admin |
 | Community modules | Backend accepted, frontend sandboxed. The backend runs Python in-process (full data and credential access); install only from sources you trust. The frontend is isolated: a community view runs in an `iframe` with `allow-scripts` but NOT `allow-same-origin`, so it cannot read or change the host DOM, `window`, cookies, or storage, and it reaches the host only through a postMessage bridge whitelisted to same-origin `/api/` fetches (auth and CSRF added host-side), `notify`, `navigate`, and `openInHarness`. On top of that, a two-phase inspect/install flow runs a static AST scan and requires consent proportional to severity (CRITICAL: type the id, HIGH: acknowledge) and records an audit row; a static scan is a heuristic, not a boundary, and cannot follow obfuscation, runtime-fetched code, or dynamic imports. Out-of-process backend isolation is the remaining deferred boundary. See [Module System](modules.md) |
-| No automated regression suite for auth paths | `pytest` collected 0 tests at review time; auth-middleware, edge-trust, webhook-token, and traversal tests are a noted follow-up |
+| Regression coverage | A `pytest` suite (~280 tests) now covers the security-relevant paths: router RBAC floors, edge/auth trust, webhook tokens, traversal, the SSRF guard, error-item XSS, and the four 2026-07-01 High fixes (`tests/test_router_rbac.py`, `test_security_hardening.py`, `test_assistant_authz_ssrf.py`, `test_high_severity_fixes.py`, `test_error_item_xss.py`). Coverage of the open Medium/Low findings is the remaining follow-up |
 | Legacy `enc:` secret format | Unauthenticated XOR-stream, kept only for decryption/migration; re-save migrates to Fernet |
 
 ## Deployment hardening checklist (public bind)

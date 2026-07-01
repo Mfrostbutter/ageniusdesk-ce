@@ -4,6 +4,14 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+### Security
+- **Four high-severity findings from the full security review are fixed** (`docs/code-review/2026-07-01-full-security-review.md`), all reachable by the read-only **viewer** role or by an operator escalating to host root:
+  - **Agent Fleet in-process code execution is now admin-only.** Registering or viewing a vault agent imports and executes operator-authored `graph.py` in-process, so the whole `/api/agent-fleet` router was raised from "any authenticated identity" to `require_role("admin")`. There is no safe read subset.
+  - **MCP server management SSRF closed.** The `/api/mcp` management router now requires the **operator** role, and every server-side MCP fetch runs its URL through the shared `assert_safe_probe_url` guard (in `_normalize_mcp_urls`), blocking cloud-metadata / link-local / reserved targets while still allowing self-hosted MCP on localhost/LAN.
+  - **Docker community-template JSON injection closed.** Template field substitution now runs only on the parsed config object's string leaves, so a field value containing quotes or braces can only land as a string; it can no longer inject `HostConfig` / `Privileged` / bind mounts to reach host root.
+  - **DOM XSS in the markdown renderers closed.** The hand-rolled renderers (`assistant.js`, `errors.js`, `codelab.js`) now HTML-escape before their inline transforms and drop non-`http(s)` link hrefs; the Agent Fleet view sanitizes `marked` output with DOMPurify, failing safe to escaped text. This is the path LLM/agent/MCP/RAG output flows through.
+  - Covered by regression tests in `tests/test_high_severity_fixes.py` and `tests/test_assistant_authz_ssrf.py`. Medium/Low findings from the same review remain open and tracked in the review doc.
+
 ### Added
 - **Configurable error-reporting window on the Overview.** A persistent lookback picker (24h / 7d / 30d / 90d / All time, default 30 days), on the Recent Errors widget and in Settings > Error Handler, now drives the whole Overview together: the Recent Errors feed, the Failure Rate card, and the Executions card all report over the chosen window, and the Errors view's range selector uses the same setting. The two execution cards mirror the Insights view (one shared, cached aggregator), so the Overview and Insights always agree: Executions shows the windowed run total with an "N ok, M err, K running" breakdown, and Failure Rate shows n8n's failed-execution rate reconciled against the local error log ("M failed, N in log"), so it is never 0% while errors are listed. The Insights API gained `90d` and `all` ranges, and counting "all" errors no longer narrows to 24h.
 
