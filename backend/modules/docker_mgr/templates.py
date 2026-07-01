@@ -490,6 +490,45 @@ TEMPLATES_BY_ID: dict[str, Template] = {t.id: t for t in TEMPLATES}
 # ── Community template loader ─────────────────────────────────────────────────
 
 
+class UnsafeTemplateError(ValueError):
+    """A community template declares a host-escaping HostConfig."""
+
+
+# HostConfig fields that make a container host-root-equivalent. Community
+# templates are plain JSON dropped under data/templates/ (not authored through
+# an authenticated route), so one file must not be able to declare a privileged
+# / host-mounted / host-namespace container. Built-in templates are trusted and
+# skip this check. Because field substitution is leaf-only (see _apply_subs),
+# these keys can only be set by the template author, so validating the authored
+# config at load time is sufficient.
+def _assert_safe_community_hostconfig(config: dict, where: str) -> None:
+    hc = config.get("HostConfig") if isinstance(config, dict) else None
+    if not isinstance(hc, dict):
+        return
+
+    def _is_host_or_container(v) -> bool:
+        s = str(v or "").lower()
+        return s == "host" or s.startswith("container:")
+
+    if hc.get("Privileged"):
+        raise UnsafeTemplateError(f"{where}: HostConfig.Privileged is not allowed")
+    for key in ("Binds", "Devices", "DeviceRequests", "DeviceCgroupRules",
+                "CapAdd", "GroupAdd", "Sysctls", "CgroupParent"):
+        if hc.get(key):
+            raise UnsafeTemplateError(f"{where}: HostConfig.{key} is not allowed")
+    # Bind-type entries in the structured Mounts list are host mounts too.
+    for m in hc.get("Mounts") or []:
+        if isinstance(m, dict) and str(m.get("Type", "")).lower() == "bind":
+            raise UnsafeTemplateError(f"{where}: bind Mounts are not allowed")
+    for mode_key in ("PidMode", "NetworkMode", "IpcMode", "UTSMode",
+                     "UsernsMode", "CgroupnsMode"):
+        if _is_host_or_container(hc.get(mode_key)):
+            raise UnsafeTemplateError(f"{where}: HostConfig.{mode_key}={hc[mode_key]!r} is not allowed")
+    for opt in hc.get("SecurityOpt") or []:
+        if "unconfined" in str(opt).lower() or "disable" in str(opt).lower():
+            raise UnsafeTemplateError(f"{where}: SecurityOpt {opt!r} is not allowed")
+
+
 def _apply_subs(obj, subs: dict[str, str]):
     """Recursively substitute `{key}` placeholders in the STRING LEAVES of an
     already-parsed JSON structure.
@@ -664,6 +703,21 @@ def load_community_templates() -> list[Template]:
             is_bundle = "containers" in data
             bundle_id_marker = data["id"] if is_bundle else None
             auto_secrets = list(data.get("auto_secrets", []) or [])
+
+            # Reject host-escaping HostConfig before the template reaches the UI.
+            try:
+                if is_bundle:
+                    for entry in data.get("containers", []):
+                        _assert_safe_community_hostconfig(
+                            entry.get("config", {}), f"{path.name}:{entry.get('name', '?')}"
+                        )
+                else:
+                    _assert_safe_community_hostconfig(
+                        data.get("container_config", {}), path.name
+                    )
+            except UnsafeTemplateError as exc:
+                logger.warning("Skipping unsafe community template %s: %s", path.name, exc)
+                continue
 
             # Validate bundle shape at load time so a malformed template never
             # reaches the UI. We call the builder with empty fields to materialise

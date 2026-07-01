@@ -125,3 +125,91 @@ def test_notes_snippet_is_escaped():
     assert "function escapeSnippet" in src
     # The restore must target the FTS5 highlight tags specifically.
     assert "&lt;mark&gt;" in src and "&lt;/mark&gt;" in src
+
+
+# ── #5 inspect redacts secret env ────────────────────────────────────────────
+
+
+def test_inspect_redacts_secret_env():
+    from backend.modules.docker_mgr.router import _redact_inspect
+
+    info = {
+        "Config": {
+            "Env": [
+                "NODE_ENV=production",
+                "TZ=UTC",
+                "N8N_ENCRYPTION_KEY=super-secret",
+                "POSTGRES_PASSWORD=hunter2",
+                "SOME_TOKEN=abc123",
+                "DB_DSN=postgres://user:pass@db:5432/app",
+                "PLAIN_URL=http://example.com/health",
+            ]
+        }
+    }
+    env = dict(e.split("=", 1) for e in _redact_inspect(info)["Config"]["Env"])
+    assert env["NODE_ENV"] == "production"
+    assert env["TZ"] == "UTC"
+    assert env["PLAIN_URL"] == "http://example.com/health"  # no inline creds
+    assert env["N8N_ENCRYPTION_KEY"] == "<redacted>"
+    assert env["POSTGRES_PASSWORD"] == "<redacted>"
+    assert env["SOME_TOKEN"] == "<redacted>"
+    assert env["DB_DSN"] == "<redacted>"  # scheme://user:pass@ connection string
+
+
+# ── #9 community-template HostConfig allowlist ───────────────────────────────
+
+
+def _write_template(dirpath, name, data):
+    import json
+
+    (dirpath / name).write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_unsafe_community_template_rejected(tmp_path, monkeypatch):
+    from backend.modules.docker_mgr import templates
+
+    monkeypatch.setattr(templates, "COMMUNITY_TEMPLATE_DIR", tmp_path)
+
+    safe = {
+        "id": "safe-tpl", "name": "Safe", "image": "nginx",
+        "fields": [{"id": "port", "type": "number", "default": 8080}],
+        "container_config": {"Image": "nginx", "HostConfig": {"PortBindings": {}}},
+    }
+    privileged = {
+        "id": "priv-tpl", "name": "Privileged", "image": "nginx",
+        "container_config": {"Image": "nginx", "HostConfig": {"Privileged": True}},
+    }
+    host_bind = {
+        "id": "bind-tpl", "name": "HostBind", "image": "nginx",
+        "container_config": {"Image": "nginx", "HostConfig": {"Binds": ["/:/host:rw"]}},
+    }
+    pid_host = {
+        "id": "pid-tpl", "name": "PidHost", "image": "nginx",
+        "container_config": {"Image": "nginx", "HostConfig": {"PidMode": "host"}},
+    }
+    _write_template(tmp_path, "safe.json", safe)
+    _write_template(tmp_path, "priv.json", privileged)
+    _write_template(tmp_path, "bind.json", host_bind)
+    _write_template(tmp_path, "pid.json", pid_host)
+
+    loaded = {t.id for t in templates.load_community_templates()}
+    assert "safe-tpl" in loaded
+    assert "priv-tpl" not in loaded
+    assert "bind-tpl" not in loaded
+    assert "pid-tpl" not in loaded
+
+
+def test_unsafe_bundle_entry_rejected(tmp_path, monkeypatch):
+    from backend.modules.docker_mgr import templates
+
+    monkeypatch.setattr(templates, "COMMUNITY_TEMPLATE_DIR", tmp_path)
+    bundle = {
+        "id": "bundle-tpl", "name": "Bundle", "image": "",
+        "containers": [
+            {"name": "web", "config": {"Image": "nginx"}, "role": "service"},
+            {"name": "bad", "config": {"Image": "x", "HostConfig": {"Privileged": True}}},
+        ],
+    }
+    _write_template(tmp_path, "bundle.json", bundle)
+    loaded = {t.id for t in templates.load_community_templates()}
+    assert "bundle-tpl" not in loaded

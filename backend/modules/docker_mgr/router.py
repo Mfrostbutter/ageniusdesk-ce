@@ -226,11 +226,49 @@ def _public_host_from_request(request: Request) -> str:
 
 # ── Inspect ───────────────────────────────────────────────────────────────────
 
+# Env var names whose VALUE is redacted in the inspect response. Substring match,
+# case-insensitive. A `docker inspect` dumps Config.Env in cleartext, so any
+# container's N8N_ENCRYPTION_KEY / POSTGRES_PASSWORD etc. would otherwise be
+# readable by every operator (and end up in screenshots/logs). Operators are
+# trusted Docker admins by design (see docs/architecture/security.md), so this is
+# defense-in-depth, not a boundary: the true value is still on the host.
+_SECRET_ENV_HINTS = (
+    "password", "passwd", "secret", "token", "apikey", "api_key", "accesskey",
+    "access_key", "private", "credential", "encryption_key", "_key", "auth",
+    "dsn", "passphrase", "signing", "webhook_token",
+)
+_REDACTED = "<redacted>"
+
+
+def _redact_env_value(name: str, value: str) -> str:
+    lname = name.lower()
+    if any(hint in lname for hint in _SECRET_ENV_HINTS):
+        return _REDACTED
+    # Connection strings that carry inline credentials (scheme://user:pass@host).
+    if "://" in value and "@" in value.split("://", 1)[1].split("/", 1)[0]:
+        return _REDACTED
+    return value
+
+
+def _redact_inspect(info: dict) -> dict:
+    """Redact secret-looking Config.Env values in a docker-inspect payload."""
+    config = info.get("Config")
+    if isinstance(config, dict) and isinstance(config.get("Env"), list):
+        redacted = []
+        for item in config["Env"]:
+            if isinstance(item, str) and "=" in item:
+                name, value = item.split("=", 1)
+                redacted.append(f"{name}={_redact_env_value(name, value)}")
+            else:
+                redacted.append(item)
+        config["Env"] = redacted
+    return info
+
 
 @router.get("/{container_id}/inspect")
 async def inspect(container_id: str):
     try:
-        return await docker.inspect_container(container_id)
+        return _redact_inspect(await docker.inspect_container(container_id))
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
