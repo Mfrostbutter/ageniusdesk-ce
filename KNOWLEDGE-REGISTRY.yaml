@@ -20,6 +20,12 @@ read_first:
     note: Dev setup (Docker override or bare metal), code style (ruff, vanilla JS), PR guidelines.
   - path: docs/architecture/modules.md
     note: The backend module contract in depth; auto-discovery, manifests, version gating, community modules. Summarized in the CLAUDE.md "Module System" section.
+  - path: docs/architecture/security.md
+    note: Security architecture; SSRF/TLS chokepoints, RBAC floors, capability scanner, secret resolution. Read before touching anything that makes outbound HTTP or handles auth.
+  - path: backend/net.py
+    note: Shared network-safety helpers (assert_safe_probe_url, tls_verify). The mandatory chokepoint for module code probing user-supplied URLs.
+  - path: docs/code-review/2026-07-01-cross-module-review.md
+    note: Cross-module security review record; which chokepoints exist, which review items were assessed no-change, and accepted/deferred debt.
 
 hard_rules:
   - rule: Backend modules are self-contained; each backend/modules/{id}/ exposes a FastAPI `router` plus a manifest.json and is auto-discovered and mounted at /api/{id}/.
@@ -34,6 +40,10 @@ hard_rules:
     ref: CONTRIBUTING.md (Code Style)
   - rule: All new source files are MIT licensed; contributions are accepted under MIT.
     ref: CLAUDE.md (Conventions) and CONTRIBUTING.md (License)
+  - rule: Module code that fetches a user-supplied or instance-configured URL must route through backend/net.py (assert_safe_probe_url for SSRF, tls_verify for TLS); never call httpx on raw input directly.
+    ref: backend/net.py and docs/architecture/security.md
+  - rule: Community-module manifests must declare their capabilities (e.g. "docker" for docker/aiodocker imports or docker.sock access); the install scanner flags undeclared capability use as HIGH severity.
+    ref: docs/architecture/modules.md and docs/architecture/security.md
 
 tools_integrations:
   - name: n8n-mcp
