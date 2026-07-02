@@ -12,10 +12,10 @@ from backend.modules.errors.router import install_handler_into
 
 @respx.mock
 async def test_install_handler_creates_and_activates():
-    inst = {"url": "http://n.test", "api_key": "k"}
-    respx.get("http://n.test/api/v1/workflows").mock(return_value=httpx.Response(200, json={"data": []}))
-    create = respx.post("http://n.test/api/v1/workflows").mock(return_value=httpx.Response(200, json={"id": "wf99"}))
-    act = respx.post("http://n.test/api/v1/workflows/wf99/activate").mock(return_value=httpx.Response(200, json={}))
+    inst = {"url": "http://127.0.0.1:9088", "api_key": "k"}
+    respx.get("http://127.0.0.1:9088/api/v1/workflows").mock(return_value=httpx.Response(200, json={"data": []}))
+    create = respx.post("http://127.0.0.1:9088/api/v1/workflows").mock(return_value=httpx.Response(200, json={"id": "wf99"}))
+    act = respx.post("http://127.0.0.1:9088/api/v1/workflows/wf99/activate").mock(return_value=httpx.Response(200, json={}))
 
     out = await install_handler_into(inst, dashboard_url="http://10.0.0.1:3066")
 
@@ -28,11 +28,11 @@ async def test_install_handler_creates_and_activates():
 
 @respx.mock
 async def test_install_handler_idempotent_when_present():
-    inst = {"url": "http://n.test", "api_key": "k"}
-    respx.get("http://n.test/api/v1/workflows").mock(return_value=httpx.Response(200, json={"data": [
+    inst = {"url": "http://127.0.0.1:9088", "api_key": "k"}
+    respx.get("http://127.0.0.1:9088/api/v1/workflows").mock(return_value=httpx.Response(200, json={"data": [
         {"id": "x", "name": "Global Error Handler → AgeniusDesk", "active": True},
     ]}))
-    create = respx.post("http://n.test/api/v1/workflows").mock(return_value=httpx.Response(200, json={"id": "nope"}))
+    create = respx.post("http://127.0.0.1:9088/api/v1/workflows").mock(return_value=httpx.Response(200, json={"id": "nope"}))
 
     out = await install_handler_into(inst)
 
@@ -44,8 +44,8 @@ async def test_install_handler_idempotent_when_present():
 
 @respx.mock
 async def test_install_handler_auth_failure_is_soft():
-    inst = {"url": "http://n.test", "api_key": "bad"}
-    respx.get("http://n.test/api/v1/workflows").mock(return_value=httpx.Response(401))
+    inst = {"url": "http://127.0.0.1:9088", "api_key": "bad"}
+    respx.get("http://127.0.0.1:9088/api/v1/workflows").mock(return_value=httpx.Response(401))
 
     out = await install_handler_into(inst)
 

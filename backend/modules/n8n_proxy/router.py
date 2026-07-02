@@ -253,7 +253,7 @@ class TestCredsRequest(BaseModel):
 @router.post("/test-creds")
 async def test_creds(req: TestCredsRequest):
     """Test a URL+API-key pair without saving. Used by the setup wizard."""
-    from backend.modules.assistant.providers import UnsafeProbeURL, assert_safe_probe_url
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
     url = req.url.rstrip("/")
     # SSRF floor: block cloud-metadata / link-local / reserved targets so the

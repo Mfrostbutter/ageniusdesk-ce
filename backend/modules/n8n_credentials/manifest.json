@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Mirror AgeniusDesk secrets into n8n credential stores across instances.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/n8n-credentials",
   "builtin": true
 }

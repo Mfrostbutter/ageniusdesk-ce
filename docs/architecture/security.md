@@ -44,12 +44,14 @@ The legacy machine-ingest endpoints `/api/errors/webhook` and `/api/messages/web
 
 ### Server-side-fetch SSRF guard
 
-When the server fetches an operator-supplied URL, `assert_safe_probe_url()` (`backend/modules/assistant/providers.py`) validates it first. Loopback and private/LAN ranges stay allowed because self-hosted services (Ollama, MCP servers) legitimately run there, but it resolves the hostname and blocks the cloud metadata service and link-local space (`169.254.0.0/16`, `fe80::/10`), multicast, and reserved/unspecified addresses. It guards:
+When the server fetches an operator-supplied URL, `assert_safe_probe_url()` validates it first. It lives in the shared `backend/net.py` (alongside `tls_verify()`), so every module calls the one guard rather than cross-importing from `assistant`. Loopback and private/LAN ranges stay allowed because self-hosted services (Ollama, MCP servers, Qdrant, LAN n8n) legitimately run there, but it resolves the hostname and blocks the cloud metadata service and link-local space (`169.254.0.0/16`, `fe80::/10`), multicast, and reserved/unspecified addresses. It guards:
 
-- the Ollama URL (model listing, connection test) — on a failed test the fetched body is not reflected, so the probe is not an SSRF read primitive;
-- **every MCP management fetch** (add/test/discover/execute), routed through the shared `_normalize_mcp_urls` chokepoint in `backend/modules/assistant/mcp_client.py`, so a caller cannot point an MCP server URL at metadata/link-local/reserved space. This closed a viewer-reachable SSRF where MCP responses were reflected back (see #2 in the 2026-07-01 review).
+- the Ollama URL and the `custom`-provider / RAG Qdrant URLs (model listing, connection test) — on a failed test the fetched body is not reflected, so the probe is not an SSRF read primitive;
+- **every MCP management fetch** (add/test/discover/execute), routed through the shared `_normalize_mcp_urls` chokepoint in `backend/modules/assistant/mcp_client.py`;
+- **every n8n connect path** (create instance / setup wizard / test-creds), routed through the shared `test_connection_with` chokepoint in `backend/modules/n8n_proxy/client.py`, plus the error-handler install and credential-schema fetches;
+- **the knowledge Qdrant source URL** (`backend/modules/knowledge/backends.py`), which also stopped reflecting the target's response body on error.
 
-The operator-supplied n8n instance URL and the knowledge/RAG fetch paths are noted follow-ups for the same guard (Medium findings #6/#7 in the review).
+The 2026-07-01 cross-module review closed the remaining uneven-coverage cases (findings S1/S2/S5/S6/S7) at these shared chokepoints. Outbound TLS verification is likewise centralized: `tls_verify()` (honoring `AGD_TLS_VERIFY`) is threaded through the assistant provider, RAG, and knowledge httpx clients so the flag behaves the same everywhere.
 
 ### Agent Fleet code execution is admin-gated
 
@@ -65,7 +67,9 @@ LLM/agent/MCP/RAG output can carry attacker-influenced HTML. The hand-rolled mar
 
 ### RBAC and identity
 
-`current_user()` resolves identity in precedence order: local session cookie, then trusted edge header, then admin token (`AGD_ADMIN_TOKEN`, constant-time compared). Roles are ranked viewer < operator < admin; `require_role(min_role)` builds a dependency that 401s on no identity and 403s on insufficient role, and is a no-op on an open install. See [Authentication & RBAC](auth.md).
+`current_user()` resolves identity in precedence order: local session cookie, then trusted edge header, then admin token (`AGD_ADMIN_TOKEN`, constant-time compared). Roles are ranked viewer < operator < admin; `require_role(min_role)` builds a dependency that 401s on no identity and 403s on insufficient role, and is a no-op on an open install. It is the single floor primitive across every module (the module manager was moved off the older `require_trusted_request` for parity). See [Authentication & RBAC](auth.md).
+
+Login throttling covers **both factors**: the password step does not reset the per-username+IP lockout counter when TOTP is enabled, and `/api/auth/login/totp` records failed codes and checks the lockout, so a wrong-code loop trips the same lockout as password guessing rather than running unbounded (2026-07-01 cross-module finding S3).
 
 ### Secret handling
 
@@ -108,7 +112,7 @@ Login policy knobs (`AGD_LOGIN_MAX_ATTEMPTS`, `AGD_LOGIN_LOCKOUT_MINUTES`, the `
 |---|---|
 | Docker socket access | Root-equivalent by design. Only mount the socket where every console user is a fully-trusted admin |
 | Community modules | Backend accepted, frontend sandboxed. The backend runs Python in-process (full data and credential access); install only from sources you trust. The frontend is isolated: a community view runs in an `iframe` with `allow-scripts` but NOT `allow-same-origin`, so it cannot read or change the host DOM, `window`, cookies, or storage, and it reaches the host only through a postMessage bridge whitelisted to same-origin `/api/` fetches (auth and CSRF added host-side), `notify`, `navigate`, and `openInHarness`. On top of that, a two-phase inspect/install flow runs a static AST scan and requires consent proportional to severity (CRITICAL: type the id, HIGH: acknowledge) and records an audit row; a static scan is a heuristic, not a boundary, and cannot follow obfuscation, runtime-fetched code, or dynamic imports. Out-of-process backend isolation is the remaining deferred boundary. See [Module System](modules.md) |
-| Regression coverage | A `pytest` suite (~280 tests) now covers the security-relevant paths: router RBAC floors, edge/auth trust, webhook tokens, traversal, the SSRF guard, error-item XSS, and the four 2026-07-01 High fixes (`tests/test_router_rbac.py`, `test_security_hardening.py`, `test_assistant_authz_ssrf.py`, `test_high_severity_fixes.py`, `test_error_item_xss.py`). Coverage of the open Medium/Low findings is the remaining follow-up |
+| Regression coverage | A `pytest` suite (~280 tests) now covers the security-relevant paths: router RBAC floors, edge/auth trust, webhook tokens, traversal, the SSRF guard, error-item XSS, the four 2026-07-01 High fixes, and the cross-module remediation (shared SSRF/TLS guard, second-factor throttle, module-manager floor) (`tests/test_router_rbac.py`, `test_security_hardening.py`, `test_assistant_authz_ssrf.py`, `test_high_severity_fixes.py`, `test_error_item_xss.py`, `test_review_medium_low.py`, `test_cross_module_review.py`) |
 | Legacy `enc:` secret format | Unauthenticated XOR-stream, kept only for decryption/migration; re-save migrates to Fernet |
 
 ## Deployment hardening checklist (public bind)

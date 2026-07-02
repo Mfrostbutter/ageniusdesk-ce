@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Local markdown notes with full-text search and backlinks.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/notes",
   "builtin": true,
   "frontend": {

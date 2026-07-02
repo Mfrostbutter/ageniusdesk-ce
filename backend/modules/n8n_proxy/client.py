@@ -261,8 +261,16 @@ async def test_connection_with(url: str, api_key: str) -> dict[str, Any]:
     error_class is one of: "ok", "dns", "auth", "notfound", "timeout", "generic".
     """
     from backend.config import decrypt_value
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url
     url = decrypt_value(url)
     api_key = decrypt_value(api_key)
+    # SSRF floor for every connect path (create instance, setup wizard, test-creds):
+    # block cloud-metadata / link-local / reserved so the error_class response can't
+    # be used as a blind oracle. LAN / loopback stay allowed (n8n self-hosts there).
+    try:
+        assert_safe_probe_url(url)
+    except UnsafeProbeURL as exc:
+        return {"connected": False, "error_class": "blocked", "message": f"URL not allowed: {exc}"}
     headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:

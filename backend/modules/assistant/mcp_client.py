@@ -13,7 +13,7 @@ import httpx
 
 from backend.config import decrypt_value, load_config, save_config
 from backend.module_registry import APP_VERSION
-from backend.modules.assistant.providers import UnsafeProbeURL, assert_safe_probe_url
+from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
 logger = logging.getLogger(__name__)
 

@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Local accounts, login sessions, and optional TOTP two-factor.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/auth",
   "builtin": true
 }

@@ -10,6 +10,7 @@ All routes live under /api/music. Backend-synced state for:
 
 from __future__ import annotations
 
+import hmac
 import time
 from typing import Any
 
@@ -17,7 +18,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.auth_gate import require_role
-
 from backend.modules.player.music_config import (
     DEFAULT_MUSIC,
     add_to_collection,
@@ -461,7 +461,7 @@ async def fire_trigger(
     elif x_vibe_token:
         supplied = x_vibe_token.strip()
 
-    if not expected or supplied != expected:
+    if not expected or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 
     action = (req.action or "").lower()

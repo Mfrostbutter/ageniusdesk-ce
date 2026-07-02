@@ -36,8 +36,8 @@ from backend.config import (
     load_secrets,
     record_scope_hosts,
 )
-from backend.modules.assistant.providers import UnsafeProbeURL, assert_safe_probe_url
 from backend.modules.n8n_proxy.client import _verify as _tls_verify
+from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
 from .mappings import build_credential_payload, build_types_list_for_ui, fetch_live_schemas
 

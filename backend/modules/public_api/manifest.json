@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Versioned, X-API-Key authenticated REST surface for external integrations.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/v1",
   "builtin": true
 }
