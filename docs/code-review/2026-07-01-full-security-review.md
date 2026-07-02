@@ -26,7 +26,41 @@ against source before inclusion.
 >   inline transforms and drop non-http(s) link hrefs (`assistant.js`,
 >   `errors.js`, `codelab.js`); the Agent Fleet view sanitizes `marked` output
 >   with DOMPurify (`agent-fleet.js`), failing safe to escaped text if the
->   sanitizer can't load. Note #11 (notes snippet) is a related Medium still open.
+>   sanitizer can't load.
+
+> **Update 2026-07-01 (later) — the Medium/Low findings are now resolved or
+> assessed** (commits `fix(security): medium/low review wave 1–5`, tests in
+> `tests/test_review_medium_low.py`):
+>
+> - **#5** `inspect` redacts secret-looking env values (and inline-credential
+>   connection strings); the router is already operator-gated.
+> - **#6** Secret scope bound to the instance URL host via a fingerprint
+>   (`data/secret_scope_hosts.json`); the mirror refuses a scoped secret after a
+>   URL repoint until the scope is re-affirmed.
+> - **#7** `test-creds` and the credential mirror run the instance URL through
+>   `assert_safe_probe_url` (blocks metadata/link-local/reserved, allows LAN).
+> - **#8** `/api/mcp-dashboard` requires operator+ (or the static token) at the
+>   internal-API middleware; the misleading transport-auth comment is corrected.
+> - **#9** Community templates are rejected at load time if their authored
+>   HostConfig declares Privileged / host binds / host namespaces / Devices /
+>   CapAdd / unconfined SecurityOpt.
+> - **#10** Prompt-harden + audit: a standing injection guard is appended to
+>   every assistant system prompt, and every state-changing tool call is
+>   audit-logged. Write tools remain available by design.
+> - **#11** Notes search snippet is escaped, restoring only the `<mark>` tags.
+> - **#12** Loud startup warning when the OTLP receiver is enabled without a token.
+> - **#13** API-key hash lookup uses `hmac.compare_digest`.
+> - **#14** Music mutations + the token-exposing `GET /triggers` require operator+.
+> - **#15** `AGD_TLS_VERIFY` honored across the `n8n_credentials` httpx clients.
+> - **#17** TOTP intra-window replay lockout via a per-user `last_totp_step`.
+> - **#19** `template_state` secrets are Fernet-encrypted at rest.
+> - **#16 / #18** Assessed no-change (documented negligible): community-module
+>   static is traversal-guarded and only serves intended-public assets; n8n
+>   path-segment IDs are a same-key caller.
+>
+> The broader SSRF centralization (a shared `backend/net.py` guard applied at
+> every operator-URL chokepoint) was carried out in a parallel cross-module
+> review — see `docs/code-review/2026-07-01-cross-module-review.md`.
 
 ## Executive summary
 
