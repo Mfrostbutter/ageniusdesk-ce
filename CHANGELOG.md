@@ -4,6 +4,13 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-02
+
+Security release: upgrade recommended. Fixes four high-severity findings from the
+2026-07-01 full security review (all reachable by the read-only viewer role or by
+an operator escalating to host root), plus the medium/low batch, and ships three
+UX additions.
+
 ### Security
 - **Four high-severity findings from the full security review are fixed** (`docs/code-review/2026-07-01-full-security-review.md`), all reachable by the read-only **viewer** role or by an operator escalating to host root:
   - **Agent Fleet in-process code execution is now admin-only.** Registering or viewing a vault agent imports and executes operator-authored `graph.py` in-process, so the whole `/api/agent-fleet` router was raised from "any authenticated identity" to `require_role("admin")`. There is no safe read subset.
