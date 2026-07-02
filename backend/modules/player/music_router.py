@@ -246,9 +246,12 @@ async def create_embed(req: EmbedCreate) -> dict[str, Any]:
 @router.put("/embeds/{embed_id}", dependencies=_operator)
 async def update_embed(embed_id: str, req: EmbedUpdate) -> dict[str, Any]:
     patch: dict[str, Any] = {}
-    if req.name is not None:  patch["name"]  = req.name.strip() or "Untitled"
-    if req.icon is not None:  patch["icon"]  = req.icon
-    if req.color is not None: patch["color"] = req.color
+    if req.name is not None:
+        patch["name"] = req.name.strip() or "Untitled"
+    if req.icon is not None:
+        patch["icon"] = req.icon
+    if req.color is not None:
+        patch["color"] = req.color
     if req.raw is not None:
         result = sanitize_embed(req.raw)
         if not result.get("ok"):

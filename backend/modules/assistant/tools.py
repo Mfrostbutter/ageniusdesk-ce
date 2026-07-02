@@ -3,11 +3,11 @@
 import json
 import logging
 
-from backend.modules.n8n_proxy import client as n8n
 from backend.modules.assistant.workspace_tools import (
     WORKSPACE_TOOL_DEFINITIONS,
     execute_workspace_tool,
 )
+from backend.modules.n8n_proxy import client as n8n
 
 logger = logging.getLogger(__name__)
 

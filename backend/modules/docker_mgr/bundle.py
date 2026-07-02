@@ -37,7 +37,6 @@ from typing import Any, Union
 
 from . import template_state
 
-
 # ── Types ────────────────────────────────────────────────────────────────────
 
 
