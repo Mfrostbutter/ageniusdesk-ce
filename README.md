@@ -112,6 +112,8 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 
 ## Quick Start
 
+> **Setting up with an AI assistant?** Give it [AI-SETUP-PROMPT.md](AI-SETUP-PROMPT.md).
+
 ### Docker (Recommended)
 
 ```bash
@@ -219,6 +221,10 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup,
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for planned features and current direction.
+
+## Relationship to the internal edition
+
+AgeniusDesk CE is a one-way public fork of an internal codebase. Changes made here do not flow back upstream automatically, and the internal original remains canonical for internal deployments. This repo stands on its own for community use and contributions.
 
 ## License
 

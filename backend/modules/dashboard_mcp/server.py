@@ -330,9 +330,10 @@ async def search_knowledge(
     by source name so you can reason about provenance. Prefer targeted
     queries (pick 1-2 sources whose description matches intent) over
     broadcasting — cheaper and higher signal."""
+    import asyncio as _asyncio
+
     from backend.modules.knowledge import backends as _kb
     from backend.modules.knowledge import storage as _k
-    import asyncio as _asyncio
 
     all_sources = await _k.list_sources(enabled_only=True)
     wanted = set(sources or [])
@@ -371,9 +372,12 @@ router = APIRouter(
 async def ping(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Health + auth probe. Returns `{ok: true, auth: 'ok'|'open'}`.
 
-    The streamable HTTP MCP transport itself is mounted at MCP_PATH and
-    handles auth on each JSON-RPC call. This endpoint is a convenience for
-    operators debugging token setup.
+    Auth is enforced by the app's internal-API middleware in front of MCP_PATH,
+    not by the transport: it accepts the static DASHBOARD_MCP_TOKEN bearer, else
+    requires an operator+ identity (the MCP tools include vault writes and
+    secret-name enumeration). FastMCP's TransportSecuritySettings only does
+    DNS-rebind / Host-header checks, not authentication. This endpoint is a
+    convenience for operators debugging token setup.
     """
     token = os.environ.get(MCP_TOKEN_ENV, "")
     if not token:

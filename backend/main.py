@@ -136,6 +136,15 @@ async def lifespan(app: FastAPI):
                 "create an owner account. Edge identity (Cloudflare Access) still "
                 "satisfies the gate without a local account."
             )
+        # #12: the OTLP trace receiver is login-exempt (machine ingest). Without a
+        # token it accepts spans from anyone who can reach the port. Warn loudly,
+        # like AGD_DISABLE_LOGIN, so a naked-port self-host knows.
+        if _settings.agd_otel_enabled and not _settings.agd_otel_token:
+            logger.warning(
+                "AGD_OTEL_ENABLED is on but AGD_OTEL_TOKEN is unset: the OTLP trace "
+                "ingest at /api/otel/v1/traces accepts spans from any caller that can "
+                "reach this port. Set AGD_OTEL_TOKEN unless this is a trusted LAN."
+            )
     except Exception:
         pass
     if _mcp_sm is not None:
@@ -267,10 +276,23 @@ async def require_internal_api_auth(request, call_next):
         return JSONResponse({"detail": "Invalid or missing OTel token"}, status_code=401)
     if path in _SELF_AUTHENTICATING_EXACT:
         return await call_next(request)
-    if path.startswith(_DASHBOARD_MCP_PREFIX) and _dashboard_mcp_token_ok(request):
-        return await call_next(request)
 
-    from backend.auth_gate import current_user, login_enforced
+    from backend.auth_gate import current_user, login_enforced, role_at_least
+
+    # Dashboard MCP: the configured static token grants full access (a
+    # deliberate machine credential). Otherwise a browser identity may reach it,
+    # but only at operator+ — the MCP tools include vault writes and secret-name
+    # enumeration, so a read-only viewer must not be able to invoke them.
+    if path.startswith(_DASHBOARD_MCP_PREFIX):
+        if _dashboard_mcp_token_ok(request):
+            return await call_next(request)
+        if not login_enforced() and not settings.agd_require_auth:
+            return await call_next(request)
+        user = await current_user(request)
+        if role_at_least(user, "operator"):
+            return await call_next(request)
+        status = 403 if user is not None else 401
+        return JSONResponse({"detail": "operator role required"}, status_code=status)
 
     if not login_enforced() and not settings.agd_require_auth:
         return await call_next(request)

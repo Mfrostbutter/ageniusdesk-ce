@@ -913,11 +913,17 @@ function renderMarkdown(text) {
   }
 
   function inline(s) {
-    return s
+    // esc() FIRST: assistant output is attacker-influenceable (prompt injection
+    // via RAG / MCP / n8n error text), so HTML must be neutralized before the
+    // markdown regexes run. Markdown syntax chars aren't HTML-special, so
+    // escaping doesn't disturb the transforms below.
+    return esc(s)
       .replace(/`([^`]+)`/g, '<code style="padding:1px 4px;background:var(--bg-void);border-radius:3px;font-size:12px;font-family:var(--font-mono)">$1</code>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent)">$1</a>');
+      // Only emit a link for http(s) hrefs — blocks javascript:/data: URIs.
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, href) =>
+        /^https?:\/\//i.test(href.trim()) ? `<a href="${href}" target="_blank" style="color:var(--accent)">${text}</a>` : text);
   }
 }
 

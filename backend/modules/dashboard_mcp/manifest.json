@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Exposes AgeniusDesk's own API surface as an MCP server for the Code Lab terminal.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/mcp-dashboard",
   "python_entry": "server.py",
   "builtin": true,

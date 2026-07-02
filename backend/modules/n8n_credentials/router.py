@@ -29,10 +29,15 @@ from backend.auth_gate import require_role
 from backend.config import (
     DATA_DIR,
     decrypt_value,
+    get_allowed_instances,
     get_instances,
+    instance_scope_host_stale,
     is_secret_allowed_on_instance,
     load_secrets,
+    record_scope_hosts,
 )
+from backend.modules.n8n_proxy.client import _verify as _tls_verify
+from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
 from .mappings import build_credential_payload, build_types_list_for_ui, fetch_live_schemas
 
@@ -174,6 +179,20 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
     if not url or not api_key:
         raise HTTPException(status_code=400, detail="Instance is missing URL or API key")
 
+    # SSRF floor: block cloud-metadata / link-local / reserved instance URLs.
+    # LAN and loopback stay allowed (n8n legitimately self-hosts there), so this
+    # is NOT the private-range block — it only closes the metadata-exfil vector
+    # for the most sensitive path (plaintext secrets are POSTed here). (#7)
+    try:
+        assert_safe_probe_url(url)
+    except UnsafeProbeURL as exc:
+        raise HTTPException(status_code=400, detail=f"Instance URL not allowed: {exc}") from exc
+
+    # If this instance's URL host changed since a secret was scoped to it, refuse
+    # to mirror scoped secrets until the operator re-affirms the scope — a URL
+    # repoint must not silently redirect a scoped secret to a new host. (#6)
+    scope_stale = instance_scope_host_stale(instance_id, url)
+
     mirrors = _load_mirrors()
     instance_state = mirrors.setdefault(instance_id, {})
 
@@ -183,7 +202,7 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
     schemas = await _schemas_for_instance(instance_id)
 
     results = []
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, verify=_tls_verify()) as client:
         for item in req.items:
             if item.skip:
                 results.append({"secret_name": item.secret_name, "status": "skipped"})
@@ -198,11 +217,26 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
                 continue
 
             # Per-secret instance scope. Unscoped secrets are allowed everywhere.
-            if not is_secret_allowed_on_instance(item.secret_name.lstrip("$"), instance_id):
+            sec_name = item.secret_name.lstrip("$")
+            if not is_secret_allowed_on_instance(sec_name, instance_id):
                 results.append({
                     "secret_name": item.secret_name,
                     "status": "error",
                     "error": "Secret is not scoped to this instance. Update its Applies To list.",
+                })
+                continue
+
+            # A secret explicitly scoped to this instance must not follow a URL
+            # repoint (#6). Unscoped secrets are unaffected (allowed everywhere).
+            scoped = bool(get_allowed_instances(sec_name))
+            if scoped and scope_stale:
+                results.append({
+                    "secret_name": item.secret_name,
+                    "status": "error",
+                    "error": (
+                        "This instance's URL changed since the secret was scoped to it. "
+                        "Re-affirm its Applies To list before mirroring."
+                    ),
                 })
                 continue
 
@@ -278,6 +312,11 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
     # Persist whatever succeeded.
     mirrors[instance_id] = instance_state
     _save_mirrors(mirrors)
+    # Trust-on-first-use: record this instance's host fingerprint so scopes that
+    # predate the fingerprint file gain repoint protection after their first
+    # successful mirror (no-op if already recorded / unchanged).
+    if any(r.get("status") == "ok" for r in results):
+        record_scope_hosts([instance_id])
     return {"results": results}
 
 
@@ -311,7 +350,7 @@ async def unlink_mirror(instance_id: str, secret_name: str):
     n8n_error = ""
     if cred_id and url and api_key:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, verify=_tls_verify()) as client:
                 r = await client.delete(
                     f"{url}/api/v1/credentials/{cred_id}",
                     headers={"X-N8N-API-KEY": api_key},

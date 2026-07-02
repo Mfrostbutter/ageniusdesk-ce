@@ -116,6 +116,18 @@ async def require_trusted_request(request: Request) -> None:
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
+def role_at_least(user: dict | None, min_role: str) -> bool:
+    """True if `user` carries at least `min_role`. None never qualifies.
+
+    Helper for gates that resolve the identity themselves (e.g. the internal-API
+    middleware) instead of using the `require_role` dependency.
+    """
+    if user is None:
+        return False
+    threshold = _ROLE_ORDER.get(min_role, 3)
+    return _ROLE_ORDER.get(user.get("role", "viewer"), 0) >= threshold
+
+
 def require_role(min_role: str):
     """Build a dependency that requires an authenticated identity of at least
     `min_role`. When login is disabled (open install) it is a no-op.

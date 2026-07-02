@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Field metadata:
 #   name   — programmatic key, matches the n8n credential schema field name
 #   label  — human label shown in the Secrets form

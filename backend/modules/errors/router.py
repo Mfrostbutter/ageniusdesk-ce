@@ -390,9 +390,16 @@ async def install_handler_into(inst: dict, dashboard_url: str = "", activate: bo
     raises. Returns {installed, already, activated, error}."""
     from backend.config import decrypt_value
     from backend.modules.n8n_proxy.client import TIMEOUT, _verify, dockerize_url
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
     out = {"installed": False, "already": False, "activated": False, "error": ""}
     base = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
+    # SSRF floor on the connect-time fetch, matching the create/mirror paths.
+    try:
+        assert_safe_probe_url(base)
+    except UnsafeProbeURL as exc:
+        out["error"] = f"blocked: {exc}"
+        return out
     key = decrypt_value(inst.get("api_key", ""))
     headers = {"X-N8N-API-KEY": key, "Content-Type": "application/json", "Accept": "application/json"}
     try:

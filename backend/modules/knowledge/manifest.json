@@ -5,6 +5,20 @@
   "min_app_version": "0.1.0",
   "description": "Registry of external knowledge sources (Qdrant collections, search APIs) queryable by agents via MCP.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/knowledge",
-  "builtin": true
+  "builtin": true,
+  "secrets_required": [
+    { "key": "OPENAI_API_KEY", "description": "OpenAI key for embedding queries (text-embedding-3-large)", "required": false },
+    { "key": "VOYAGE_API_KEY", "description": "Voyage key for legacy voyage-3 collections", "required": false }
+  ],
+  "capabilities": {
+    "network": {
+      "enabled": true,
+      "hosts": ["api.openai.com", "api.voyageai.com", "*"]
+    },
+    "filesystem": { "write_paths": ["knowledge_instructions.md"] },
+    "subprocess": false,
+    "env": ["AGD_TLS_VERIFY"]
+  }
 }

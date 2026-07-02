@@ -472,12 +472,15 @@ def totp_activate(username: str, code: str) -> list[str] | None:
     for u in users:
         if u.get("username") == username:
             secret = _user_secret(u)
-            if not secret or not totp.verify(secret, code):
+            step = totp.verify_step(secret, code) if secret else None
+            if step is None:
                 return None
             codes = totp.generate_recovery_codes()
             block = u.get("totp") or {}
             block["enabled"] = True
             block["recovery_codes"] = [totp.hash_recovery_code(c) for c in codes]
+            # Seed the replay guard so the activation code can't be reused to log in.
+            block["last_totp_step"] = step
             u["totp"] = block
             save_users(users)
             return codes
@@ -509,8 +512,18 @@ def verify_second_factor(username: str, code: str) -> tuple[bool, int]:
             continue
         block = u.get("totp") or {}
         secret = _user_secret(u)
-        if secret and totp.verify(secret, code):
-            return True, len(block.get("recovery_codes", []))
+        if secret:
+            step = totp.verify_step(secret, code)
+            if step is not None:
+                # Reject replay of a code already used this step (or an earlier
+                # one still inside the skew window) — #17 intra-window lockout.
+                last = block.get("last_totp_step")
+                if last is not None and step <= last:
+                    return False, len(block.get("recovery_codes", []))
+                block["last_totp_step"] = step
+                u["totp"] = block
+                save_users(users)
+                return True, len(block.get("recovery_codes", []))
         # Recovery-code path: single-use by deletion.
         target = totp.hash_recovery_code(code)
         codes = block.get("recovery_codes", [])

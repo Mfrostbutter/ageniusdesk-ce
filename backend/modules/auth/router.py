@@ -167,15 +167,18 @@ async def login(body: LoginBody, request: Request, response: Response):
         service.throttle_record_failure(username, ip)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    service.throttle_reset(username, ip)
-
     # Login-time rehash if the stored params are below current defaults.
     if service.needs_rehash(user):
         service.set_password(username, body.password)
 
     if service.totp_enabled(user):
+        # Do NOT reset the throttle yet: the login is not complete until the
+        # second factor passes. Resetting here would let an attacker who holds
+        # the password loop password->pending->guess with the failure counter
+        # cleared every round, giving the TOTP code no attempt ceiling (S3).
         return {"totp_required": True, "pending_token": service.make_pending(username)}
 
+    service.throttle_reset(username, ip)
     raw = await service.create_session(username, request)
     service.set_session_cookies(response, request, raw)
     return {"user": service.public_user(user)}
@@ -183,12 +186,19 @@ async def login(body: LoginBody, request: Request, response: Response):
 
 @router.post("/login/totp")
 async def login_totp(body: TotpLoginBody, request: Request, response: Response):
+    ip = service._client_ip(request)
     username = service.consume_pending(body.pending_token)
     if not username:
         raise HTTPException(status_code=401, detail="Expired or invalid 2FA challenge")
+    # Rate-limit the second factor on the same username+IP counter as the password
+    # step, so a wrong-code loop trips the lockout instead of running unbounded (S3).
+    if service.throttle_blocked(username, ip):
+        raise HTTPException(status_code=429, detail="Too many attempts; try again later")
     ok, remaining = service.verify_second_factor(username, body.code)
     if not ok:
+        service.throttle_record_failure(username, ip)
         raise HTTPException(status_code=401, detail="Invalid code")
+    service.throttle_reset(username, ip)
     user = service.find_user(username)
     raw = await service.create_session(username, request)
     service.set_session_cookies(response, request, raw)

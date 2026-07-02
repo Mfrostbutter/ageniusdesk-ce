@@ -278,7 +278,12 @@ async def fetch_live_schemas(url: str, api_key: str, timeout: float = 8.0) -> di
     if not url or not api_key:
         return {}
 
-    url = url.rstrip("/")
+    # SSRF floor: even a stored instance URL can be repointed at an internal host.
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url
+    try:
+        url = assert_safe_probe_url(url)
+    except UnsafeProbeURL:
+        return {}
     headers = {"X-N8N-API-KEY": api_key}
     results: dict[str, dict] = {}
 
@@ -290,7 +295,9 @@ async def fetch_live_schemas(url: str, api_key: str, timeout: float = 8.0) -> di
         except (httpx.HTTPError, ValueError):
             pass  # 404 / network / decode — drop quietly
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    from backend.modules.n8n_proxy.client import _verify as _tls_verify
+
+    async with httpx.AsyncClient(timeout=timeout, verify=_tls_verify()) as client:
         await asyncio.gather(*[_one(client, name) for name, _, _ in KNOWN_TYPES])
 
     return results

@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Execution analytics, success rates, busiest workflows, error trends. Replaces n8n Enterprise analytics.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/insights",
   "builtin": true,
   "frontend": {

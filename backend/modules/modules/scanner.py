@@ -58,6 +58,15 @@ _SUBPROCESS_CALLS = {
     "subprocess.getstatusoutput",
 }
 
+# Docker-daemon client libraries. Talking to the daemon is root-equivalent on the
+# host (privileged containers, host bind mounts, other containers' env), so it is
+# its own declared capability rather than folded into "network".
+_DOCKER_PREFIXES = ("docker", "aiodocker")
+
+# Socket path / env markers that indicate direct Docker-daemon access even without
+# importing an SDK (e.g. a raw httpx client over the unix socket).
+_DOCKER_MARKERS = ("/var/run/docker.sock", "docker.sock")
+
 # Deserializers that can lead to code execution on untrusted input.
 _UNSAFE_LOADS = {"pickle.load", "pickle.loads", "marshal.load", "marshal.loads"}
 
@@ -130,6 +139,12 @@ def _is_network_name(name: str | None) -> bool:
     return any(name == p or name.startswith(p + ".") for p in _NETWORK_PREFIXES)
 
 
+def _is_docker_name(name: str | None) -> bool:
+    if not name:
+        return False
+    return any(name == p or name.startswith(p + ".") for p in _DOCKER_PREFIXES)
+
+
 def _const_str(node: ast.AST) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
@@ -177,6 +192,7 @@ class _FileScanner(ast.NodeVisitor):
         # accumulated detection signals (merged across files by the caller)
         self.detected_network = False
         self.detected_subprocess = False
+        self.detected_docker = False
         self.detected_hosts: set[str] = set()
         self.detected_writes: list[str] = []  # human-readable path/desc per write
         self.detected_env: set[str] = set()
@@ -227,7 +243,9 @@ class _FileScanner(ast.NodeVisitor):
         root = module.split(".")[0]
         if root == "ctypes":
             self._add("CRITICAL", "native-code", line, "imports ctypes (native FFI; can call arbitrary C)")
-        if _is_network_name(module):
+        if _is_docker_name(module):
+            self._note_docker(line, f"imports Docker client '{module}'")
+        elif _is_network_name(module):
             self.detected_network = True
             if not self.caps.network.enabled:
                 self._add(
@@ -261,6 +279,21 @@ class _FileScanner(ast.NodeVisitor):
             )
         elif root == "data" and "modules" in module.split("."):
             self._add("MEDIUM", "cross-module", line, f"imports another community module '{module}'")
+
+    def _note_docker(self, line: int, detail: str) -> None:
+        """Record Docker-daemon access. Undeclared use is HIGH (root-equivalent);
+        declared use is still surfaced as INFO so the operator sees the reach."""
+        self.detected_docker = True
+        if not self.caps.docker:
+            self._add(
+                "HIGH",
+                "docker",
+                line,
+                f"{detail} but the manifest does not declare the docker capability "
+                "(Docker-daemon access is root-equivalent on the host)",
+            )
+        else:
+            self._add("INFO", "docker", line, f"{detail} (declared docker capability; root-equivalent)")
 
     # -- calls -----------------------------------------------------------------
 
@@ -436,7 +469,9 @@ class _FileScanner(ast.NodeVisitor):
         if isinstance(node.value, str):
             v = node.value
             norm = v.replace("\\", "/")
-            if any(marker in norm for marker in _SECRET_PATH_MARKERS):
+            if any(marker in norm for marker in _DOCKER_MARKERS):
+                self._note_docker(node.lineno, f"references the Docker socket path {v[:60]!r}")
+            elif any(marker in norm for marker in _SECRET_PATH_MARKERS):
                 self._add("HIGH", "secret-access", node.lineno, f"references a sensitive path: {v[:60]!r}")
             elif "data/modules" in norm:
                 self._add("MEDIUM", "cross-module", node.lineno, "references the modules directory")
@@ -467,6 +502,7 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
     report = ScanReport()
     detected_network = False
     detected_subprocess = False
+    detected_docker = False
     detected_hosts: set[str] = set()
     detected_writes: list[str] = []
     detected_env: set[str] = set()
@@ -484,6 +520,7 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
         report.findings.extend(scanner.findings)
         detected_network |= scanner.detected_network
         detected_subprocess |= scanner.detected_subprocess
+        detected_docker |= scanner.detected_docker
         detected_hosts |= scanner.detected_hosts
         detected_writes.extend(scanner.detected_writes)
         detected_env |= scanner.detected_env
@@ -500,6 +537,8 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
         _over("network declared but no network usage detected")
     if caps.subprocess and not detected_subprocess:
         _over("subprocess declared but no subprocess usage detected")
+    if caps.docker and not detected_docker:
+        _over("docker declared but no Docker-daemon usage detected")
     if caps.filesystem.write_paths and not detected_writes:
         _over("filesystem write_paths declared but no writes detected")
     for key in caps.env:
@@ -514,6 +553,7 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
             "detected_hosts": sorted(detected_hosts),
         },
         "subprocess": {"declared": caps.subprocess, "detected": detected_subprocess},
+        "docker": {"declared": caps.docker, "detected": detected_docker},
         "filesystem": {
             "declared_write_paths": list(caps.filesystem.write_paths),
             "detected_writes": detected_writes,

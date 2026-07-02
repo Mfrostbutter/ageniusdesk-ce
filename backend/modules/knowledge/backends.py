@@ -14,12 +14,13 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 from backend.config import _resolve_secret_ref
+from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify
 
 logger = logging.getLogger(__name__)
 
 
 async def _openai_embed(text: str, api_key: str, model: str) -> list[float] | None:
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(verify=tls_verify(), timeout=20) as client:
         r = await client.post(
             "https://api.openai.com/v1/embeddings",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -32,7 +33,7 @@ async def _openai_embed(text: str, api_key: str, model: str) -> list[float] | No
 
 
 async def _voyage_embed(text: str, voyage_key: str) -> list[float] | None:
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(verify=tls_verify(), timeout=20) as client:
         r = await client.post(
             "https://api.voyageai.com/v1/embeddings",
             headers={"Authorization": f"Bearer {voyage_key}", "Content-Type": "application/json"},
@@ -62,6 +63,12 @@ async def _search_qdrant(source: dict[str, Any], query: str, limit: int) -> dict
     collection = cfg.get("collection")
     if not url or not collection:
         return {"results": [], "error": "qdrant source missing url or collection"}
+
+    # Guard the operator-supplied Qdrant URL against SSRF before any fetch.
+    try:
+        url = assert_safe_probe_url(url)
+    except UnsafeProbeURL as e:
+        return {"results": [], "error": f"qdrant url blocked: {e}"}
 
     vector_name = cfg.get("vector_name", "dense")
     # Default: OpenAI text-embedding-3-large (3072d). All Qdrant
@@ -97,7 +104,7 @@ async def _search_qdrant(source: dict[str, Any], query: str, limit: int) -> dict
         payload["using"] = vector_name
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(verify=tls_verify(), timeout=20) as client:
             r = await client.post(
                 f"{url}/collections/{collection}/points/query",
                 headers=headers,
@@ -105,8 +112,10 @@ async def _search_qdrant(source: dict[str, Any], query: str, limit: int) -> dict
             )
     except Exception as e:
         return {"results": [], "error": f"qdrant request failed: {e}"}
+    # Do not reflect the response body: the URL is operator-supplied, so echoing
+    # the target's response would make this a read primitive. Status only.
     if r.status_code >= 400:
-        return {"results": [], "error": f"qdrant HTTP {r.status_code}: {r.text[:200]}"}
+        return {"results": [], "error": f"qdrant HTTP {r.status_code}"}
 
     points = r.json().get("result", {}).get("points", []) or []
     text_key = cfg.get("text_payload_key", "text")

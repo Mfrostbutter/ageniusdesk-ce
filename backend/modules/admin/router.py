@@ -18,7 +18,6 @@ from backend.config import (
     save_config,
     save_secret_scopes,
     save_secrets,
-    settings,
 )
 from backend.modules.admin.secret_templates import (
     TEMPLATES as SECRET_TEMPLATES,
@@ -91,11 +90,10 @@ async def create_user(req: CreateUser):
         raise HTTPException(status_code=400, detail="Role must be viewer, operator, or admin")
     if any(u["username"] == req.username for u in users):
         raise HTTPException(status_code=409, detail=f"User '{req.username}' already exists")
-    if len(req.password) < settings.agd_password_min_length:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {settings.agd_password_min_length} characters",
-        )
+    # Apply the same composition policy as /auth/setup so admin-minted accounts
+    # are not weaker than self-service ones (cross-module finding S12).
+    from backend.modules.auth.router import _validate_password
+    _validate_password(req.password)
     now = auth_service._iso(auth_service._now())
     users.append({
         "username": req.username,
@@ -233,6 +231,11 @@ async def set_secret_scope(name: str, req: ScopeUpdate):
     else:
         scopes.pop(name, None)
     save_secret_scopes(scopes)
+    # Fingerprint each scoped instance's current URL host so a later URL repoint
+    # can't silently redirect this secret's mirror to a new host (#6).
+    from backend.config import record_scope_hosts
+
+    record_scope_hosts(scopes.get(name, []))
     return {"success": True, "name": name, "allowed_instances": scopes.get(name, [])}
 
 
