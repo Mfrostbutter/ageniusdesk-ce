@@ -563,6 +563,22 @@ CHROME_UNSAFE_PORTS = frozenset({
 })
 
 
+@router.get("/ports-in-use")
+async def ports_in_use():
+    """Host ports already published by a container, plus the browser-unsafe set.
+
+    The deploy wizard and Containers deploy panel call this to warn about a
+    collision (or an ERR_UNSAFE_PORT choice) before the user submits, instead
+    of only after Docker fails the bind. Best-effort: an unreachable daemon
+    yields an empty map rather than an error, so the picker still works.
+    """
+    in_use = await docker.published_host_ports(all=False)
+    return {
+        "in_use": {str(port): name for port, name in sorted(in_use.items())},
+        "unsafe": sorted(CHROME_UNSAFE_PORTS),
+    }
+
+
 class _DeployRequest(BaseModel):
     template_id: str
     fields: dict[str, Any]

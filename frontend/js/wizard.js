@@ -360,8 +360,79 @@ function _ensureStackHydrated() {
   });
 }
 
+// Lazy-fetch the host ports already published by a running container, plus the
+// browser-unsafe set, so the picker can warn about a collision before deploy.
+function _ensurePortsHydrated() {
+  const s = state.data.stack;
+  if (s._portsLoaded || s._portsLoading) return;
+  s._portsLoading = true;
+  get('/api/containers/ports-in-use').then(res => {
+    s.portsInUse = res.in_use || {};
+    s.portsUnsafe = res.unsafe || [];
+    s._portsLoaded = true;
+    s._portsLoading = false;
+    if (STEPS[state.step].id === 'stack') _refreshPortWarnings();
+  }).catch(() => { s._portsLoading = false; });
+}
+
+// The host ports a template will actually bind for the given field values.
+// Covers the plain `port`, MinIO's `console_port`, and Qdrant's implicit gRPC
+// port (base + 1), which are the multi-port cases in the built-in catalog.
+function _requestedPortsFor(t, fields) {
+  const out = [];
+  const add = (label, v) => { const n = parseInt(v, 10); if (Number.isFinite(n)) out.push({ label, val: n }); };
+  if (fields.port !== undefined && fields.port !== '') add('Host port', fields.port);
+  if (fields.console_port !== undefined && fields.console_port !== '') add('Console port', fields.console_port);
+  if (t.id === 'qdrant' && fields.port !== undefined && fields.port !== '') add('gRPC port', parseInt(fields.port, 10) + 1);
+  return out;
+}
+
+// Human-readable warnings for a template's chosen ports: browser-unsafe,
+// collides with another selected service in this same stack, or already bound
+// by a running container on the host.
+function _portWarnings(t, fields) {
+  const s = state.data.stack;
+  const inUse = s.portsInUse || {};
+  const unsafe = new Set((s.portsUnsafe || []).map(Number));
+  const others = {};  // port -> owning template name, across the OTHER selected services
+  for (const [tid, sel] of Object.entries(s.selected)) {
+    if (tid === t.id || !sel.selected) continue;
+    const ot = s.templates.find(x => x.id === tid);
+    if (!ot) continue;
+    for (const p of _requestedPortsFor(ot, sel.fields)) {
+      if (others[p.val] === undefined) others[p.val] = ot.name || tid;
+    }
+  }
+  const warns = [];
+  const seenSelf = new Set();
+  for (const p of _requestedPortsFor(t, fields)) {
+    if (unsafe.has(p.val)) { warns.push(`${p.label} ${p.val} is blocked by browsers (ERR_UNSAFE_PORT).`); continue; }
+    if (seenSelf.has(p.val)) { warns.push(`${p.label} ${p.val} collides with another port on this service.`); continue; }
+    seenSelf.add(p.val);
+    if (others[p.val] !== undefined) { warns.push(`${p.label} ${p.val} collides with "${others[p.val]}" in this stack.`); continue; }
+    const owner = inUse[String(p.val)];
+    if (owner) warns.push(`${p.label} ${p.val} is already used by "${owner}". Pick a free port.`);
+  }
+  return warns;
+}
+
+// Repaint every card's warning line in place (no re-render, so a field the user
+// is typing in keeps focus).
+function _refreshPortWarnings() {
+  document.querySelectorAll('.wizard-stack-portwarn').forEach(elw => {
+    const tid = elw.dataset.tid;
+    const t = (state.data.stack.templates || []).find(x => x.id === tid);
+    const sel = state.data.stack.selected[tid];
+    if (!t || !sel || !sel.selected) { elw.innerHTML = ''; return; }
+    elw.innerHTML = _portWarnings(t, sel.fields).map(w =>
+      `<div style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;font-size:11px;color:#f59e0b"><span aria-hidden="true">⚠</span><span>${esc(w)}</span></div>`
+    ).join('');
+  });
+}
+
 function renderStack() {
   _ensureStackHydrated();
+  _ensurePortsHydrated();
   const s = state.data.stack;
 
   if (s._error) {
@@ -432,11 +503,15 @@ function renderStack() {
   const cardFor = (t) => {
     const sel = s.selected[t.id] || { selected: false, fields: {} };
     const checked = sel.selected ? 'checked' : '';
-    const userFields = (t.fields || []).filter(f =>
-      // Hide instance_name / port from the always-visible block — they are
-      // shown inside the "Advanced" disclosure. Keep them as defaults below.
-      f.id !== 'instance_name' && f.id !== 'port' && !(t.auto_secrets || []).includes(f.id)
-    );
+    // Show instance_name + port first (name it, choose the port), then the rest.
+    // Auto-minted secrets stay hidden. Ordering makes the two most-edited fields
+    // land at the top of the expanded card.
+    const visible = (t.fields || []).filter(f => !(t.auto_secrets || []).includes(f.id));
+    const userFields = [
+      ...visible.filter(f => f.id === 'instance_name'),
+      ...visible.filter(f => f.id === 'port'),
+      ...visible.filter(f => f.id !== 'instance_name' && f.id !== 'port'),
+    ];
     return `
       <label class="wizard-stack-card ${sel.selected ? 'selected' : ''}" data-tid="${esc(t.id)}" style="display:flex;gap:12px;padding:12px;border:1px solid var(--border-dim);border-radius:var(--radius);margin-bottom:8px;cursor:pointer;background:${sel.selected ? 'rgba(96,165,250,0.05)' : 'var(--bg-input)'};transition:background 0.1s">
         <input type="checkbox" class="wizard-stack-check" data-tid="${esc(t.id)}" ${checked} style="margin-top:2px;flex-shrink:0">
@@ -459,6 +534,7 @@ function renderStack() {
                 `;
               }).join('')}
             </div>
+            <div class="wizard-stack-portwarn" data-tid="${esc(t.id)}"></div>
           ` : ''}
         </div>
       </label>
@@ -976,6 +1052,9 @@ function bindBody(id) {
         const fid = input.dataset.fid;
         if (!state.data.stack.selected[tid]) state.data.stack.selected[tid] = { selected: false, fields: {} };
         state.data.stack.selected[tid].fields[fid] = input.value;
+        // Port edits change the conflict picture for every card (an intra-stack
+        // collision is symmetric), so repaint all warnings, not just this one.
+        if (fid === 'port' || fid === 'console_port') _refreshPortWarnings();
       });
     });
     // Clicking the card body (outside the checkbox) toggles the checkbox.
@@ -994,6 +1073,7 @@ function bindBody(id) {
     if (retryBtn) {
       retryBtn.addEventListener('click', () => { retryFailedStack(); });
     }
+    _refreshPortWarnings();  // paint warnings for whatever is selected on entry
     return;
   }
   if (id === 'secrets') {
