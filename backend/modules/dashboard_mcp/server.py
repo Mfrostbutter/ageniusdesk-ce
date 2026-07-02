@@ -330,9 +330,10 @@ async def search_knowledge(
     by source name so you can reason about provenance. Prefer targeted
     queries (pick 1-2 sources whose description matches intent) over
     broadcasting — cheaper and higher signal."""
+    import asyncio as _asyncio
+
     from backend.modules.knowledge import backends as _kb
     from backend.modules.knowledge import storage as _k
-    import asyncio as _asyncio
 
     all_sources = await _k.list_sources(enabled_only=True)
     wanted = set(sources or [])
