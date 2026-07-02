@@ -62,7 +62,7 @@ When a destroyed container's published ports match a registered n8n instance, th
 Click **+ Deploy** to open the deploy panel, a three-step flow.
 
 1. **Choose a template**: a tile grid grouped by category. Each tile shows an icon, name, short description, a community badge if applicable, and a "running" marker if an instance of that template is already up. Tiles may link to template docs.
-2. **Configure**: a form rendered from the template's fields (text, password, number, select). Defaults are pre-filled. Host ports that browsers refuse to open (Chrome's ERR_UNSAFE_PORT list) and out-of-range ports are rejected up front. Click **Deploy**.
+2. **Configure**: a form rendered from the template's fields (text, password, number, select). Defaults are pre-filled, including an **Instance name** and **Host port**. The panel suggests the next free host port, and the port field warns inline, before you deploy, when the port you pick is already published by a running container (naming that container), is on the browser-unsafe list (Chrome's ERR_UNSAFE_PORT), or is out of range. Click **Deploy**.
 3. **Progress**: live deploy steps stream over SSE. On success a result banner offers **Open instance**, **Add to AgeniusDesk** (register it as an n8n instance), and **Deploy another**.
 
 ### Deploy progress (SSE)
