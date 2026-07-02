@@ -28,6 +28,7 @@
     },
     "filesystem": { "write_paths": ["assistant_files"] },
     "subprocess": false,
+    "docker": true,
     "env": ["OLLAMA_URL", "AGD_TLS_VERIFY", "AGD_CONSTITUTION_ENABLED"]
   }
 }

@@ -136,6 +136,12 @@ class Capabilities(BaseModel):
     network: NetworkCapability = Field(default_factory=NetworkCapability)
     filesystem: FilesystemCapability = Field(default_factory=FilesystemCapability)
     subprocess: bool = False
+    # Whether the module talks to the Docker daemon (the docker/aiodocker SDKs or
+    # the mounted /var/run/docker.sock). This is ROOT-EQUIVALENT on the host: it
+    # can create privileged containers, bind-mount the host fs, and read every
+    # other container's env. Undeclared use is a HIGH finding; even declared use
+    # is surfaced so the operator sees the blast radius before consenting.
+    docker: bool = False
     # Environment variable keys the module reads (beyond secrets_required).
     env: list[str] = Field(default_factory=list)
     # Host-bridge surface the module may reach under out-of-process isolation.

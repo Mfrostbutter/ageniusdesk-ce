@@ -10,5 +10,12 @@
   "builtin": true,
   "frontend": {
     "nav": { "label": "Containers", "icon": "box", "view": "containers" }
+  },
+  "capabilities": {
+    "network": { "enabled": false, "hosts": [] },
+    "filesystem": { "write_paths": ["template_state"] },
+    "subprocess": false,
+    "docker": true,
+    "env": ["DOCKER_HOST", "AGD_TLS_VERIFY"]
   }
 }

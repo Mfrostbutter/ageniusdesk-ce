@@ -54,11 +54,13 @@ Deliberately **not** changed, with rationale:
   at runtime* when the `langgraph` extra is absent (`app.js`). A static
   `frontend.nav` can't express that runtime gate and would double-render, so the
   hardcoded nav stays; treat it as a documented exception, not drift.
-- **docker_mgr capabilities (C5)** — the module's defining capability is the mounted
-  Docker socket, and the `Capabilities` schema has **no field** for host-privilege /
-  socket access. A block there would misleadingly declare `network:false`. This is a
-  **spec gap**: recommend adding a `privileged`/`docker_socket` capability to the
-  schema before backfilling docker_mgr.
+- **docker_mgr capabilities (C5)** — ~~the `Capabilities` schema has no field for
+  host-privilege / socket access~~ **CLOSED 2026-07-02.** Added a `docker` capability
+  to the schema (`module_registry.Capabilities`) and scanner detection (`docker`/
+  `aiodocker` imports and `/var/run/docker.sock` references → HIGH when undeclared,
+  INFO when declared, since Docker-daemon access is root-equivalent). `docker_mgr` and
+  `assistant` (n8n-mcp provisioning) now declare `"docker": true`. Covered by
+  `tests/test_docker_capability_scanner.py`.
 - **Pre-existing `E501`** long lines in `n8n_proxy` are untouched existing debt.
 
 ---
