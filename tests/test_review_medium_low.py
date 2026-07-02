@@ -324,3 +324,43 @@ def test_template_state_encrypts_secret_leaves():
     state = template_state.load("n8n", "review-inst")
     assert state["N8N_ENCRYPTION_KEY"] == "topsecret-key"
     assert state["port"] == 5678
+
+
+# ── #10 assistant prompt-injection guard + audit ─────────────────────────────
+
+
+def test_assistant_injection_guard_is_appended(monkeypatch):
+    import asyncio
+
+    from backend.modules.assistant import providers
+
+    captured = {}
+
+    async def _fake_ollama(messages, system, cfg):
+        captured["system"] = system
+        return {"response": "ok"}
+
+    monkeypatch.setattr(providers, "_chat_ollama", _fake_ollama)
+    asyncio.run(
+        providers._dispatch_chat(
+            [{"role": "user", "content": "hi"}],
+            "BASE OPERATOR PROMPT",
+            {"provider": "ollama", "api_key": ""},
+        )
+    )
+    # Operator instructions preserved, guard appended after them (can't be edited away).
+    assert "BASE OPERATOR PROMPT" in captured["system"]
+    assert "untrusted DATA" in captured["system"]
+    assert captured["system"].rstrip().endswith("instead of acting.")
+
+
+def test_state_changing_tool_is_audited(caplog):
+    import asyncio
+
+    from backend.modules.assistant import tools
+
+    with caplog.at_level("WARNING", logger="agd.assistant.audit"):
+        # n8n isn't configured in tests -> the call returns an error string, but
+        # the audit line is emitted before the tool body runs.
+        asyncio.run(tools.execute_tool("set_workflow_active", {"workflow_id": "w1", "active": True}))
+    assert any("set_workflow_active" in r.getMessage() for r in caplog.records)
