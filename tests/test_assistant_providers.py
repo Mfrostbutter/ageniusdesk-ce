@@ -73,10 +73,12 @@ async def test_perplexity_chat_omits_tools():
 
 async def test_custom_provider_uses_base_url():
     """The custom provider posts to <base_url>/chat/completions from config."""
+    # Loopback host: allowed past the custom-endpoint SSRF guard (which does a
+    # real DNS resolve respx doesn't intercept) while respx still mocks the POST.
     cfg = {"provider": "custom", "model": "my-model", "api_key": "k",
-           "custom_base_url": "https://proxy.example.com/v1"}
+           "custom_base_url": "http://127.0.0.1:9099/v1"}
     with respx.mock:
-        route = respx.post("https://proxy.example.com/v1/chat/completions").mock(
+        route = respx.post("http://127.0.0.1:9099/v1/chat/completions").mock(
             return_value=httpx.Response(200, json={
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
                 "usage": {},

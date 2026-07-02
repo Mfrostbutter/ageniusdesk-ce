@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "n8n workflow error ingestion and surfacing.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/errors",
   "builtin": true,
   "frontend": {

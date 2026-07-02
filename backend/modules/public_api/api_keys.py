@@ -8,6 +8,7 @@ A leaked api_keys.json cannot be replayed — only the original bearer token mat
 """
 
 import hashlib
+import hmac
 import json
 import secrets
 from datetime import datetime, timezone
@@ -70,6 +71,9 @@ def delete_api_key(key_id: str) -> bool:
 def lookup_by_hash(key_hash: str) -> dict | None:
     """Return the key record whose key_hash matches, or None."""
     for entry in load_api_keys():
-        if entry.get("key_hash") == key_hash:
+        stored = entry.get("key_hash") or ""
+        # Constant-time compare for consistency with the other token paths, even
+        # though both sides are already sha256 hashes (no usable preimage leaks).
+        if stored and hmac.compare_digest(stored, key_hash):
             return entry
     return None

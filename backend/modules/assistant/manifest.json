@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "LLM-powered assistant + Code Lab integration. Supports Anthropic, OpenAI, OpenRouter, Ollama.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/assistant",
   "builtin": true,
   "secrets_required": [
@@ -14,5 +15,20 @@
   ],
   "frontend": {
     "nav": { "label": "Assistant", "icon": "robot", "view": "assistant" }
+  },
+  "capabilities": {
+    "network": {
+      "enabled": true,
+      "hosts": [
+        "api.anthropic.com", "api.openai.com", "openrouter.ai",
+        "api.perplexity.ai", "api.groq.com", "api.deepseek.com",
+        "api.mistral.ai", "api.x.ai", "api.together.xyz",
+        "*"
+      ]
+    },
+    "filesystem": { "write_paths": ["assistant_files"] },
+    "subprocess": false,
+    "docker": true,
+    "env": ["OLLAMA_URL", "AGD_TLS_VERIFY", "AGD_CONSTITUTION_ENABLED"]
   }
 }

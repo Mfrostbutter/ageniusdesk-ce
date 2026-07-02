@@ -3,13 +3,34 @@
 import json
 import logging
 
-from backend.modules.n8n_proxy import client as n8n
 from backend.modules.assistant.workspace_tools import (
     WORKSPACE_TOOL_DEFINITIONS,
     execute_workspace_tool,
 )
+from backend.modules.n8n_proxy import client as n8n
 
 logger = logging.getLogger(__name__)
+
+# State-changing tools the chat LLM can call. The assistant ingests
+# attacker-influenceable content (RAG results, MCP output, n8n error/execution
+# payloads), so a prompt injection could steer the model to invoke one of these
+# without the operator asking. We can't fully prevent that from the backend, but
+# every invocation is logged to an audit trail so a rogue action is visible
+# after the fact. The system prompt (see providers._ASSISTANT_INJECTION_GUARD)
+# instructs the model to treat tool/RAG/MCP content as data, never instructions.
+_STATE_CHANGING_TOOLS = frozenset({
+    "trigger_workflow", "set_workflow_active", "import_workflow",
+    "workspace_write", "workspace_append", "workspace_archive",
+})
+_audit = logging.getLogger("agd.assistant.audit")
+
+
+def _audit_state_change(name: str, arguments: dict) -> None:
+    """Emit an audit line for a state-changing assistant tool call."""
+    keys = ("workflow_id", "active", "name", "path")
+    summary = {k: arguments[k] for k in keys if k in arguments}
+    _audit.warning("assistant tool %s invoked args=%s", name, summary)
+
 
 # Tool definitions in OpenAI function calling format (works with OpenRouter)
 TOOL_DEFINITIONS = [
@@ -184,6 +205,9 @@ TOOL_DEFINITIONS += WORKSPACE_TOOL_DEFINITIONS
 async def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool call and return the result as a string for the LLM."""
     try:
+        if name in _STATE_CHANGING_TOOLS:
+            _audit_state_change(name, arguments)
+
         if name.startswith("workspace_"):
             return await execute_workspace_tool(name, arguments)
 

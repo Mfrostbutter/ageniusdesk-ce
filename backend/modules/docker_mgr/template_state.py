@@ -36,13 +36,47 @@ def _path_for(template_id: str, instance_name: str) -> Path:
     return STATE_DIR / _safe_segment(template_id) / f"{_safe_segment(instance_name)}.json"
 
 
+# Template state holds key material (n8n's N8N_ENCRYPTION_KEY, minted bundle
+# secrets). Encrypt string leaves at rest with the app's Fernet store rather
+# than leaving them plaintext-on-disk. Round-trips transparently: load()
+# returns plaintext, save() re-encrypts. Backward-compatible — a pre-existing
+# plaintext leaf simply isn't a fernet:/enc: marker, so load leaves it as-is and
+# save migrates it on the next write. (#19)
+def _encrypt_leaves(obj: Any) -> Any:
+    from backend.config import encrypt_value
+
+    if isinstance(obj, str):
+        return encrypt_value(obj)
+    if isinstance(obj, list):
+        return [_encrypt_leaves(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _encrypt_leaves(v) for k, v in obj.items()}
+    return obj
+
+
+def _decrypt_leaves(obj: Any) -> Any:
+    from backend.config import _FERNET_PREFIX, _LEGACY_PREFIX, decrypt_value
+
+    if isinstance(obj, str):
+        # Only unwrap actual ciphertext markers; never resolve a $ref or touch
+        # plaintext, so semantics don't drift for non-secret values.
+        if obj.startswith(_FERNET_PREFIX) or obj.startswith(_LEGACY_PREFIX):
+            return decrypt_value(obj)
+        return obj
+    if isinstance(obj, list):
+        return [_decrypt_leaves(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _decrypt_leaves(v) for k, v in obj.items()}
+    return obj
+
+
 def load(template_id: str, instance_name: str) -> dict[str, Any]:
     """Return persisted state for (template, instance). Empty dict if none."""
     p = _path_for(template_id, instance_name)
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return _decrypt_leaves(json.loads(p.read_text(encoding="utf-8")))
     except Exception as exc:
         logger.warning("template_state: failed to read %s: %s", p, exc)
         return {}
@@ -52,14 +86,15 @@ def save(template_id: str, instance_name: str, state: dict[str, Any]) -> None:
     """Atomically persist state for (template, instance).
 
     Merge-on-write: existing keys not present in `state` are preserved so
-    callers can update one field at a time.
+    callers can update one field at a time. String leaves are Fernet-encrypted
+    at rest.
     """
     p = _path_for(template_id, instance_name)
     p.parent.mkdir(parents=True, exist_ok=True)
-    merged = load(template_id, instance_name)
+    merged = load(template_id, instance_name)  # decrypted plaintext
     merged.update(state)
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(_encrypt_leaves(merged), indent=2), encoding="utf-8")
     tmp.replace(p)
     try:
         p.chmod(0o600)

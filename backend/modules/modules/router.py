@@ -6,14 +6,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend import module_registry
-from backend.auth_gate import current_user, require_role, require_trusted_request
+from backend.auth_gate import current_user, require_role
 from backend.module_registry import APP_VERSION
 
 from . import installer
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/modules", tags=["modules"], dependencies=[Depends(require_trusted_request)])
+# Read endpoints sit at the viewer floor (parity with every other module's
+# require_role primitive); each mutating endpoint escalates to operator below.
+router = APIRouter(prefix="/api/modules", tags=["modules"], dependencies=[Depends(require_role("viewer"))])
 
 
 # ── Read endpoints ───────────────────────────────────────────────────────────

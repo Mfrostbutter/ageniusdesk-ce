@@ -1562,7 +1562,9 @@ function renderMd(text) {
 
   function cl() { if (inUl) { html += '</ul>'; inUl = false; } if (inOl) { html += '</ol>'; inOl = false; } }
   function il(s) {
-    return s
+    // esc() FIRST so assistant/agent output can't inject HTML through the
+    // inline markdown transforms (fenced code is already escaped above).
+    return esc(s)
       .replace(/`([^`]+)`/g, '<code style="padding:1px 3px;background:var(--bg-void);border-radius:2px;font-size:11px;font-family:var(--font-mono)">$1</code>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>');

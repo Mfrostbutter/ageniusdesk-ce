@@ -1,0 +1,84 @@
+# machine-readable navigation index for AI agents
+meta:
+  domain: ageniusdesk-ce
+  last_updated: "2026-07-02"
+  purpose: >
+    Entry-point map of the AgeniusDesk Community Edition repo (an open-source
+    command center for n8n automation) so AI agents can find the right docs,
+    modules, and rules without a full-tree scan.
+
+read_first:
+  - path: CLAUDE.md
+    note: Compact project context; tech stack, architecture highlights, module system, conventions.
+  - path: README.md
+    note: Product overview, feature list, Quick Start (Docker and bare metal), security notes.
+  - path: docs/README.md
+    note: Documentation index; splits into a task-oriented User Guide and an Architecture and Developer Reference.
+  - path: docs/architecture/
+    note: Developer reference; overview.md, modules.md, data-model.md, auth.md, frontend.md, api.md, security.md.
+  - path: CONTRIBUTING.md
+    note: Dev setup (Docker override or bare metal), code style (ruff, vanilla JS), PR guidelines.
+  - path: docs/architecture/modules.md
+    note: The backend module contract in depth; auto-discovery, manifests, version gating, community modules. Summarized in the CLAUDE.md "Module System" section.
+  - path: docs/architecture/security.md
+    note: Security architecture; SSRF/TLS chokepoints, RBAC floors, capability scanner, secret resolution. Read before touching anything that makes outbound HTTP or handles auth.
+  - path: backend/net.py
+    note: Shared network-safety helpers (assert_safe_probe_url, tls_verify). The mandatory chokepoint for module code probing user-supplied URLs.
+  - path: docs/code-review/2026-07-01-cross-module-review.md
+    note: Cross-module security review record; which chokepoints exist, which review items were assessed no-change, and accepted/deferred debt.
+
+hard_rules:
+  - rule: Backend modules are self-contained; each backend/modules/{id}/ exposes a FastAPI `router` plus a manifest.json and is auto-discovered and mounted at /api/{id}/.
+    ref: CLAUDE.md (Module System) and CONTRIBUTING.md (Adding a Backend Module)
+  - rule: Frontend is vanilla JavaScript ES modules with zero build step and no transpilation; Monaco is loaded from CDN, no other external JS dependencies.
+    ref: CLAUDE.md (Conventions) and CONTRIBUTING.md (Code Style)
+  - rule: Never hardcode secrets; all sensitive values go to .env or the Fernet-encrypted store (data/secrets.json), resolved env-var first.
+    ref: CLAUDE.md (Conventions, Secret Resolution)
+  - rule: Python uses type hints on public functions and ruff at line-length 120 (rules E/F/I/W); run `ruff check .` before submitting.
+    ref: CLAUDE.md (Conventions) and CONTRIBUTING.md (Code Style)
+  - rule: Commits follow conventional style (feat:, fix:, docs:, chore:), atomic and focused.
+    ref: CONTRIBUTING.md (Code Style)
+  - rule: All new source files are MIT licensed; contributions are accepted under MIT.
+    ref: CLAUDE.md (Conventions) and CONTRIBUTING.md (License)
+  - rule: Module code that fetches a user-supplied or instance-configured URL must route through backend/net.py (assert_safe_probe_url for SSRF, tls_verify for TLS); never call httpx on raw input directly.
+    ref: backend/net.py and docs/architecture/security.md
+  - rule: Community-module manifests must declare their capabilities (e.g. "docker" for docker/aiodocker imports or docker.sock access); the install scanner flags undeclared capability use as HIGH severity.
+    ref: docs/architecture/modules.md and docs/architecture/security.md
+
+tools_integrations:
+  - name: n8n-mcp
+    author: czlonkowski
+    url: https://github.com/czlonkowski/n8n-mcp
+    license: MIT
+    note: Bundled n8n intelligence; auto-installed on first boot as a running MCP server (opt-out via AGD_N8N_MCP_AUTO=false). Deep n8n node knowledge plus workflow search, validation, and create/update tools.
+  - name: n8n
+    url: https://n8n.io
+    note: The workflow automation engine AgeniusDesk manages; connected per instance by URL and API key.
+  - name: Qdrant
+    note: Optional RAG backend for knowledge sources (QDRANT_URL, QDRANT_API_KEY).
+
+subdirectories:
+  backend/modules/_runtime: Module isolation runtime; sandboxed subprocess and container workers plus the loopback capability bridge (no manifest, not a mounted module).
+  backend/modules/admin: User management, config, and secrets admin endpoints.
+  backend/modules/agent_fleet: Managed fleet of LangGraph agents (ops-triage, fix-proposer, health-reporter) with live graph, run waterfall, human-in-the-loop, LangSmith tracing; needs the langgraph extra plus an Anthropic key.
+  backend/modules/assistant: LLM-powered assistant plus Code Lab integration; supports Anthropic, OpenAI, OpenRouter, Ollama, and other OpenAI-compatible providers, MCP client, RAG.
+  backend/modules/auth: Local accounts, login sessions, and optional TOTP two-factor.
+  backend/modules/dashboard_mcp: Exposes AgeniusDesk's own API surface as an MCP server for the Code Lab terminal.
+  backend/modules/docker_mgr: Docker container management (list, start/stop/restart, tail logs, group by compose project); requires /var/run/docker.sock mounted on the dashboard service.
+  backend/modules/errors: n8n workflow error ingestion and surfacing.
+  backend/modules/health: Endpoint health polling (placeholder, not yet implemented).
+  backend/modules/insights: Execution analytics, success rates, busiest workflows, error trends.
+  backend/modules/knowledge: Registry of external knowledge sources (Qdrant collections, search APIs) queryable by agents via MCP.
+  backend/modules/messages: Internal message bus for cross-module events.
+  backend/modules/modules: Module Manager; lists installed modules and handles community module install/uninstall.
+  backend/modules/n8n_credentials: Mirrors AgeniusDesk secrets into n8n credential stores across instances.
+  backend/modules/n8n_proxy: Authenticated proxy to the n8n REST API for workflows, executions, and instances.
+  backend/modules/notes: Local markdown notes with full-text search and backlinks.
+  backend/modules/observability: Embedded OpenTelemetry receiver; ingests n8n OTLP spans and renders per-execution trace waterfalls (off until AGD_OTEL_ENABLED=true).
+  backend/modules/player: Spotify and general music embed player for the dashboard.
+  backend/modules/public_api: Versioned, X-API-Key authenticated REST surface (/api/v1) for external integrations.
+  backend/modules/themes: Built-in and custom dashboard themes.
+  backend/modules/webhooks: n8n webhook discovery and launcher (placeholder, not yet implemented).
+  frontend: Single-page app shell (index.html), ES-module views in js/views/, router and WebSocket bus in js/app.js, theme-aware CSS custom properties in css/base.css.
+  docs: User Guide (docs/guide/), Architecture and Developer Reference (docs/architecture/), CONFIG.md, DEPLOY.md, specs/, community-templates/, screenshots/.
+  tests: Pytest suite; regression coverage for auth/RBAC floors, SSRF guards, and template-substitution hardening.

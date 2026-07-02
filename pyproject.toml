@@ -81,6 +81,21 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+# Pre-existing long-line (E501) debt, baselined so CI can gate on `ruff check`
+# without a repo-wide reformat. These are intentionally-long strings (LLM tool
+# descriptions, n8n error messages, iframe examples, log lines, SQL). Tracked in
+# docs/code-review/2026-07-01-cross-module-review.md; tighten opportunistically.
+[tool.ruff.lint.per-file-ignores]
+"backend/config_overlay.py" = ["E501"]
+"backend/modules/assistant/workspace_tools.py" = ["E501"]
+"backend/modules/docker_mgr/deployer.py" = ["E501"]
+"backend/modules/errors/collector.py" = ["E501"]
+"backend/modules/messages/collector.py" = ["E501"]
+"backend/modules/n8n_proxy/client.py" = ["E501"]
+"backend/modules/n8n_proxy/router.py" = ["E501"]
+"backend/modules/player/music_router.py" = ["E501"]
+"tests/test_error_handler_install.py" = ["E501"]
+
 # Intentionally package NO Python modules: `pip install .` installs only the
 # declared dependencies. The host runs `backend` from the source tree (the
 # Dockerfile COPYs it; cwd is on sys.path), so `backend` is NOT placed in

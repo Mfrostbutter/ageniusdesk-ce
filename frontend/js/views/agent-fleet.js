@@ -18,15 +18,32 @@ import { get, post, del, onEvent } from '../api.js';
 import * as toast from '../components/toast.js';
 import { renderGraphSvg } from './agent-fleet-graph.js';
 
-// Markdown rendering (marked from CDN), inlined so the view is self-contained.
+// Markdown rendering (marked + DOMPurify from CDN), inlined so the view is
+// self-contained. The rendered text is agent/LLM output (untrusted), and
+// marked passes raw HTML through by design, so the parsed output MUST be
+// sanitized before it reaches innerHTML.
 let _marked = null;
+let _purify = null;
+function _escPre(text) {
+  const e = document.createElement('span');
+  e.textContent = String(text);
+  return `<pre style="white-space:pre-wrap;font-family:inherit">${e.innerHTML}</pre>`;
+}
 async function renderMd(text) {
   if (!text) return '<p style="color:var(--text-muted)">(empty)</p>';
   if (!_marked) {
     try { const m = await import('https://esm.sh/marked'); _marked = m.marked || m.default; }
-    catch { const e = document.createElement('span'); e.textContent = String(text); return `<pre style="white-space:pre-wrap;font-family:inherit">${e.innerHTML}</pre>`; }
+    catch { return _escPre(text); }
   }
-  return _marked.parse(text, { breaks: true });
+  if (!_purify) {
+    try { const d = await import('https://esm.sh/dompurify'); _purify = d.default || d; }
+    catch { _purify = null; }
+  }
+  const raw = _marked.parse(text, { breaks: true });
+  // No sanitizer available → fail safe by escaping the source rather than
+  // emitting unsanitized HTML.
+  if (!_purify || typeof _purify.sanitize !== 'function') return _escPre(text);
+  return _purify.sanitize(raw);
 }
 
 // LangGraph Studio UI (hosted) pointed at a local `langgraph dev` server on :2024.

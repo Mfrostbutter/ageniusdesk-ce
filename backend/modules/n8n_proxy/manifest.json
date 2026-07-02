@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Authenticated proxy to n8n REST API for workflows, executions, and instances.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/n8n",
   "builtin": true,
   "frontend": {

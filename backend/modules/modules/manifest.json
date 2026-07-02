@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Lists installed modules and handles community module install/uninstall.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/modules",
   "builtin": true
 }

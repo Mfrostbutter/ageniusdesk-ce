@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Embedded OpenTelemetry receiver: ingests n8n OTLP spans and renders per-execution trace waterfalls. Off until AGD_OTEL_ENABLED=true.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/otel",
   "builtin": true
 }

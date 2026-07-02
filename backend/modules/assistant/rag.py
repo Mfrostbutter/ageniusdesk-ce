@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from backend.config import decrypt_value, load_config
+from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +30,19 @@ async def search(query: str, limit: int = 5) -> list[dict]:
     if not cfg["qdrant_url"] or not cfg["collection"]:
         return []
 
+    # Guard the operator-set Qdrant URL against SSRF before fetching it.
+    try:
+        base = assert_safe_probe_url(cfg["qdrant_url"])
+    except UnsafeProbeURL as e:
+        logger.warning("RAG qdrant URL blocked: %s", e)
+        return []
+
     # Use Qdrant's scroll with text matching (no embedding needed — lightweight)
     # For full semantic search, users would need an embedding endpoint configured
-    url = f"{cfg['qdrant_url'].rstrip('/')}/collections/{cfg['collection']}/points/scroll"
+    url = f"{base}/collections/{cfg['collection']}/points/scroll"
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(verify=tls_verify(), timeout=10) as client:
             resp = await client.post(url, json={
                 "limit": limit,
                 "with_payload": True,

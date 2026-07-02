@@ -424,6 +424,70 @@ def get_allowed_instances(name: str) -> list[str]:
     return load_secret_scopes().get(name, [])
 
 
+SECRET_SCOPE_HOSTS_FILE = DATA_DIR / "secret_scope_hosts.json"
+
+
+def _norm_scope_host(url: str) -> str:
+    """Normalized host[:port] for scope fingerprinting. Empty on unparseable."""
+    from urllib.parse import urlsplit
+
+    p = urlsplit((url or "").strip())
+    host = (p.hostname or "").lower()
+    if not host:
+        return ""
+    return f"{host}:{p.port}" if p.port else host
+
+
+def load_scope_hosts() -> dict[str, str]:
+    """Map of instance_id -> host fingerprint captured when a scope was set."""
+    if SECRET_SCOPE_HOSTS_FILE.exists():
+        try:
+            raw = json.loads(SECRET_SCOPE_HOSTS_FILE.read_text())
+            return {str(k): str(v) for k, v in raw.items()}
+        except Exception:
+            logger.warning("secret_scope_hosts.json unreadable; treating as empty")
+    return {}
+
+
+def save_scope_hosts(hosts: dict[str, str]) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SECRET_SCOPE_HOSTS_FILE.write_text(json.dumps({k: v for k, v in hosts.items() if v}, indent=2))
+
+
+def record_scope_hosts(instance_ids: list[str]) -> None:
+    """Fingerprint the current URL host of each instance a scope now references.
+
+    Called when the operator sets a secret's Applies To list, and lazily on a
+    successful mirror (trust-on-first-use for scopes predating this file). This
+    is what lets `instance_scope_host_stale` detect a later URL repoint.
+    """
+    if not instance_ids:
+        return
+    by_id = {i["id"]: i for i in get_instances()}
+    hosts = load_scope_hosts()
+    changed = False
+    for iid in instance_ids:
+        inst = by_id.get(iid)
+        if not inst:
+            continue
+        h = _norm_scope_host(inst.get("url", ""))
+        if h and hosts.get(iid) != h:
+            hosts[iid] = h
+            changed = True
+    if changed:
+        save_scope_hosts(hosts)
+
+
+def instance_scope_host_stale(instance_id: str, current_url: str) -> bool:
+    """True when this instance was fingerprinted for scoping and its URL host has
+    since changed (repointed). No fingerprint => not stale (caller may record one).
+    """
+    recorded = load_scope_hosts().get(instance_id)
+    if not recorded:
+        return False
+    return recorded != _norm_scope_host(current_url)
+
+
 def is_secret_allowed_on_instance(name: str, instance_id: str) -> bool:
     """True when the secret may be mirrored to the given instance.
 

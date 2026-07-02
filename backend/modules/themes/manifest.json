@@ -5,6 +5,7 @@
   "min_app_version": "0.1.0",
   "description": "Built-in and custom dashboard themes.",
   "author": "AgeniusDesk",
+  "license": "MIT",
   "routes_prefix": "/api/themes",
   "builtin": true
 }

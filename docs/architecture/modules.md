@@ -54,6 +54,7 @@ A manifest deserializes into the `ModuleManifest` pydantic model in `backend/mod
 | `network` | `{ enabled: bool, hosts: [string] }` | `enabled=false` | Whether the module makes outbound calls, and the host allowlist (globs like `*.youtube.com`). `enabled` with an empty `hosts` means "any host" and is itself a HIGH finding |
 | `filesystem` | `{ write_paths: [string] }` | `[]` | Paths under `data/` the module writes; writes elsewhere are findings |
 | `subprocess` | bool | `false` | Whether the module spawns child processes |
+| `docker` | bool | `false` | Whether the module talks to the Docker daemon (the `docker`/`aiodocker` SDKs or `/var/run/docker.sock`). Root-equivalent on the host; undeclared use is a HIGH finding, and even declared use is surfaced as INFO so the operator sees the blast radius |
 | `env` | list of string | `[]` | Environment variable keys the module reads, beyond `secrets_required` |
 
 Example with capabilities (a YouTube research module):
@@ -201,9 +202,9 @@ The module manager UI reflects this: the install panel's **Discover** button lis
 | Severity | Examples detected |
 |---|---|
 | CRITICAL | `eval`/`exec`/`compile`, `os.system`/`os.popen`, dynamic `__import__`/`importlib.import_module` with a non-literal name, `pickle`/`marshal` loads, `ctypes` |
-| HIGH | undeclared network imports/calls, calls to a host outside the declared allowlist, raw sockets, `subprocess` when undeclared or `shell=True`, writes outside declared `write_paths`, reads of undeclared env vars, references to the secret store, host imports (`backend.*`) (reach host internals and do not run under isolation), calling the host bridge `assistant.complete` without declaring `host.assistant` |
+| HIGH | undeclared network imports/calls, calls to a host outside the declared allowlist, raw sockets, `subprocess` when undeclared or `shell=True`, **undeclared Docker-daemon access (`docker`/`aiodocker` import or `/var/run/docker.sock` reference — root-equivalent)**, writes outside declared `write_paths`, reads of undeclared env vars, references to the secret store, host imports (`backend.*`) (reach host internals and do not run under isolation), calling the host bridge `assistant.complete` without declaring `host.assistant` |
 | MEDIUM | out-of-tree file reads, dynamic `getattr`/`setattr` on imported modules, imports of another community module (`data/modules/*`), large opaque base64/hex literals |
-| INFO | over-declaration (a declared capability the code never uses); declared host-bridge use (`/api/_host/*`), surfaced as transparency |
+| INFO | over-declaration (a declared capability the code never uses); declared host-bridge use (`/api/_host/*`) and declared Docker access, surfaced as transparency |
 
 > **Heuristic review, not a sandbox.** A static scan of code that runs in-process cannot contain a determined author (`getattr(__import__('os'), 'system')`, base64-then-`exec`, runtime-fetched payloads all bypass it). The scan catches low-effort or accidental danger, forces an explicit consent moment, and records what was approved. Absence of findings is not a safety guarantee. The report carries its own limitations text, and every UI surface says the same. There is no "scanned and safe" badge.
 
