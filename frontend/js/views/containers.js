@@ -1323,19 +1323,24 @@ function renderConfigForm() {
     `;
   }).join('');
 
-  // Suggest next free port by looking at already-used ones.
+  // Suggest next free port by looking at already-used ones. Only running
+  // containers actually hold a host port, so a stopped one is not a conflict.
   const portField = document.getElementById('ct-field-port');
   if (portField) {
-    const usedPorts = new Set(
-      _allContainers.flatMap(c => c.ports)
-        .map(p => parseInt(p.split('→')[0]))
-        .filter(Boolean)
-    );
+    const usedOwner = {};  // host port -> owning container name
+    for (const c of _allContainers) {
+      if (c.state !== 'running') continue;
+      for (const p of (c.ports || [])) {
+        const hp = parseInt(String(p).split('→')[0], 10);
+        if (Number.isFinite(hp) && usedOwner[hp] === undefined) usedOwner[hp] = c.name;
+      }
+    }
+    const usedPorts = new Set(Object.keys(usedOwner).map(Number));
     let suggested = parseInt(portField.value) || 5678;
     while (usedPorts.has(suggested) || CHROME_UNSAFE_PORTS.has(suggested)) suggested++;
     portField.value = suggested;
 
-    // Live warning if the operator types a browser-blocked port.
+    // Live warning if the operator types a browser-blocked or already-bound port.
     let warn = document.getElementById('ct-port-warning');
     if (!warn) {
       warn = document.createElement('div');
@@ -1344,9 +1349,15 @@ function renderConfigForm() {
       portField.parentElement.appendChild(warn);
     }
     const checkPort = () => {
-      const p = parseInt(portField.value);
+      const p = parseInt(portField.value, 10);
+      let msg = '';
       if (CHROME_UNSAFE_PORTS.has(p)) {
-        warn.textContent = `Port ${p} is blocked by Chrome and most browsers (ERR_UNSAFE_PORT). Try 5678 or 8080.`;
+        msg = `Port ${p} is blocked by Chrome and most browsers (ERR_UNSAFE_PORT). Try 5678 or 8080.`;
+      } else if (usedPorts.has(p)) {
+        msg = `Port ${p} is already used by "${usedOwner[p]}". Pick a free port.`;
+      }
+      if (msg) {
+        warn.textContent = msg;
         warn.style.display = 'block';
         portField.style.borderColor = '#fbbf24';
       } else {

@@ -87,6 +87,29 @@ async def list_containers(all: bool = True) -> list[dict]:
         raise RuntimeError(f"Docker list failed: {exc}") from exc
 
 
+async def published_host_ports(all: bool = False) -> dict[int, str]:
+    """Map published host port -> container name. Best-effort; {} on error.
+
+    Feeds the deploy pickers so they can warn about a collision before Docker
+    fails the bind. Defaults to running containers only: a stopped container
+    does not hold its host port, so it is not what conflicts at bind time.
+    """
+    out: dict[int, str] = {}
+    try:
+        containers = await _get_client().containers.list(all=all)
+    except Exception:  # noqa: BLE001 - a warning probe must never raise
+        return out
+    for c in containers:
+        raw = getattr(c, "_container", {}) or {}
+        names = raw.get("Names") or []
+        name = names[0].lstrip("/") if names else raw.get("Id", "")[:12]
+        for p in raw.get("Ports") or []:
+            pub = p.get("PublicPort")
+            if pub:
+                out.setdefault(int(pub), name)
+    return out
+
+
 async def inspect_container(container_id: str) -> dict:
     try:
         c = await _get_client().containers.get(container_id)
