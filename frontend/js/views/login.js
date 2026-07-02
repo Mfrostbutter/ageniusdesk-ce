@@ -41,11 +41,49 @@ const STYLE = `
 .agd-auth-back{margin-top:16px;font-size:12px;color:var(--text-secondary,#9aa0aa);
   background:none;border:none;cursor:pointer;padding:0}
 .agd-auth-back:hover{color:var(--text-primary,#e8eaed)}
+.agd-auth-pass{position:relative}
+.agd-auth-pass input{padding-right:40px}
+.agd-auth-reveal{position:absolute;top:0;right:0;height:100%;width:38px;display:flex;
+  align-items:center;justify-content:center;background:none;border:none;cursor:pointer;
+  color:var(--text-secondary,#9aa0aa);padding:0}
+.agd-auth-reveal:hover{color:var(--text-primary,#e8eaed)}
+.agd-auth-reveal svg{width:18px;height:18px;display:block}
 `;
 
 // Brand wordmark shown centered above every auth card. Mirrors the sidebar logo
 // (`Agenius` + accent `Desk`) so it stays consistent across themes.
 const BRAND = '<div class="agd-auth-brand">Agenius<span class="accent">Desk</span></div>';
+
+// Reveal-toggle icons (inline SVG, currentColor). EYE = password hidden (click to
+// show); EYE_OFF = password visible (click to hide).
+const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+// Password input wrapped with a reveal (eyeball) toggle. Keeps the same id the
+// forms read, so submit/validation logic is unchanged. The button is out of tab
+// order so keyboard entry flows straight through to the next field.
+function passField(id, autocomplete, extra = '') {
+  return `
+    <div class="agd-auth-pass">
+      <input id="${id}" type="password" autocomplete="${autocomplete}"${extra ? ' ' + extra : ''}>
+      <button type="button" class="agd-auth-reveal" tabindex="-1"
+        aria-label="Show password" data-reveal="${id}">${EYE}</button>
+    </div>`;
+}
+
+// Wire every reveal button in an overlay to flip its input between password/text.
+function wireReveals(overlay) {
+  overlay.querySelectorAll('.agd-auth-reveal').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = overlay.querySelector('#' + btn.dataset.reveal);
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.innerHTML = show ? EYE_OFF : EYE;
+      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    });
+  });
+}
 
 function injectStyle() {
   if (document.getElementById('agd-auth-style')) return;
@@ -102,15 +140,16 @@ function renderSetup(policy) {
         <label>Display name (optional)</label>
         <input id="a-name" autocomplete="off">
         <label>Password</label>
-        <input id="a-pass" type="password" autocomplete="new-password">
+        ${passField('a-pass', 'new-password')}
         <div id="a-pwck"></div>
         <label>Confirm password</label>
-        <input id="a-pass2" type="password" autocomplete="new-password">
+        ${passField('a-pass2', 'new-password')}
         <button class="agd-auth-btn" type="submit">Create account</button>
         <div class="agd-auth-err" id="a-err"></div>
       </form>
     </div>`);
   mount(overlay);
+  wireReveals(overlay);
   const err = overlay.querySelector('#a-err');
   const checklist = mountChecklist(overlay.querySelector('#a-pwck'), overlay.querySelector('#a-pass'), policy);
   overlay.querySelector('form').addEventListener('submit', async (e) => {
@@ -147,7 +186,7 @@ function renderLogin() {
         <input id="a-user" type="email" autocomplete="username" autofocus
           placeholder="you@example.com">
         <label>Password</label>
-        <input id="a-pass" type="password" autocomplete="current-password">
+        ${passField('a-pass', 'current-password')}
         <button class="agd-auth-btn" type="submit">Sign in</button>
         <div class="agd-auth-row">
           <a href="#" class="agd-auth-link" id="a-forgot">Forgot password?</a>
@@ -156,6 +195,7 @@ function renderLogin() {
       </form>
     </div>`);
   mount(overlay);
+  wireReveals(overlay);
   const err = overlay.querySelector('#a-err');
   overlay.querySelector('#a-forgot').addEventListener('click', (e) => {
     e.preventDefault();
@@ -261,15 +301,16 @@ function renderReset(token, policy) {
         <h1>Choose a new password</h1>
         <p class="agd-auth-sub">Set a new password for your account.</p>
         <label>New password</label>
-        <input id="a-pass" type="password" autocomplete="new-password" autofocus>
+        ${passField('a-pass', 'new-password', 'autofocus')}
         <div id="a-pwck"></div>
         <label>Confirm new password</label>
-        <input id="a-pass2" type="password" autocomplete="new-password">
+        ${passField('a-pass2', 'new-password')}
         <button class="agd-auth-btn" type="submit">Reset password</button>
         <div class="agd-auth-err" id="a-err"></div>
       </form>
     </div>`);
   mount(overlay);
+  wireReveals(overlay);
   const err = overlay.querySelector('#a-err');
   const checklist = mountChecklist(overlay.querySelector('#a-pwck'), overlay.querySelector('#a-pass'), policy);
   overlay.querySelector('form').addEventListener('submit', async (e) => {
