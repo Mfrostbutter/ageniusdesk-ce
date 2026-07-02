@@ -72,7 +72,7 @@ The wizard steps adapt to the path you pick. The step strip at the top shows onl
 
 Steps: **Welcome -> Stand Up Stack -> Secrets -> AI Assistant -> Done**.
 
-1. On **Stand Up Stack**, pick the services to deploy. Each one runs in the local Docker daemon. n8n and Infisical are pre-selected because they cover the headline case (automation plus secure credential storage). Each card has an optional fields area; passwords are auto-generated and shown after deploy.
+1. On **Stand Up Stack**, pick the services to deploy. Each one runs in the local Docker daemon. n8n and Infisical are pre-selected because they cover the headline case (automation plus secure credential storage). Each selected service shows an **Instance name** and **Host port** you can change, plus its other fields; passwords are auto-generated and shown after deploy. The host-port field warns inline if the port is already used by a running container, is browser-unsafe, or clashes with another service in the same stack, so you can fix it before deploying rather than after a failed bind.
 2. Click **Deploy stack**. The wizard pulls images and starts each container in turn, showing per-service progress. A failure in one service (commonly a host-port clash) does not stop the others; you can use **Retry failed** inline after freeing the port, or finish those later from the Containers view.
 3. When the deploy finishes, each ready service is listed with an **Open in browser** link. Click **Next** to continue to Secrets and AI Assistant.
 4. The stack path cannot register the newly-deployed n8n inside the wizard, because n8n needs its own first-run owner account and API key first. That is handled by the connect guide after the wizard (Step 4 below).
