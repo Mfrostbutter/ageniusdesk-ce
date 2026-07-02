@@ -83,7 +83,7 @@ def test_mcp_normalize_blocks_unsafe(blocked):
 
 @pytest.mark.parametrize("ok", [
     "http://localhost:8088/mcp",
-    "http://10.10.0.61:8088",           # legit self-hosted MCP on the LAN
+    "http://10.0.7.99:8088",            # legit self-hosted MCP on the LAN
 ])
 def test_mcp_normalize_allows_self_hosted(ok):
     base, mcp_url = mcp_client._normalize_mcp_urls(ok)

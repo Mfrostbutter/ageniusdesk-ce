@@ -66,7 +66,7 @@ Extends the existing `host` capability block (which already carries `assistant` 
         },
         {
           "id": "proxmox",
-          "base_url": "https://10.10.0.20:8006/api2/json",
+          "base_url": "https://proxmox.example.lan:8006/api2/json",
           "auth": {
             "type": "header",
             "header": "Authorization",
@@ -184,7 +184,7 @@ On each `http/request` the host:
 ### SSRF posture (deliberately homelab-aware)
 
 Standard SSRF defense blocks private IPs. We **cannot** — a Proxmox box at
-`10.10.0.20` or a Home Assistant at a LAN address is the whole point. Safety comes
+`proxmox.example.lan` or a Home Assistant at a LAN address is the whole point. Safety comes
 from a different invariant: **the host is pinned to the operator-consented
 `base_url`**, and the worker only supplies a relative path. The worker therefore
 cannot reach anything the operator did not explicitly approve at install — including

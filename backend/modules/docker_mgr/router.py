@@ -333,7 +333,7 @@ def _evict_orphaned_instances(candidate_urls: list[str], host_ports: set[str] | 
     Matches on an exact candidate URL, or — for an instance that points at a
     local host (private/loopback/localhost) — on the published host port. The
     port fallback covers instances registered by LAN IP (e.g.
-    http://10.10.0.15:5678), which can't appear in the candidate-URL list.
+    http://192.168.1.50:5678), which can't appear in the candidate-URL list.
     Returns the names of removed instances so callers can surface them.
     """
     host_ports = host_ports or set()
