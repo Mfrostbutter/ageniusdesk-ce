@@ -153,6 +153,7 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 - [ ] **Scheduled backups**: automated per-instance backup with configurable retention
 - [ ] **Scheduled health reports**: an automated, recurring (e.g. monthly) per-instance workflow health report, generated and delivered without anyone opening the dashboard. Rolls the period's success/error rates, error trends, busiest and slowest workflows, and notable incidents (from Insights + Fleet Health) into a client-ready summary, delivered over the notification sinks or email. Builds on the on-demand health-reporter agent (its parallel fan-out becomes a scheduled job) and feeds the agency client-reporting loop.
 - [ ] **Health monitoring**: surface uptime via an **Uptime Kuma connector** (read the operator's existing monitors over Kuma's API and fold up/down + uptime % into Fleet Health) rather than rebuilding generic endpoint polling. Native HTTP/TCP checks remain a later fallback for operators not already on Kuma. See [community-module candidates](docs/specs/2026-06-28-community-module-candidates.md).
+- [ ] **Local-model cost clarity** ([spec](docs/specs/2026-07-02-local-model-cost-clarity.md)): the price book already tracks token usage for every provider (n8n run-data is provider-agnostic), but Ollama and self-hosted Custom-endpoint models fall through to `price_source: "unknown"` since they're absent from OpenRouter and the bundled table. Tag them `local`/`$0` explicitly so the waterfall reads "$0.00 (local)" instead of the ambiguous "price unknown", while still surfacing token counts.
 - [ ] **Expanded notification sinks**: email, PagerDuty, webhook routing per instance
 - [ ] **Workflow security audit scan**: detect missing error handlers, unused credentials, exposed webhooks (this audits n8n workflows; distinct from the community-module code scanner in v0.2)
 - [ ] **Project landing page**: a public web page introducing AgeniusDesk CE (overview, screenshots, install, docs and repo links)
@@ -223,7 +224,8 @@ Not every valuable module folds into the existing chrome; some **add their own s
 - Module isolation (frontend iframe + out-of-process backend) is the real security boundary; shipped in v0.3.0 (see "What shipped in v0.3.0" above). Remaining hardening: non-root container uid, per-host egress enforcement
 - Whisper transcription fallback for the YouTube research module (videos without captions; never a bundled GPU dependency)
 - Workflow diff viewer (visual side-by-side comparison)
-- External secret sources (1Password, AWS Secrets Manager, Vault)
+- Secret backends as core built-ins — Infisical (boot-time env hydration + dashboard CRUD) and Agent Vault (mirror-in, audited egress broker), ported from the beta with a phased Docker-sandbox path to real key isolation; spec: `docs/specs/2026-07-03-secret-backend-ce-port.md`. Earlier community-module framing is superseded.
+- Other external secret sources (1Password, AWS Secrets Manager, HashiCorp Vault)
 - Git integration (export workflows to repos, branch-based environments)
 - SAML/LDAP for team authentication
 - Agentic workflow management — **shipped** as the Agent Fleet core built-in (LangGraph + PydanticAI adapters, live graph view, LangSmith tracing); `backend/modules/agent_fleet/`
