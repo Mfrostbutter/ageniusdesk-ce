@@ -92,6 +92,8 @@ def test_stdlib_open_config_seed():
     assert runners.init is not None
     assert runners.init["image"] == "n8nio/runners:2.25.6"
     assert runners.init["binds"] == ["agd-n8n-n8n-1-runnercfg:/config"]
+    # Must write as root: the fresh volume is root-owned, runners image is non-root.
+    assert runners.init["user"] == "0"
     seed = runners.init["cmd"][0]
     assert "N8N_RUNNERS_STDLIB_ALLOW" in seed and '"*"' in seed
     assert seed.endswith("/config/n8n-task-runners.json")

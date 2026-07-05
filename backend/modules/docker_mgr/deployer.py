@@ -350,6 +350,11 @@ async def deploy_bundle(
                         "Image": init_image,
                         "Entrypoint": init_spec.get("entrypoint", ["/bin/sh", "-c"]),
                         "Cmd": init_spec["cmd"],
+                        # A freshly-created named volume is root-owned, so an init
+                        # that writes into it must run as root (images like
+                        # n8nio/runners default to a non-root user and would hit
+                        # "Permission denied"). Default root; a spec may override.
+                        "User": str(init_spec.get("user", "0")),
                         "HostConfig": {"Binds": list(init_spec.get("binds", []))},
                     }
                     init_container = await docker.containers.create(init_cfg)
