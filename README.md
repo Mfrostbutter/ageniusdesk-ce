@@ -75,6 +75,7 @@ Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metr
 **Container Management**
 - List, inspect, and manage Docker containers directly from the dashboard
 - Deploy new services using one-click templates
+- The n8n template deploys as a two-container bundle (n8n + a task-runner sidecar) so **Python Code nodes work out of the box**, standard library open by default
 - Community template library (drop a JSON file into `data/templates/`)
 - Workflow import, export, and backup
 

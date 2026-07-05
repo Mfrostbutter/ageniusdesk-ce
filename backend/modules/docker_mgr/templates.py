@@ -81,10 +81,27 @@ def _managed_labels(template_id: str, instance_name: str) -> dict:
 
 # ── n8n ───────────────────────────────────────────────────────────────────────
 
-def _build_n8n(f: dict) -> tuple[dict, list[str]]:
+def _build_n8n(f: dict) -> list[bundle_mod.ContainerSpec]:
+    """Build n8n as a two-container bundle: the n8n main container running task
+    runners in EXTERNAL mode, plus the `n8nio/runners` sidecar that ships the JS
+    and Python runners.
+
+    Why a bundle and not a single container: the stock `n8nio/n8n` image has no
+    Python 3, so the in-process Python runner can't start and Python Code nodes
+    fail. External mode moves all Code-node execution (JS + Python) into the
+    runners sidecar, which is n8n's recommended production posture AND gives
+    Python Code nodes a real interpreter. The two share a per-bundle network
+    (the sidecar reaches the broker at http://n8n:5679 via the "n8n" alias) and
+    a minted auth token.
+    """
     instance_name = f["instance_name"].strip().replace(" ", "-").lower()
     port = int(f["port"])
     volume_name = f"agd-n8n-{instance_name}"
+    cfg_volume = f"agd-n8n-{instance_name}-runnercfg"
+    # One tag drives BOTH images. n8n requires the runners image version to
+    # match the n8n version; using the same string guarantees it (they are
+    # published in lockstep on Docker Hub).
+    version = str(f.get("n8n_version") or "latest").strip() or "latest"
 
     # Encryption-key durability:
     # n8n stores credentials encrypted on the data volume with N8N_ENCRYPTION_KEY.
@@ -101,7 +118,13 @@ def _build_n8n(f: dict) -> tuple[dict, list[str]]:
     if persisted.get("encryption_key") != encryption_key:
         template_state.update_field("n8n", instance_name, "encryption_key", encryption_key)
 
-    env = [
+    # Shared secret the runners sidecar uses to authenticate to the n8n broker.
+    # Minted + persisted by the bundle deployer via the template's auto_secrets
+    # (namespace "bundle:n8n") before build() runs; _rand_key() is only a
+    # belt-and-suspenders fallback for a direct unit-test call.
+    auth_token = f.get("runners_auth_token") or _rand_key()
+
+    n8n_env = [
         "N8N_BASIC_AUTH_ACTIVE=true",
         f"N8N_BASIC_AUTH_USER={f['username']}",
         f"N8N_BASIC_AUTH_PASSWORD={f['password']}",
@@ -110,7 +133,6 @@ def _build_n8n(f: dict) -> tuple[dict, list[str]]:
         "N8N_PROTOCOL=http",
         "N8N_HOST=0.0.0.0",
         "N8N_PORT=5678",
-        "N8N_RUNNERS_ENABLED=true",
         "N8N_PUBLIC_API_DISABLED=false",
         # n8n defaults its auth cookie to Secure, which the browser only sends
         # over HTTPS or to localhost. AgeniusDesk deploys n8n for plain-HTTP
@@ -119,21 +141,76 @@ def _build_n8n(f: dict) -> tuple[dict, list[str]]:
         # Disable it so the deployed instance is reachable; operators putting
         # n8n behind TLS can flip this back on.
         "N8N_SECURE_COOKIE=false",
+        # Task runners in EXTERNAL mode (see the docstring). The broker must
+        # listen on 0.0.0.0 so the sidecar container can reach it, not just
+        # localhost. N8N_NATIVE_PYTHON_RUNNER turns on the Python runner.
+        "N8N_RUNNERS_ENABLED=true",
+        "N8N_RUNNERS_MODE=external",
+        "N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0",
+        f"N8N_RUNNERS_AUTH_TOKEN={auth_token}",
+        "N8N_NATIVE_PYTHON_RUNNER=true",
     ]
     if f.get("webhook_url"):
-        env.append(f"WEBHOOK_URL={f['webhook_url'].rstrip('/')}/")
+        n8n_env.append(f"WEBHOOK_URL={f['webhook_url'].rstrip('/')}/")
 
-    config = {
-        "Image": "n8nio/n8n:latest",
-        "Env": env,
-        "Labels": _managed_labels("n8n", instance_name),
-        "HostConfig": {
-            "PortBindings": {"5678/tcp": [{"HostPort": str(port)}]},
-            "Binds": [f"{volume_name}:/home/node/.n8n"],
-            "RestartPolicy": {"Name": "unless-stopped"},
+    n8n_spec = bundle_mod.ContainerSpec(
+        name="n8n",
+        role="primary",
+        expose_port=port,
+        volumes=[volume_name],
+        config={
+            "Image": f"n8nio/n8n:{version}",
+            "Env": n8n_env,
+            "Labels": _managed_labels("n8n", instance_name),
+            "HostConfig": {
+                "PortBindings": {"5678/tcp": [{"HostPort": str(port)}]},
+                "Binds": [f"{volume_name}:/home/node/.n8n"],
+                "RestartPolicy": {"Name": "unless-stopped"},
+            },
         },
-    }
-    return config, [volume_name]
+    )
+
+    # The runners launcher hard-pins Python stdlib access to "" in its stock
+    # /etc/n8n-task-runners.json (an env-override that beats any container env
+    # var), so a plain env var can't open the standard library. We seed a
+    # PATCHED copy into a small config volume — derived from the image's OWN
+    # stock config at deploy time (sed, with a cp fallback) so it stays correct
+    # across runner versions — and point the launcher at it via
+    # N8N_RUNNERS_CONFIG_PATH. Result: `import json/datetime/re/hashlib/...`
+    # works in Python Code nodes. Third-party (pip) modules still require baking
+    # into a custom image, so N8N_RUNNERS_EXTERNAL_ALLOW stays locked.
+    seed_cmd = (
+        "sed 's/\"N8N_RUNNERS_STDLIB_ALLOW\"[[:space:]]*:[[:space:]]*\"\"/"
+        "\"N8N_RUNNERS_STDLIB_ALLOW\": \"*\"/' /etc/n8n-task-runners.json "
+        "> /config/n8n-task-runners.json "
+        "|| cp /etc/n8n-task-runners.json /config/n8n-task-runners.json"
+    )
+    runners_spec = bundle_mod.ContainerSpec(
+        name="runners",
+        role="service",
+        depends_on=["n8n"],
+        volumes=[cfg_volume],
+        init={
+            "image": f"n8nio/runners:{version}",
+            "binds": [f"{cfg_volume}:/config"],
+            "cmd": [seed_cmd],
+        },
+        config={
+            "Image": f"n8nio/runners:{version}",
+            "Env": [
+                # "n8n" resolves to the main container over the bundle network.
+                "N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679",
+                f"N8N_RUNNERS_AUTH_TOKEN={auth_token}",
+                "N8N_RUNNERS_CONFIG_PATH=/config/n8n-task-runners.json",
+            ],
+            "Labels": _managed_labels("n8n", instance_name),
+            "HostConfig": {
+                "Binds": [f"{cfg_volume}:/config"],
+                "RestartPolicy": {"Name": "unless-stopped"},
+            },
+        },
+    )
+    return [n8n_spec, runners_spec]
 
 
 N8N = Template(
@@ -160,8 +237,18 @@ N8N = Template(
         TemplateField(id="webhook_url", label="Webhook URL (optional)", type="text",
                       default="", placeholder="https://n8n.example.com", required=False,
                       hint="Public-facing URL for incoming webhooks."),
+        TemplateField(id="n8n_version", label="n8n version", type="text",
+                      default="latest", placeholder="latest", required=False,
+                      hint="Image tag for BOTH n8n and its runners sidecar "
+                           "(pinned together so their versions match). "
+                           "e.g. 'latest' or '2.25.6'."),
     ],
     build=_build_n8n,
+    # Two-container bundle (n8n + runners sidecar). bundle_id being set routes
+    # deploys through deploy_bundle(). auto_secrets mints + persists the shared
+    # broker auth token before build() runs.
+    bundle_id="n8n",
+    auto_secrets=["runners_auth_token"],
 )
 
 

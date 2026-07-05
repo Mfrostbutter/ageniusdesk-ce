@@ -56,6 +56,11 @@ class ContainerSpec:
     healthcheck:  reserved. v1 ignores this; documented for forward compat.
     expose_port:  the host port the primary container's URL should be built
                   against. Ignored on non-primary specs.
+    init:         optional one-shot container run BEFORE this spec's main
+                  container, sharing volumes via its own binds. Used to seed a
+                  file into a fresh volume (e.g. a patched launcher config).
+                  Shape: {"image": str, "binds": [str], "cmd": [str],
+                  "entrypoint": [str]?}. None = no init step.
     """
 
     name: str
@@ -65,6 +70,7 @@ class ContainerSpec:
     role: str = "service"
     healthcheck: dict | None = None
     expose_port: int | None = None
+    init: dict | None = None
 
 
 # A builder may return any of these shapes. normalise_build_result() flattens
