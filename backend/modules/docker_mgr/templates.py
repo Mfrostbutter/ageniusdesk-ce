@@ -194,6 +194,9 @@ def _build_n8n(f: dict) -> list[bundle_mod.ContainerSpec]:
             "image": f"n8nio/runners:{version}",
             "binds": [f"{cfg_volume}:/config"],
             "cmd": [seed_cmd],
+            # Write as root: the fresh -runnercfg volume is root-owned and the
+            # runners image runs as a non-root user (would hit Permission denied).
+            "user": "0",
         },
         config={
             "Image": f"n8nio/runners:{version}",
