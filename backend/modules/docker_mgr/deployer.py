@@ -333,6 +333,34 @@ async def deploy_bundle(
                         else:
                             raise
 
+                # Optional one-shot init: seed a file into a freshly-created
+                # volume before the main container starts (e.g. a patched task
+                # runner launcher config). Runs with its own binds, no network,
+                # and is removed after it exits. A failure bubbles up to the
+                # per-spec handler below as a partial-bundle error.
+                init_spec = getattr(spec, "init", None)
+                if init_spec:
+                    init_image = init_spec.get("image") or spec.config.get("Image")
+                    await step(f"Configuring {spec.name}…")
+                    try:
+                        await docker.images.pull(init_image)
+                    except Exception:  # noqa: BLE001
+                        pass  # already present locally
+                    init_cfg = {
+                        "Image": init_image,
+                        "Entrypoint": init_spec.get("entrypoint", ["/bin/sh", "-c"]),
+                        "Cmd": init_spec["cmd"],
+                        "HostConfig": {"Binds": list(init_spec.get("binds", []))},
+                    }
+                    init_container = await docker.containers.create(init_cfg)
+                    await init_container.start()
+                    await init_container.wait()
+                    try:
+                        await init_container.delete(force=True)
+                    except aiodocker.DockerError:
+                        pass
+                    await step(f"{spec.name} config prepared.")
+
                 # Remove any stale container with the same name (idempotent redeploy).
                 try:
                     stale = await docker.containers.get(container_name)

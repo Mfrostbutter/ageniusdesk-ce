@@ -76,7 +76,7 @@ The deploy returns a `deploy_id`; the browser connects to `GET /api/containers/d
 {"event": "error", "message": "Image pull failed: ..."}
 ```
 
-The deploy lifecycle on the server is: pull image -> create named volume(s) (reused if they already exist) -> remove any stale container with the same name -> create -> start. Containers deployed this way are named `agd-<instance_name>` and carry `ageniusdesk.managed`, `ageniusdesk.template`, and `ageniusdesk.instance` labels.
+The deploy lifecycle on the server is: pull image -> create named volume(s) (reused if they already exist) -> run any one-shot init step (used to seed a config file into a fresh volume, e.g. the n8n runners launcher config) -> remove any stale container with the same name -> create -> start. Containers deployed this way are named `agd-<instance_name>` and carry `ageniusdesk.managed`, `ageniusdesk.template`, and `ageniusdesk.instance` labels.
 
 ### Auto-generated passwords
 
@@ -88,7 +88,7 @@ Eight templates ship in the box:
 
 | Template | Image | Category | Notes |
 |---|---|---|---|
-| n8n | `n8nio/n8n:latest` | automation | Basic auth, persistent volume, per-instance encryption key, optional webhook URL |
+| n8n | `n8nio/n8n` + `n8nio/runners` | automation | Two-container **bundle** (see below): n8n plus a task-runner sidecar so **Python Code nodes work** out of the box. Basic auth, persistent volume, per-instance encryption key, optional webhook URL, and an `n8n version` field that tags both images together |
 | PostgreSQL | `postgres:16` | database | DB name, user, password; persistent volume |
 | MongoDB | `mongo:7` | database | Root user auto-provisioned on first boot; initial DB |
 | Redis | `redis:7-alpine` | database | Append-only persistence on by default; optional password |
@@ -102,6 +102,14 @@ Each template declares typed fields (instance name, host port, credentials, etc.
 ## Multi-container bundles
 
 A bundle template deploys several containers as one unit on a shared, per-bundle bridge network so members resolve each other by name. The deployer mints any shared secrets (DB password, encryption key) once and reuses them on recreate, topologically sorts the members by `depends_on`, creates the bundle network, then deploys each member in order. Bundle ids are `<template_id>:<instance_name>`.
+
+### The n8n bundle (Python Code node support)
+
+The built-in **n8n** template is a bundle: the n8n main container plus an `n8nio/runners` sidecar. n8n runs task runners in **external mode**, so all Code-node execution (JavaScript and Python) happens in the sidecar rather than in-process. This is n8n's recommended production posture for isolation, and — because the stock `n8nio/n8n` image ships Node only — it is what makes **Python Code nodes** usable at all. The two containers share a minted `N8N_RUNNERS_AUTH_TOKEN` and reach each other over the bundle network (the sidecar talks to the broker at `http://n8n:5679`).
+
+The Python **standard library is open by default** (`import json`, `datetime`, `re`, `hashlib`, `math`, `base64`, etc.). n8n normally locks this down in the runner launcher config; the deployer opens it with a one-shot init step that patches the runner image's own config into a small `-runnercfg` volume and points the launcher at it via `N8N_RUNNERS_CONFIG_PATH`. Third-party (pip) packages are **not** included — those still require building a custom runners image (see n8n's [task runner docs](https://docs.n8n.io/hosting/configuration/task-runners/)).
+
+The `n8n version` field (default `latest`) tags **both** images together, because n8n requires the runners image version to match the n8n version.
 
 On a mid-bundle failure the deployer does **not** roll back; it emits a partial-bundle error listing what started, what failed, and what remained, so you can fix and recreate. The bundle snapshot is persisted so **Recreate bundle** can replay the same fields against the latest images later.
 

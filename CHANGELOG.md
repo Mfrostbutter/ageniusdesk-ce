@@ -4,6 +4,10 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Python Code nodes work out of the box in deployed n8n.** The built-in n8n template now deploys as a two-container bundle: the n8n main container running task runners in **external mode**, plus an `n8nio/runners` sidecar that ships the JavaScript and Python runners. The stock `n8nio/n8n` image has no Python 3, so the in-process Python runner could not start and Python Code nodes failed; moving execution into the sidecar fixes that and also isolates JavaScript execution (n8n's recommended production posture). The Python **standard library is open by default** (`import json`, `datetime`, `re`, `hashlib`, etc.) via a one-shot init step that patches the runner launcher config into a `-runnercfg` volume and points the launcher at it with `N8N_RUNNERS_CONFIG_PATH`; third-party pip packages still require a custom runners image. A new **n8n version** field tags both images together so their versions always match. The two containers share a minted `N8N_RUNNERS_AUTH_TOKEN` and reach each other over the bundle network. See [docs/guide/containers.md](docs/guide/containers.md#the-n8n-bundle-python-code-node-support).
+- `ContainerSpec.init`: bundle members can declare a one-shot init container that runs before the member (sharing its volumes) to seed a config file into a fresh volume.
+
 ## [0.4.2] - 2026-07-02
 
 Security release: upgrade recommended. Fixes four high-severity findings from the
