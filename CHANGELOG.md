@@ -4,6 +4,12 @@ All notable changes to AgeniusDesk Community Edition are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Scheduled workflow backups.** A new internal interval scheduler runs a best-effort backup job that snapshots every connected instance's workflows to disk under `data/backups/<instance>/`, pruning to a configurable retention. Configure it on the Export / Backup view (enable, interval in hours, snapshots to keep, active-only) or over the new operator-gated `/api/backups` endpoints (`GET/PUT /settings`, `GET` list, `POST /run` to back up now, `GET /{instance}/{file}` download, `DELETE`). The schedule is read live from `config.json`, so toggling it takes effect without a restart, and it fans out across the whole fleet regardless of which instance is active (paginating n8n's cursor so instances with more than 250 workflows back up completely). A failing instance is isolated: the others still snapshot. Off by default.
+
+### Changed
+- **Local models show token usage instead of "price unknown" in the cost waterfall.** Ollama (and other always-local AI nodes) cost nothing by construction, but the price book had no rate for them so they fell through to the same "unknown" label as a cloud model the book simply hadn't caught up to. Cost enrichment now reads the AI node's `n8n.node.type` off the span and classifies Ollama node types as local (`price_source: "local"`), and the waterfall renders the token counts with a plain "local" tag rather than a dollar figure (the waterfall row shows the total token count in place of a cost). An operator override still pins a real rate if one is set. See [docs/specs/2026-07-02-local-model-cost-clarity.md](docs/specs/2026-07-02-local-model-cost-clarity.md).
+
 ## [0.4.3] - 2026-07-05
 
 ### Added
