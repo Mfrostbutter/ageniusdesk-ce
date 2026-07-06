@@ -27,11 +27,25 @@ BACKUPS_DIR = DATA_DIR / "backups"
 _STAMP_FMT = "%Y%m%dT%H%M%SZ"
 _FILE_RE = re.compile(r"^\d{8}T\d{6}Z\.json$")
 
+_REMOTE_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "provider": "s3",
+    "bucket": "",
+    "prefix": "",
+    "endpoint_url": "",       # blank = AWS S3; set for R2/B2/Wasabi/MinIO
+    "region": "",
+    "access_key_id_ref": "",       # $VAR ref into the secret store
+    "secret_access_key_ref": "",   # $VAR ref into the secret store
+    "mirror_retention": True,      # apply keep-N pruning offsite too
+    "encrypt": False,              # Fernet-encrypt bytes before upload
+}
+
 _DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "interval_hours": 24,
     "retention": 14,      # keep the N most recent snapshots per instance
     "active_only": False,  # back up only active workflows when True
+    "remote": _REMOTE_DEFAULTS,
 }
 
 _MIN_INTERVAL_HOURS = 1
@@ -43,9 +57,17 @@ _MAX_RETENTION = 500
 def get_settings() -> dict[str, Any]:
     """Current backup settings, defaults merged over any saved values."""
     saved = load_config().get("backups", {}) or {}
-    out = dict(_DEFAULTS)
-    out.update({k: saved[k] for k in _DEFAULTS if k in saved})
+    out = {k: v for k, v in _DEFAULTS.items() if k != "remote"}
+    out.update({k: saved[k] for k in out if k in saved})
+    # Deep-merge the nested remote object so a saved partial keeps the defaults.
+    remote = dict(_REMOTE_DEFAULTS)
+    remote.update({k: v for k, v in (saved.get("remote") or {}).items() if k in _REMOTE_DEFAULTS})
+    out["remote"] = remote
     return out
+
+
+_REMOTE_STR_KEYS = ("bucket", "prefix", "endpoint_url", "region",
+                    "access_key_id_ref", "secret_access_key_ref")
 
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
@@ -59,10 +81,25 @@ def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
         cur["interval_hours"] = _clamp(int(patch["interval_hours"]), _MIN_INTERVAL_HOURS, _MAX_INTERVAL_HOURS)
     if "retention" in patch:
         cur["retention"] = _clamp(int(patch["retention"]), _MIN_RETENTION, _MAX_RETENTION)
+    if isinstance(patch.get("remote"), dict):
+        cur["remote"] = _merge_remote(cur["remote"], patch["remote"])
     config = load_config()
     config["backups"] = cur
     save_config(config)
     return cur
+
+
+def _merge_remote(cur: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    out = dict(cur)
+    for k in ("enabled", "mirror_retention", "encrypt"):
+        if k in patch:
+            out[k] = bool(patch[k])
+    for k in _REMOTE_STR_KEYS:
+        if k in patch:
+            out[k] = str(patch[k] or "").strip()
+    # Only S3 is supported today; ignore any other provider value.
+    out["provider"] = "s3"
+    return out
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -87,6 +124,8 @@ async def run_backup() -> dict[str, Any]:
     settings = get_settings()
     active_only = settings["active_only"]
     retention = settings["retention"]
+    remote_cfg = settings["remote"]
+    remote_on = bool(remote_cfg.get("enabled"))
     instances = get_instances()
     stamp = datetime.now(timezone.utc).strftime(_STAMP_FMT)
 
@@ -102,6 +141,12 @@ async def run_backup() -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001 - one bad instance must not sink the run
             entry["error"] = str(e)[:200]
             logger.warning("backup failed for instance %s: %s", inst_id, e)
+            results.append(entry)
+            continue
+        # Offsite push is a separate best-effort step: a failed upload leaves the
+        # local snapshot intact (ok=True) with remote_ok=False.
+        if remote_on:
+            entry["remote_ok"], entry["remote_error"] = await _push_remote(remote_cfg, inst_id, path, retention)
         results.append(entry)
 
     ok = sum(1 for r in results if r["ok"])
@@ -113,7 +158,23 @@ async def run_backup() -> dict[str, Any]:
         "instances_ok": ok,
         "instances_total": len(results),
         "workflows_total": total_wf,
+        "remote_enabled": remote_on,
     }
+
+
+async def _push_remote(remote_cfg: dict[str, Any], inst_id: str, path: Path, retention: int) -> tuple[bool, str]:
+    """Upload one snapshot offsite and mirror retention. Never raises: returns
+    (ok, error) so a push failure is recorded, not fatal to the run."""
+    from backend.modules.backups import remote as remote_sink
+    try:
+        data = path.read_bytes()
+        await remote_sink.upload_snapshot(remote_cfg, inst_id, path.name, data)
+        if remote_cfg.get("mirror_retention", True):
+            await remote_sink.mirror_retention(remote_cfg, inst_id, retention)
+        return True, ""
+    except Exception as e:  # noqa: BLE001 - offsite failure must not lose the local copy
+        logger.warning("offsite backup push failed for %s: %s", inst_id, e)
+        return False, str(e)[:200]
 
 
 def _write_snapshot(instance_id: str, name: str, stamp: str, workflows: list[dict], active_only: bool) -> Path:

@@ -58,11 +58,20 @@ langgraph = [
     "langsmith==0.8.14",
     "pydantic-ai==1.99.0",
 ]
+# Offsite backup: push workflow snapshots to S3-compatible object storage
+# (AWS S3, Cloudflare R2, Backblaze B2, Wasabi, self-hosted MinIO). NOT in the
+# default image; install with '.[s3]' (or AGD_EXTRAS="...,s3") to enable a
+# remote backup destination. minio-py is a light S3 client; the whole point of
+# the extra is to keep the default image lean.
+s3 = [
+    "minio>=7.2.0",
+]
 dev = [
     "ruff>=0.7.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "respx>=0.21.0",
+    "minio>=7.2.0",
 ]
 
 [project.urls]

@@ -227,6 +227,155 @@ def test_backups_run_and_download(client, monkeypatch):
     assert bad.status_code == 404
 
 
+# ── Offsite / S3 sink ────────────────────────────────────────────────────────
+
+
+class _FakeMinio:
+    """In-memory stand-in for the minio client: key -> bytes."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def put_object(self, bucket, key, data, length, content_type=None):
+        self.objects[key] = data.read()
+
+    def remove_object(self, bucket, key):
+        self.objects.pop(key, None)
+
+    def list_objects(self, bucket, prefix, recursive=True):
+        for k in list(self.objects):
+            if k.startswith(prefix):
+                yield type("O", (), {"object_name": k})()
+
+    def remove_objects(self, bucket, delete_iter):
+        for d in delete_iter:
+            self.objects.pop(d.name, None)  # minio DeleteObject exposes .name
+        return []  # minio yields only errors
+
+
+@pytest.fixture
+def fake_s3(monkeypatch):
+    from backend.modules.backups import remote
+    fake = _FakeMinio()
+    monkeypatch.setattr(remote, "_build_client", lambda cfg: fake)
+    monkeypatch.setattr(remote, "remote_available", lambda: True)
+    return fake
+
+
+_CFG = {"bucket": "b", "prefix": "agd/", "mirror_retention": True, "encrypt": False}
+
+
+async def test_remote_upload_and_mirror_retention(fake_s3):
+    from backend.modules.backups import remote
+
+    for stamp in ("20260101T000000Z.json", "20260101T000100Z.json", "20260101T000200Z.json"):
+        await remote.upload_snapshot(_CFG, "inst1", stamp, b'{"x":1}')
+    assert len(fake_s3.objects) == 3
+    removed = await remote.mirror_retention(_CFG, "inst1", 2)
+    assert removed == 1
+    assert set(fake_s3.objects) == {
+        "agd/inst1/20260101T000200Z.json",
+        "agd/inst1/20260101T000100Z.json",
+    }
+
+
+async def test_remote_encrypt_roundtrips(fake_s3):
+    from backend.config import _fernet
+    from backend.modules.backups import remote
+
+    cfg = {**_CFG, "encrypt": True}
+    key = await remote.upload_snapshot(cfg, "inst1", "20260101T000000Z.json", b'{"secret":1}')
+    assert key.endswith(".json.enc")
+    assert _fernet().decrypt(fake_s3.objects[key]) == b'{"secret":1}'
+
+
+async def test_remote_probe_cleans_up(fake_s3):
+    from backend.modules.backups import remote
+
+    out = await remote.test_remote(_CFG)
+    assert out["ok"] is True and out["latency_ms"] is not None
+    assert fake_s3.objects == {}  # probe object put then removed
+
+
+def test_endpoint_guard_and_scheme():
+    from backend.modules.backups import remote
+
+    assert remote._parse_endpoint("") == ("s3.amazonaws.com", True)
+    assert remote._parse_endpoint("http://10.10.0.5:9000") == ("10.10.0.5:9000", False)  # LAN MinIO allowed
+    assert remote._parse_endpoint("https://x.r2.cloudflarestorage.com") == ("x.r2.cloudflarestorage.com", True)
+    with pytest.raises(ValueError):
+        remote._parse_endpoint("http://169.254.169.254")  # cloud metadata blocked
+
+
+def test_missing_extra_raises_clear_error(monkeypatch):
+    from backend.modules.backups import remote
+    monkeypatch.setattr(remote, "remote_available", lambda: False)
+    with pytest.raises(RuntimeError, match="s3"):
+        remote._build_client(_CFG)
+
+
+async def test_run_backup_pushes_remote(two_instances, fake_s3, monkeypatch):
+    from backend.modules.backups import service
+
+    async def fake_export(inst, active_only=False):
+        return [{"id": "1"}]
+
+    monkeypatch.setattr(service.n8n_client, "export_all_workflows_for", fake_export)
+    service.save_settings({
+        "enabled": True,
+        "remote": {"enabled": True, "bucket": "b", "prefix": "agd/"},
+    })
+    summary = await service.run_backup()
+    assert summary["remote_enabled"] is True
+    assert all(r["remote_ok"] for r in summary["instances"])
+    # One object per instance landed in the bucket.
+    assert len(fake_s3.objects) == 2
+
+
+async def test_run_backup_remote_failure_keeps_local(two_instances, monkeypatch):
+    from backend.modules.backups import remote, service
+
+    async def fake_export(inst, active_only=False):
+        return [{"id": "1"}]
+
+    def boom(cfg):
+        raise RuntimeError("bad creds")
+
+    monkeypatch.setattr(service.n8n_client, "export_all_workflows_for", fake_export)
+    monkeypatch.setattr(remote, "remote_available", lambda: True)
+    monkeypatch.setattr(remote, "_build_client", boom)
+    service.save_settings({"enabled": True, "remote": {"enabled": True, "bucket": "b"}})
+
+    summary = await service.run_backup()
+    for r in summary["instances"]:
+        assert r["ok"] is True            # local snapshot still written
+        assert r["remote_ok"] is False    # offsite push failed, isolated
+        assert "bad creds" in r["remote_error"]
+    # Local files exist regardless of the offsite failure.
+    assert service.list_backups()
+
+
+def test_settings_remote_merge_and_redaction(client):
+    _auth(client)
+    r = client.put("/api/backups/settings", headers=_csrf(client), json={
+        "remote": {
+            "enabled": True, "bucket": "mybucket", "endpoint_url": "https://r2.example.com",
+            "access_key_id_ref": "$AGD_S3_KEY", "secret_access_key_ref": "$AGD_S3_SECRET",
+        },
+    })
+    assert r.status_code == 200, r.text
+    remote = r.json()["settings"]["remote"]
+    assert remote["enabled"] is True and remote["bucket"] == "mybucket"
+    # Ref names are returned (not secrets); no resolved value key leaks.
+    assert remote["access_key_id_ref"] == "$AGD_S3_KEY"
+    assert "available" in remote
+    assert "secret_access_key" not in remote  # only the *_ref form is exposed
+    # A later partial save keeps prior fields (deep merge).
+    r2 = client.put("/api/backups/settings", headers=_csrf(client), json={"remote": {"prefix": "p/"}})
+    m2 = r2.json()["settings"]["remote"]
+    assert m2["bucket"] == "mybucket" and m2["prefix"] == "p/"
+
+
 class _FrozenDatetime:
     """Minimal datetime stand-in so run_backup produces deterministic stamps."""
 

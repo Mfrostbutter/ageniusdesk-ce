@@ -73,6 +73,21 @@ The interval scheduler is dependency-free and in-process, so backups run only wh
 
 **Endpoints** (operator role): `GET/PUT /api/backups/settings`, `GET /api/backups` (list), `POST /api/backups/run` (run now), `GET /api/backups/{instance_id}/{filename}` (download), `DELETE /api/backups/{instance_id}/{filename}`.
 
+#### Offsite destination (S3-compatible)
+
+A snapshot that only lives in the same Docker volume as the app dies with the host. Expand **Offsite destination** in the Scheduled Backups card to also push each snapshot to S3-compatible object storage: AWS S3, Cloudflare R2, Backblaze B2, Wasabi, or a self-hosted **MinIO**. Offsite is opt-in and best-effort: the local snapshot is always written first, and an upload failure is recorded per instance without losing the local copy.
+
+Requires the `s3` extra in the image (`pip install '.[s3]'` or `AGD_EXTRAS="...,s3"`); the card warns if it is missing. Steps:
+
+1. Add your access key ID and secret access key to the **Secrets** view, then reference them here as `$VAR` names (for example `$AGD_S3_ACCESS_KEY_ID`). Credentials are never stored in `config.json` and never returned by the API; only the ref names are.
+2. Set the **Bucket**, an optional **Prefix**, the **Endpoint URL** (leave blank for AWS; set it for R2/B2/Wasabi/MinIO), and **Region**.
+3. Optionally enable **Mirror retention offsite** (on by default; keeps the same "keep N" as local, otherwise leave it off and use a bucket lifecycle policy) and **Encrypt before upload**.
+4. Click **Test connection** to validate with a put+delete probe, then **Save**.
+
+Objects are written as `{prefix}{instance_id}/{timestamp}.json`. Endpoint hosts on a private LAN are allowed (so MinIO on your network works); the cloud instance-metadata address is refused. `AGD_TLS_VERIFY=false` is honored for a self-signed LAN MinIO, like the rest of the app.
+
+> **Encryption and restore:** with **Encrypt before upload** on, objects are Fernet-encrypted with the app's `SECRET_KEY` and suffixed `.json.enc`. Restoring one requires the same `SECRET_KEY` (back it up). v1 is push-only: to restore an offsite snapshot, download the object (from the provider console) and use the **Restore from Backup** drop zone below. Local snapshots are unencrypted.
+
 ### Full backup
 
 1. Click **All Workflows** to back up every workflow, or **Active Only** to back up just the workflows that are active in n8n.
