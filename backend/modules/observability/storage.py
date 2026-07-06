@@ -197,6 +197,7 @@ async def get_trace(trace_id: str) -> list[dict]:
             "tokens_out": int(r["tokens_out"]) if r["tokens_out"] is not None else None,
             "cost_usd": float(r["cost_usd"]) if r["cost_usd"] is not None else None,
             "cost_source": r["cost_source"] or "",
+            "price_source": r["price_source"] or "",
             "cost_is_estimate": bool(r["cost_is_estimate"]) if r["cost_is_estimate"] is not None else None,
             "attributes": attrs,
         })
