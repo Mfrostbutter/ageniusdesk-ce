@@ -94,14 +94,28 @@ def _match(table: dict[str, Any], model: str, norm: str) -> Optional[dict[str, f
     return None
 
 
-def price_for(model: str) -> Optional[dict[str, Any]]:
-    """Resolve a model to {in, out, source, estimate} per 1M tokens, or None."""
+def price_for(model: str, is_local: bool = False) -> Optional[dict[str, Any]]:
+    """Resolve a model to {in, out, source, estimate} per 1M tokens, or None.
+
+    An operator override still wins over everything (a "local" model billed by
+    GPU-hour elsewhere can be pinned to a real rate). Absent an override, a
+    ``is_local`` model resolves to an exact $0 (``source="local"``,
+    ``estimate=False``) instead of falling through to None -> "unknown".
+    """
+    norm = _normalize(model) if model else ""
+    cache = _load()
+    if model:
+        # Overrides outrank the local tier so an operator can pin a real rate.
+        override = _match(cache.get("overrides", {}), model, norm)
+        if override:
+            return {"in": float(override["in"]), "out": float(override["out"]),
+                    "source": "override", "estimate": True}
+    if is_local:
+        # A local model's cost is exactly zero, not an approximation.
+        return {"in": 0.0, "out": 0.0, "source": "local", "estimate": False}
     if not model:
         return None
-    norm = _normalize(model)
-    cache = _load()
     for source, table in (
-        ("override", cache.get("overrides", {})),
         ("openrouter", cache.get("fetched", {})),
         ("bundled", _BUNDLED),
     ):

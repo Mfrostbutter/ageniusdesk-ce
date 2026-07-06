@@ -22,6 +22,22 @@ from . import pricing, storage
 logger = logging.getLogger(__name__)
 
 
+# n8n node types whose backing model is always local (no metered API, $0 cost).
+_LOCAL_NODE_TYPES = frozenset({
+    "@n8n/n8n-nodes-langchain.lmChatOllama",
+    "@n8n/n8n-nodes-langchain.lmOllama",
+})
+
+
+def _is_local_node(node_spans: list[dict]) -> bool:
+    """True if the node's spans identify an always-local AI node (e.g. Ollama)."""
+    for s in node_spans:
+        nt = (s.get("attributes") or {}).get("n8n.node.type")
+        if nt in _LOCAL_NODE_TYPES:
+            return True
+    return False
+
+
 def _model_for(run: dict) -> str:
     for path in ("inputOverride", "data"):
         try:
@@ -77,6 +93,7 @@ async def enrich_trace(trace_id: str) -> int:
         node_spans = by_node.get(node, [])
         if not node_spans:
             continue
+        is_local = _is_local_node(node_spans)
         for i, run in enumerate(runs):
             tu = _token_usage(run)
             if not tu:
@@ -86,7 +103,7 @@ async def enrich_trace(trace_id: str) -> int:
             if not (tin or tout):
                 continue
             model = _model_for(run)
-            pr = pricing.price_for(model)
+            pr = pricing.price_for(model, is_local=is_local)
             if pr:
                 cost = round(tin / 1e6 * pr["in"] + tout / 1e6 * pr["out"], 6)
                 p_in, p_out, p_src, est = pr["in"], pr["out"], pr["source"], 1 if pr["estimate"] else 0
