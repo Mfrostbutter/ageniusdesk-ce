@@ -8,29 +8,21 @@ Running n8n for clients or multiple teams means juggling multiple logins, scatte
 
 **n8n-first.** Everything centers on your n8n workflows: the dashboard, the error feed, OpenTelemetry traces, Code Lab, and insights all revolve around them. There is also an **optional** agent layer (build and run your own LangGraph / PydanticAI agents), but it is **off by default**, so a default install is a focused n8n control plane, nothing extra to learn or run. Turn it on only if you want it (see [With the Agent Fleet](#with-the-agent-fleet-langgraph--pydanticai-agents)).
 
+## See it in action
+
+<video src="https://github.com/Mfrostbutter/ageniusdesk-ce/releases/download/v0.4.4/ageniusdesk-screens-6mbps.mp4" controls muted autoplay loop playsinline poster="https://raw.githubusercontent.com/Mfrostbutter/ageniusdesk-ce/main/docs/screenshots/dashboard.png" width="900">
+  Your browser does not support embedded video. <a href="https://github.com/Mfrostbutter/ageniusdesk-ce/releases/download/v0.4.4/ageniusdesk-screens-6mbps.mp4">Watch the ~45-second tour</a>.
+</video>
+
+A ~45-second walkthrough of the dashboard. Prefer stills? A few highlights below.
+
 ## Screenshots
 
-One dashboard for every n8n instance: live stats, an execution timeline, and a real-time error feed.
-
-![Dashboard](docs/screenshots/dashboard.png)
-
-Per-execution OpenTelemetry traces from n8n: a node-by-node waterfall, live metrics, and LLM cost folded into the trace layer.
-
-![Observe](docs/screenshots/observe.png)
-
-| Executions & errors | Insights |
+| Overview | Observe: node-by-node traces |
 |:---:|:---:|
-| ![Executions and errors grouped by workflow, node, and type](docs/screenshots/executions-errors.png) | ![Execution analytics: success rate, timeline, top workflows](docs/screenshots/insights.png) |
-| **Code Lab** | **AI Models** |
-| ![Monaco editor with AI code assistant and Send to n8n](docs/screenshots/code-lab.png) | ![Per-area provider and model configuration](docs/screenshots/models.png) |
-| **The Harness** | **Containers** |
-| ![Agent knowledge workspace: notes vault, sources, and instructions](docs/screenshots/harness.png) | ![Deploy and manage Docker services from the dashboard](docs/screenshots/containers.png) |
-| **YouTube Research (community module)** | **The Harness, populated** |
-| ![Research console: paste a YouTube link, get a structured breakdown filed into the vault](docs/screenshots/research.png) | ![The notes vault with research auto-filed under research/ai-assisted-coding](docs/screenshots/harness-populated.png) |
-| **Agent Fleet** | **Build an agent in Code Lab** |
-| ![A managed fleet of LangGraph and PydanticAI agents: catalog, live graph, run waterfall, and human-in-the-loop approval](docs/screenshots/agent-fleet.png) | ![Code Lab Agent Builder: framework toggle, agent starters, and Register to Agent Fleet](docs/screenshots/agent-builder.png) |
-| **Secrets store** | **Import / Export** |
-| ![Fernet-encrypted secret store with $NAME references and masked values](docs/screenshots/secrets-store.png) | ![Import n8n workflows from JSON with tags and a title override](docs/screenshots/import-export.png) |
+| ![One dashboard for every n8n instance: live stats, timeline, and a real-time error feed](docs/screenshots/dashboard.png) | ![Per-execution OpenTelemetry trace waterfall with live metrics and LLM cost](docs/screenshots/observe.png) |
+| **Agent Fleet (optional)** | **Scheduled backups + offsite** |
+| ![Managed LangGraph and PydanticAI agents: catalog, live graph, run waterfall, and human-in-the-loop](docs/screenshots/agent-fleet.png) | ![Scheduled per-instance workflow backups with an S3-compatible offsite destination](docs/screenshots/scheduled-backups.png) |
 
 ## What's Included
 
