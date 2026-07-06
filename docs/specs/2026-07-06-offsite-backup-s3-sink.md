@@ -1,6 +1,6 @@
 # Spec: Offsite Backup Destinations (S3-compatible sink)
 
-Status: Draft
+Status: Accepted (open questions resolved 2026-07-06, Section 8)
 Date: 2026-07-06
 Owner: Michael Frostbutter
 Scope: AgeniusDesk Community Edition
@@ -96,8 +96,11 @@ S3 support is an **opt-in extra** so the default image stays lean (mirrors the
 - httpx + hand-rolled SigV4: no new dep but error-prone; rejected unless the
   image-size cost of the above is unacceptable.
 
-Lean toward **aioboto3** for endpoint/region breadth; revisit if image size is a
-concern. When `remote.enabled` but the extra is absent, the run logs a clear
+**Decided: minio-py** (see Section 8). It covers the same S3-compatible surface
+via `endpoint_url` at a fraction of botocore's install weight, which is the whole
+point of gating it behind an extra. The client is synchronous; call it through
+`asyncio.to_thread` so the event loop is never blocked (fine for an occasional
+backup). When `remote.enabled` but the extra is absent, the run logs a clear
 "install the s3 extra to enable offsite backup" and keeps the local snapshot
 (never a hard failure).
 
@@ -188,8 +191,16 @@ natural durability layer on top. Core built-in with direct outbound HTTP, so it
 does **not** depend on the `http.request` bridge (that gates credential-holding
 community modules under isolation, a different concern).
 
-## 8. Open questions
+## 8. Resolved decisions (2026-07-06)
 
-- S3 library: aioboto3 vs minio-py (image-size vs async-native tradeoff).
-- Mirror retention on by default, or upload-only and lean on bucket lifecycle?
-- Is restore-from-remote wanted in v1, or is push-only acceptable to start?
+- **S3 library: minio-py.** Same S3-compatible surface via `endpoint_url` at a
+  fraction of botocore's install weight; the extra exists to keep the default
+  image lean, so the lighter dep wins. Run the sync client through
+  `asyncio.to_thread`.
+- **Mirror retention: on by default.** "Keep N" should mean N everywhere and
+  work with no bucket-lifecycle setup (the common self-hoster case). The toggle
+  lets large fleets turn it off and lean on lifecycle policies instead.
+- **Push-only in v1.** No remote browse/restore UI. To restore, download the
+  object (UI link once phase 2 lists uploaded snapshots, or the provider
+  console) and use the existing restore drop zone. A restore-from-remote surface
+  can follow if demand appears.

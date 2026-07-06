@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.auth_gate import require_role
+from backend.modules.backups import remote as remote_sink
 from backend.modules.backups import service
 from backend.scheduler import scheduler
 
@@ -20,24 +21,56 @@ _operator = Depends(require_role("operator"))
 JOB_ID = "workflow-backup"
 
 
+class RemoteSettings(BaseModel):
+    enabled: bool | None = None
+    bucket: str | None = None
+    prefix: str | None = None
+    endpoint_url: str | None = None
+    region: str | None = None
+    access_key_id_ref: str | None = None
+    secret_access_key_ref: str | None = None
+    mirror_retention: bool | None = None
+    encrypt: bool | None = None
+
+
 class BackupSettings(BaseModel):
     enabled: bool | None = None
     interval_hours: int | None = None
     retention: int | None = None
     active_only: bool | None = None
+    remote: RemoteSettings | None = None
+
+
+def _with_redacted_remote(st: dict) -> dict:
+    """Never return resolved credential values; the $VAR ref names are safe."""
+    out = dict(st)
+    out["remote"] = remote_sink.redacted(st.get("remote"))
+    return out
 
 
 @router.get("/settings", dependencies=[_operator])
 async def get_settings():
     st = service.get_settings()
     job = next((j for j in scheduler.status() if j["id"] == JOB_ID), None)
-    return {"settings": st, "job": job}
+    return {"settings": _with_redacted_remote(st), "job": job}
 
 
 @router.put("/settings", dependencies=[_operator])
 async def update_settings(patch: BackupSettings):
     effective = service.save_settings(patch.model_dump(exclude_none=True))
-    return {"settings": effective}
+    return {"settings": _with_redacted_remote(effective)}
+
+
+@router.post("/test-remote", dependencies=[_operator])
+async def test_remote(patch: RemoteSettings | None = None):
+    """Validate the offsite destination with a put+delete probe. Tests the given
+    overrides merged onto the saved config (without persisting), so an operator
+    can check settings before saving. Credentials still resolve from the secret
+    store via their $VAR refs."""
+    cfg = dict(service.get_settings()["remote"])
+    if patch is not None:
+        cfg.update(patch.model_dump(exclude_none=True))
+    return await remote_sink.test_remote(cfg)
 
 
 @router.get("", dependencies=[_operator])
