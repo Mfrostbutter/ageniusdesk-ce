@@ -984,6 +984,40 @@ async def export_all_workflows(active_only: bool = False) -> list[dict]:
     return workflows
 
 
+async def export_all_workflows_for(inst: dict, active_only: bool = False) -> list[dict]:
+    """Export all workflows from a SPECIFIC instance (not the active one).
+
+    Mirrors ``_instance_health``: resolves the instance's own encrypted URL + key
+    and talks to its n8n API directly, so scheduled backups can fan out across the
+    whole fleet regardless of which instance is currently active. Paginates through
+    n8n's cursor so instances with more than 250 workflows back up completely.
+    """
+    from backend.config import decrypt_value
+
+    url = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
+    api_key = decrypt_value(inst.get("api_key", ""))
+    headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
+    params: dict = {"limit": 250}
+    if active_only:
+        params["active"] = "true"
+
+    workflows: list[dict] = []
+    cursor = ""
+    async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        while True:
+            q = dict(params)
+            if cursor:
+                q["cursor"] = cursor
+            resp = await client.get(f"{url}/api/v1/workflows", headers=headers, params=q)
+            resp.raise_for_status()
+            body = resp.json() or {}
+            workflows.extend(body.get("data", []) or [])
+            cursor = body.get("nextCursor") or ""
+            if not cursor:
+                break
+    return workflows
+
+
 # ── n8n User Management ──────────────────────────────────────────────────────
 
 

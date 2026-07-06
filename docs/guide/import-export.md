@@ -1,6 +1,6 @@
 # Import & Export
 
-AgeniusDesk moves n8n workflows in and out of an instance as plain JSON. The **Import Workflows** view brings JSON into the active instance (single or bulk, file or paste, with optional rename and tagging). The **Export / Backup** view pulls workflows back out: individual selections, a full backup file, or an active-only backup, plus a drop zone to restore a backup file. All of these act on whichever instance is currently active. See [Workflows](workflows.md) for browsing and running what you import, and [Authentication & RBAC](../architecture/auth.md) for who can perform these actions.
+AgeniusDesk moves n8n workflows in and out of an instance as plain JSON. The **Import Workflows** view brings JSON into the active instance (single or bulk, file or paste, with optional rename and tagging). The **Export / Backup** view pulls workflows back out: scheduled snapshots of the whole fleet, individual selections, a full backup file, or an active-only backup, plus a drop zone to restore a backup file. The on-demand exports act on whichever instance is currently active; scheduled backups fan out across every connected instance. See [Workflows](workflows.md) for browsing and running what you import, and [Authentication & RBAC](../architecture/auth.md) for who can perform these actions.
 
 ---
 
@@ -56,7 +56,39 @@ Each import (success or failure) is logged in the **Import History** card for th
 
 ## Export & backup
 
-The **Export / Backup** view has three sections: a full-backup row, an individual-export checklist, and a restore drop zone.
+The **Export / Backup** view has four sections: a scheduled-backups card, a full-backup row, an individual-export checklist, and a restore drop zone.
+
+### Scheduled backups
+
+Unlike the on-demand exports below (which download to your browser and act on the active instance only), scheduled backups run on the server and snapshot **every connected instance** to disk on a schedule. They are **off by default**.
+
+1. In the **Scheduled Backups** card, toggle **Enabled**.
+2. Set **Every (hours)** (the interval, 1 to 720), **Keep (snapshots/instance)** (retention, 1 to 500), and optionally **Active workflows only**.
+3. Click **Save**. The schedule takes effect immediately, no restart.
+4. Click **Back up now** to run a snapshot on demand at any time.
+
+Each run writes one JSON snapshot per instance under `data/backups/<instance_id>/<timestamp>.json` (the same envelope as a full backup), then prunes each instance's folder to the retention count, keeping the newest. A failing or unreachable instance is isolated: the rest still snapshot, and the card's status line shows the last run's result and the next scheduled run. Stored snapshots are listed per instance below the controls with a download link and size; snapshots from an instance you later remove are still listed (flagged "removed instance") so you can recover them.
+
+The interval scheduler is dependency-free and in-process, so backups run only while the dashboard is running. The schedule persists in `config.json`, so it survives restarts.
+
+**Endpoints** (operator role): `GET/PUT /api/backups/settings`, `GET /api/backups` (list), `POST /api/backups/run` (run now), `GET /api/backups/{instance_id}/{filename}` (download), `DELETE /api/backups/{instance_id}/{filename}`.
+
+#### Offsite destination (S3-compatible)
+
+A snapshot that only lives in the same Docker volume as the app dies with the host. Expand **Offsite destination** in the Scheduled Backups card to also push each snapshot to S3-compatible object storage: AWS S3, Cloudflare R2, Backblaze B2, Wasabi, or a self-hosted **MinIO**. Offsite is opt-in and best-effort: the local snapshot is always written first, and an upload failure is recorded per instance without losing the local copy.
+
+> **Free tier tip:** Cloudflare R2's free plan includes 10 GB of storage and, unlike most object stores, **no egress fees** (so restores never cost anything). Workflow snapshots are small JSON, a few MB each, so 10 GB holds years of fleet backups at no cost. Backblaze B2's free plan (10 GB) is a comparable option. Either is a solid zero-cost offsite target.
+
+Requires the `s3` extra in the image (`pip install '.[s3]'` or `AGD_EXTRAS="...,s3"`); the card warns if it is missing. Steps:
+
+1. Add your access key ID and secret access key to the **Secrets** view, then reference them here as `$VAR` names (for example `$AGD_S3_ACCESS_KEY_ID`). Credentials are never stored in `config.json` and never returned by the API; only the ref names are.
+2. Set the **Bucket**, an optional **Prefix**, the **Endpoint URL** (leave blank for AWS; set it for R2/B2/Wasabi/MinIO), and **Region**.
+3. Optionally enable **Mirror retention offsite** (on by default; keeps the same "keep N" as local, otherwise leave it off and use a bucket lifecycle policy) and **Encrypt before upload**.
+4. Click **Test connection** to validate with a put+delete probe, then **Save**.
+
+Objects are written as `{prefix}{instance_id}/{timestamp}.json`. Endpoint hosts on a private LAN are allowed (so MinIO on your network works); the cloud instance-metadata address is refused. `AGD_TLS_VERIFY=false` is honored for a self-signed LAN MinIO, like the rest of the app.
+
+> **Encryption and restore:** with **Encrypt before upload** on, objects are Fernet-encrypted with the app's `SECRET_KEY` and suffixed `.json.enc`. Restoring one requires the same `SECRET_KEY` (back it up). v1 is push-only: to restore an offsite snapshot, download the object (from the provider console) and use the **Restore from Backup** drop zone below. Local snapshots are unencrypted.
 
 ### Full backup
 
