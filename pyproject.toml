@@ -1,6 +1,6 @@
 [project]
 name = "ageniusdesk"
-version = "0.4.3"
+version = "0.4.4"
 description = "AgeniusDesk — the command center for automation operators. Multi-instance n8n management, real-time error tracking, AI-assisted debugging, Code Lab."
 readme = "README.md"
 license = { file = "LICENSE" }
