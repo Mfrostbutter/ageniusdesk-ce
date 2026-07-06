@@ -88,7 +88,9 @@ export function buildWaterfall(spans) {
       <div style="flex:1;position:relative;height:16px;background:var(--bg-input,rgba(255,255,255,.04));border-radius:3px">
         <div style="position:absolute;left:${leftPct}%;width:${widthPct}%;top:2px;height:12px;background:${barColor};border-radius:3px;min-width:2px"></div>
       </div>
-      <div style="flex:0 0 92px;text-align:right;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">${(s.duration_ms || 0).toFixed(1)}ms${s.cost_usd != null ? `<br><span style="color:var(--accent)">${fmtUsd(s.cost_usd)}</span>` : ''}</div>
+      <div style="flex:0 0 92px;text-align:right;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">${(s.duration_ms || 0).toFixed(1)}ms${s.price_source === 'local'
+        ? ((s.tokens_in != null || s.tokens_out != null) ? `<br><span style="color:var(--text-secondary)">${(s.tokens_in || 0) + (s.tokens_out || 0)} tok</span>` : '')
+        : (s.cost_usd != null ? `<br><span style="color:var(--accent)">${fmtUsd(s.cost_usd)}</span>` : '')}</div>
     `;
 
     const detail = document.createElement('div');
@@ -98,8 +100,14 @@ export function buildWaterfall(spans) {
       const v = typeof attrs[k] === 'object' ? JSON.stringify(attrs[k]) : attrs[k];
       return `<div><span style="color:var(--text-dim)">${esc(k)}</span> = ${esc(v)}</div>`;
     }).join('') || '<div style="color:var(--text-dim)">no attributes</div>';
+    const isLocal = s.price_source === 'local';
+    // Local models have no metered cost; show token usage and a plain "local"
+    // tag instead of a dollar figure.
+    const costTail = isLocal
+      ? '<span style="color:var(--text-dim)">local</span>'
+      : `<strong style="color:var(--accent)">${s.cost_usd != null ? fmtUsd(s.cost_usd) : 'price unknown'}</strong>${s.cost_is_estimate ? ' (est)' : ''}`;
     const costLine = (s.cost_usd != null || s.tokens_in != null)
-      ? `<div style="margin-bottom:6px;color:var(--text-primary)">${esc(s.model || 'model ?')} · in ${s.tokens_in ?? '?'} / out ${s.tokens_out ?? '?'} tok · <strong style="color:var(--accent)">${s.cost_usd != null ? fmtUsd(s.cost_usd) : 'price unknown'}</strong>${s.cost_is_estimate ? ' (est)' : ''}</div>`
+      ? `<div style="margin-bottom:6px;color:var(--text-primary)">${esc(s.model || 'model ?')} · in ${s.tokens_in ?? '?'} / out ${s.tokens_out ?? '?'} tok · ${costTail}</div>`
       : '';
     detail.innerHTML = `${costLine}<div style="margin-bottom:6px">status <strong style="color:${isErr ? 'var(--error)' : 'var(--success,#34d399)'}">${esc(s.status || 'UNSET')}</strong> · span ${esc((s.span_id || '').slice(0, 8))} · parent ${esc((s.parent_id || '—').slice(0, 8))}</div>${attrRows}`;
 

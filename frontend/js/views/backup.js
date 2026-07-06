@@ -2,13 +2,84 @@
  * Export / Backup view — batch export workflows and download backups.
  */
 
-import { get } from '../api.js';
+import { get, post, put } from '../api.js';
 import * as toast from '../components/toast.js';
 
 export async function render(container) {
   container.innerHTML = `
     <div class="section-header">
       <h2 class="section-title">Export / Backup</h2>
+    </div>
+
+    <!-- Scheduled backups -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <span class="card-title">Scheduled Backups</span>
+        <label class="switch" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-enabled">
+          <span style="font-size:12px;color:var(--text-secondary)">Enabled</span>
+        </label>
+      </div>
+      <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
+        Snapshot every connected instance's workflows to disk on a schedule, keeping the most recent copies.
+      </p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)">
+          Every (hours)
+          <input type="number" id="sb-interval" min="1" max="720" style="width:100px" class="input">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)">
+          Keep (snapshots/instance)
+          <input type="number" id="sb-retention" min="1" max="500" style="width:160px" class="input">
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);padding-bottom:6px">
+          <input type="checkbox" id="sb-active-only"> Active workflows only
+        </label>
+        <div style="display:flex;gap:8px;margin-left:auto">
+          <button class="btn btn-sm" id="sb-run-btn">Back up now</button>
+          <button class="btn btn-sm btn-primary" id="sb-save-btn">Save</button>
+        </div>
+      </div>
+      <div id="sb-status" style="margin-top:10px;font-size:12px;color:var(--text-secondary)"></div>
+
+      <!-- Offsite destination -->
+      <details id="sb-remote" style="margin-top:14px;border-top:1px solid var(--border-dim);padding-top:12px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600">Offsite destination (S3-compatible)</summary>
+        <p style="font-size:12px;color:var(--text-secondary);margin:8px 0">
+          Also push each snapshot to S3, Cloudflare R2, Backblaze B2, Wasabi, or a self-hosted MinIO.
+          Credentials use secret-store references (<code>$VAR</code>); add the values in the Secrets view first.
+        </p>
+        <div id="sb-remote-unavailable" style="display:none;font-size:12px;color:var(--warning,#f59e0b);margin-bottom:8px">
+          The <code>s3</code> extra is not installed in this image; saving is allowed but uploads will be skipped until it is.
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:10px">
+          <input type="checkbox" id="sb-remote-enabled"> Push snapshots offsite
+        </label>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-secondary)">Bucket
+            <input class="input" id="sb-remote-bucket" placeholder="agd-backups"></label>
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-secondary)">Prefix (optional)
+            <input class="input" id="sb-remote-prefix" placeholder="ageniusdesk/"></label>
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-secondary)">Endpoint URL (blank = AWS)
+            <input class="input" id="sb-remote-endpoint" placeholder="https://<account>.r2.cloudflarestorage.com"></label>
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-secondary)">Region
+            <input class="input" id="sb-remote-region" placeholder="auto"></label>
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-secondary)">Access key ID (secret ref)
+            <input class="input" id="sb-remote-akid" placeholder="$AGD_S3_ACCESS_KEY_ID"></label>
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-secondary)">Secret access key (secret ref)
+            <input class="input" id="sb-remote-secret" placeholder="$AGD_S3_SECRET_ACCESS_KEY"></label>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)">
+            <input type="checkbox" id="sb-remote-mirror"> Mirror retention offsite</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)">
+            <input type="checkbox" id="sb-remote-encrypt"> Encrypt before upload</label>
+          <button class="btn btn-sm" id="sb-remote-test" style="margin-left:auto">Test connection</button>
+        </div>
+        <div id="sb-remote-testresult" style="margin-top:8px;font-size:12px"></div>
+      </details>
+
+      <div id="sb-list" style="margin-top:12px"></div>
     </div>
 
     <!-- Quick backup row -->
@@ -63,7 +134,176 @@ export async function render(container) {
   `;
 
   setupHandlers();
+  setupScheduledBackups();
   loadWorkflowList();
+}
+
+async function setupScheduledBackups() {
+  document.getElementById('sb-save-btn').addEventListener('click', saveScheduledSettings);
+  document.getElementById('sb-run-btn').addEventListener('click', runScheduledBackupNow);
+  document.getElementById('sb-remote-test').addEventListener('click', testRemoteConnection);
+  await loadScheduledSettings();
+  await loadBackupList();
+}
+
+async function loadScheduledSettings() {
+  try {
+    const data = await get('/api/backups/settings');
+    const s = data.settings || {};
+    document.getElementById('sb-enabled').checked = !!s.enabled;
+    document.getElementById('sb-interval').value = s.interval_hours ?? 24;
+    document.getElementById('sb-retention').value = s.retention ?? 14;
+    document.getElementById('sb-active-only').checked = !!s.active_only;
+    const r = s.remote || {};
+    document.getElementById('sb-remote-enabled').checked = !!r.enabled;
+    document.getElementById('sb-remote-bucket').value = r.bucket || '';
+    document.getElementById('sb-remote-prefix').value = r.prefix || '';
+    document.getElementById('sb-remote-endpoint').value = r.endpoint_url || '';
+    document.getElementById('sb-remote-region').value = r.region || '';
+    document.getElementById('sb-remote-akid').value = r.access_key_id_ref || '';
+    document.getElementById('sb-remote-secret').value = r.secret_access_key_ref || '';
+    document.getElementById('sb-remote-mirror').checked = r.mirror_retention !== false;
+    document.getElementById('sb-remote-encrypt').checked = !!r.encrypt;
+    document.getElementById('sb-remote-unavailable').style.display = r.available === false ? '' : 'none';
+    renderJobStatus(data.job);
+  } catch (e) {
+    document.getElementById('sb-status').textContent = `Could not load settings: ${e.message}`;
+  }
+}
+
+function remotePayload() {
+  return {
+    enabled: document.getElementById('sb-remote-enabled').checked,
+    bucket: document.getElementById('sb-remote-bucket').value.trim(),
+    prefix: document.getElementById('sb-remote-prefix').value.trim(),
+    endpoint_url: document.getElementById('sb-remote-endpoint').value.trim(),
+    region: document.getElementById('sb-remote-region').value.trim(),
+    access_key_id_ref: document.getElementById('sb-remote-akid').value.trim(),
+    secret_access_key_ref: document.getElementById('sb-remote-secret').value.trim(),
+    mirror_retention: document.getElementById('sb-remote-mirror').checked,
+    encrypt: document.getElementById('sb-remote-encrypt').checked,
+  };
+}
+
+async function testRemoteConnection() {
+  const el = document.getElementById('sb-remote-testresult');
+  el.innerHTML = '<span class="spinner" style="margin:0;width:12px;height:12px"></span>';
+  try {
+    const r = await post('/api/backups/test-remote', remotePayload());
+    el.innerHTML = r.ok
+      ? `<span class="pill pill-success">Connected</span> <span style="color:var(--text-dim)">${r.latency_ms} ms</span>`
+      : `<span class="pill pill-error">Failed</span> <span style="color:var(--text-dim)">${esc(r.error || '')}</span>`;
+  } catch (e) {
+    el.innerHTML = `<span class="pill pill-error">Failed</span> <span style="color:var(--text-dim)">${esc(e.message)}</span>`;
+  }
+}
+
+function renderJobStatus(job) {
+  const el = document.getElementById('sb-status');
+  if (!job) { el.textContent = ''; return; }
+  const bits = [];
+  if (job.last_run_at) {
+    const when = new Date(job.last_run_at).toLocaleString();
+    const badge = job.last_status === 'ok' ? 'pill-success' : (job.last_status === 'error' ? 'pill-error' : 'pill-neutral');
+    bits.push(`<span class="pill ${badge}" style="font-size:10px">${job.last_status || 'idle'}</span> last run ${esc(when)}`);
+    if (job.last_error) bits.push(`<span style="color:var(--error)">${esc(job.last_error)}</span>`);
+  } else {
+    bits.push('Never run yet.');
+  }
+  if (job.enabled && job.next_run_in_seconds != null) {
+    bits.push(`next in ~${fmtDuration(job.next_run_in_seconds)}`);
+  }
+  el.innerHTML = bits.join(' · ');
+}
+
+async function saveScheduledSettings() {
+  const body = {
+    enabled: document.getElementById('sb-enabled').checked,
+    interval_hours: parseInt(document.getElementById('sb-interval').value, 10) || 24,
+    retention: parseInt(document.getElementById('sb-retention').value, 10) || 14,
+    active_only: document.getElementById('sb-active-only').checked,
+    remote: remotePayload(),
+  };
+  try {
+    await put('/api/backups/settings', body);
+    toast.success('Backup schedule saved');
+    await loadScheduledSettings();
+  } catch (e) {
+    toast.error(e.message);
+  }
+}
+
+async function runScheduledBackupNow() {
+  const btn = document.getElementById('sb-run-btn');
+  btn.disabled = true;
+  toast.info('Running backup...');
+  try {
+    const r = await post('/api/backups/run', {});
+    const res = r.last_result;
+    if (res) {
+      let msg = `Backed up ${res.instances_ok}/${res.instances_total} instances, ${res.workflows_total} workflows`;
+      if (res.remote_enabled) {
+        const pushed = (res.instances || []).filter(i => i.remote_ok).length;
+        const failed = (res.instances || []).filter(i => i.ok && i.remote_ok === false);
+        msg += ` · offsite ${pushed}/${res.instances_ok}`;
+        if (failed.length) toast.error(`Offsite push failed for ${failed.length} instance(s): ${esc(failed[0].remote_error || '')}`);
+      }
+      toast.success(msg);
+    } else if (r.skipped) {
+      toast.info(`Skipped: ${r.skipped}`);
+    } else if (r.last_status === 'error') {
+      toast.error(r.last_error || 'Backup failed');
+    }
+    await loadScheduledSettings();
+    await loadBackupList();
+  } catch (e) {
+    toast.error(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadBackupList() {
+  const el = document.getElementById('sb-list');
+  try {
+    const data = await get('/api/backups');
+    const instances = data.instances || [];
+    if (!instances.length) {
+      el.innerHTML = '<div style="font-size:12px;color:var(--text-dim)">No stored snapshots yet.</div>';
+      return;
+    }
+    el.innerHTML = instances.map(inst => `
+      <div style="margin-top:8px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px">
+          ${esc(inst.instance_name)}
+          ${inst.known ? '' : '<span class="pill pill-neutral" style="font-size:10px;margin-left:4px">removed instance</span>'}
+          <span style="color:var(--text-dim);font-weight:400">${inst.count} snapshot${inst.count === 1 ? '' : 's'}</span>
+        </div>
+        ${inst.files.map(f => `
+          <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
+            <a href="/api/backups/${encodeURIComponent(inst.instance_id)}/${encodeURIComponent(f.filename)}"
+               download style="color:var(--accent)">${esc(f.filename)}</a>
+            <span style="color:var(--text-dim)">${f.created_at ? new Date(f.created_at).toLocaleString() : ''} · ${fmtBytes(f.size_bytes)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--error)">${esc(e.message)}</div>`;
+  }
+}
+
+function fmtDuration(secs) {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m`;
+  return `${Math.round(secs / 3600)}h`;
+}
+
+function fmtBytes(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function setupHandlers() {

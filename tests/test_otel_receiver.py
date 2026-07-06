@@ -209,6 +209,18 @@ def test_pricing_bundled_and_normalize():
     assert pricing.price_for("totally-unknown-model-xyz") is None
 
 
+def test_pricing_local_tier():
+    from backend.modules.observability import pricing
+    # A local model unknown to every table prices as an exact $0, not "unknown".
+    p = pricing.price_for("llama3.1:8b", is_local=True)
+    assert p and p["in"] == 0.0 and p["out"] == 0.0
+    assert p["source"] == "local" and p["estimate"] is False
+    # Same model without the local flag stays unpriced (falls through to None).
+    assert pricing.price_for("llama3.1:8b") is None
+    # is_local with no model string still resolves to the $0 local tier.
+    assert pricing.price_for("", is_local=True)["source"] == "local"
+
+
 def test_fix_mojibake_repairs_double_encoded_names():
     from backend.modules.observability.ingest import _fix_mojibake
 
@@ -289,6 +301,70 @@ def test_cost_enrichment_from_rundata(client, monkeypatch):
     traces = client.get("/api/otel/traces").json()["traces"]
     t = next(t for t in traces if t["trace_id"] == COST_TRACE_HEX)
     assert abs(t["cost_usd"] - 0.006) < 1e-9 and t["has_cost"]
+
+
+def _ollama_request():
+    """A trace with an Ollama AI node (always local, $0 by construction)."""
+    req = ExportTraceServiceRequest()
+    rs = req.resource_spans.add()
+    rs.resource.attributes.append(_kv("service.name", "n8n"))
+    ss = rs.scope_spans.add()
+    wf = ss.spans.add()
+    wf.trace_id = b"\x44" * 16
+    wf.span_id = b"\x01" * 8
+    wf.name = "workflow.execute"
+    wf.start_time_unix_nano = 1_000_000_000
+    wf.end_time_unix_nano = 2_000_000_000
+    wf.status.code = 1
+    wf.attributes.append(_kv("n8n.workflow.name", "Local WF"))
+    wf.attributes.append(_kv("n8n.execution.id", "9002"))
+    node = ss.spans.add()
+    node.trace_id = b"\x44" * 16
+    node.span_id = b"\x02" * 8
+    node.parent_span_id = b"\x01" * 8
+    node.name = "node.execute"
+    node.start_time_unix_nano = 1_100_000_000
+    node.end_time_unix_nano = 1_900_000_000
+    node.status.code = 1
+    node.attributes.append(_kv("n8n.node.name", "Ollama Chat"))
+    node.attributes.append(_kv("n8n.node.type", "@n8n/n8n-nodes-langchain.lmChatOllama"))
+    return req
+
+
+LOCAL_TRACE_HEX = "44" * 16
+
+
+def test_cost_enrichment_local_model_is_free(client, monkeypatch):
+    monkeypatch.setattr(settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(settings, "agd_otel_token", "")
+    _auth(client)
+
+    from backend.modules.observability import cost
+
+    async def fake_raw(execution_id):
+        assert execution_id == "9002"
+        return {"data": {"resultData": {"runData": {
+            "Ollama Chat": [{
+                "data": {"ai_languageModel": [[{"json": {
+                    "tokenUsage": {"promptTokens": 500, "completionTokens": 120, "totalTokens": 620},
+                    "options": {"model": "llama3.1:8b"},
+                }}]]},
+            }],
+        }}}}
+
+    monkeypatch.setattr(cost.n8n_client, "get_execution_raw", fake_raw)
+    client.post(
+        "/api/otel/v1/traces",
+        content=_ollama_request().SerializeToString(),
+        headers={"Content-Type": "application/x-protobuf"},
+    )
+    spans = client.get(f"/api/otel/traces/{LOCAL_TRACE_HEX}").json()["spans"]
+    ai = next(s for s in spans if s["name"] == "node.execute")
+    # Tokens are captured; cost is exactly zero and tagged local, not "unknown".
+    assert ai["tokens_in"] == 500 and ai["tokens_out"] == 120
+    assert ai["cost_usd"] == 0.0
+    assert ai["price_source"] == "local"
+    assert ai["cost_is_estimate"] is False
 
 
 def test_json_ingest_path(client, monkeypatch):
