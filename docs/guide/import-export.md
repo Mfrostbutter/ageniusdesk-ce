@@ -77,6 +77,8 @@ The interval scheduler is dependency-free and in-process, so backups run only wh
 
 A snapshot that only lives in the same Docker volume as the app dies with the host. Expand **Offsite destination** in the Scheduled Backups card to also push each snapshot to S3-compatible object storage: AWS S3, Cloudflare R2, Backblaze B2, Wasabi, or a self-hosted **MinIO**. Offsite is opt-in and best-effort: the local snapshot is always written first, and an upload failure is recorded per instance without losing the local copy.
 
+> **Free tier tip:** Cloudflare R2's free plan includes 10 GB of storage and, unlike most object stores, **no egress fees** (so restores never cost anything). Workflow snapshots are small JSON, a few MB each, so 10 GB holds years of fleet backups at no cost. Backblaze B2's free plan (10 GB) is a comparable option. Either is a solid zero-cost offsite target.
+
 Requires the `s3` extra in the image (`pip install '.[s3]'` or `AGD_EXTRAS="...,s3"`); the card warns if it is missing. Steps:
 
 1. Add your access key ID and secret access key to the **Secrets** view, then reference them here as `$VAR` names (for example `$AGD_S3_ACCESS_KEY_ID`). Credentials are never stored in `config.json` and never returned by the API; only the ref names are.
