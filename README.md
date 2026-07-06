@@ -10,11 +10,9 @@ Running n8n for clients or multiple teams means juggling multiple logins, scatte
 
 ## See it in action
 
-<video src="https://github.com/Mfrostbutter/ageniusdesk-ce/releases/download/v0.4.4/ageniusdesk-screens-6mbps.mp4" controls muted autoplay loop playsinline poster="https://raw.githubusercontent.com/Mfrostbutter/ageniusdesk-ce/main/docs/screenshots/dashboard.png" width="900">
-  Your browser does not support embedded video. <a href="https://github.com/Mfrostbutter/ageniusdesk-ce/releases/download/v0.4.4/ageniusdesk-screens-6mbps.mp4">Watch the ~45-second tour</a>.
-</video>
+[![Watch the AgeniusDesk tour](docs/screenshots/dashboard.png)](docs/media/ageniusdesk-tour.mp4)
 
-A ~45-second walkthrough of the dashboard. Prefer stills? A few highlights below.
+**▶ [Watch the ~45-second tour](docs/media/ageniusdesk-tour.mp4)** (click to play). Prefer stills? A few highlights below.
 
 ## Screenshots
 
