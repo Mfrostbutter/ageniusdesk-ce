@@ -1,0 +1,11 @@
+{
+  "id": "backups",
+  "name": "Backups",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Scheduled per-instance workflow backups with retention.",
+  "author": "AgeniusDesk",
+  "license": "MIT",
+  "routes_prefix": "/api/backups",
+  "builtin": true
+}

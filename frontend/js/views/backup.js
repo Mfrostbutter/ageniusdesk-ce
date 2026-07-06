@@ -2,13 +2,46 @@
  * Export / Backup view — batch export workflows and download backups.
  */
 
-import { get } from '../api.js';
+import { get, post, put } from '../api.js';
 import * as toast from '../components/toast.js';
 
 export async function render(container) {
   container.innerHTML = `
     <div class="section-header">
       <h2 class="section-title">Export / Backup</h2>
+    </div>
+
+    <!-- Scheduled backups -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <span class="card-title">Scheduled Backups</span>
+        <label class="switch" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-enabled">
+          <span style="font-size:12px;color:var(--text-secondary)">Enabled</span>
+        </label>
+      </div>
+      <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
+        Snapshot every connected instance's workflows to disk on a schedule, keeping the most recent copies.
+      </p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)">
+          Every (hours)
+          <input type="number" id="sb-interval" min="1" max="720" style="width:100px" class="input">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)">
+          Keep (snapshots/instance)
+          <input type="number" id="sb-retention" min="1" max="500" style="width:160px" class="input">
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);padding-bottom:6px">
+          <input type="checkbox" id="sb-active-only"> Active workflows only
+        </label>
+        <div style="display:flex;gap:8px;margin-left:auto">
+          <button class="btn btn-sm" id="sb-run-btn">Back up now</button>
+          <button class="btn btn-sm btn-primary" id="sb-save-btn">Save</button>
+        </div>
+      </div>
+      <div id="sb-status" style="margin-top:10px;font-size:12px;color:var(--text-secondary)"></div>
+      <div id="sb-list" style="margin-top:12px"></div>
     </div>
 
     <!-- Quick backup row -->
@@ -63,7 +96,129 @@ export async function render(container) {
   `;
 
   setupHandlers();
+  setupScheduledBackups();
   loadWorkflowList();
+}
+
+async function setupScheduledBackups() {
+  document.getElementById('sb-save-btn').addEventListener('click', saveScheduledSettings);
+  document.getElementById('sb-run-btn').addEventListener('click', runScheduledBackupNow);
+  await loadScheduledSettings();
+  await loadBackupList();
+}
+
+async function loadScheduledSettings() {
+  try {
+    const data = await get('/api/backups/settings');
+    const s = data.settings || {};
+    document.getElementById('sb-enabled').checked = !!s.enabled;
+    document.getElementById('sb-interval').value = s.interval_hours ?? 24;
+    document.getElementById('sb-retention').value = s.retention ?? 14;
+    document.getElementById('sb-active-only').checked = !!s.active_only;
+    renderJobStatus(data.job);
+  } catch (e) {
+    document.getElementById('sb-status').textContent = `Could not load settings: ${e.message}`;
+  }
+}
+
+function renderJobStatus(job) {
+  const el = document.getElementById('sb-status');
+  if (!job) { el.textContent = ''; return; }
+  const bits = [];
+  if (job.last_run_at) {
+    const when = new Date(job.last_run_at).toLocaleString();
+    const badge = job.last_status === 'ok' ? 'pill-success' : (job.last_status === 'error' ? 'pill-error' : 'pill-neutral');
+    bits.push(`<span class="pill ${badge}" style="font-size:10px">${job.last_status || 'idle'}</span> last run ${esc(when)}`);
+    if (job.last_error) bits.push(`<span style="color:var(--error)">${esc(job.last_error)}</span>`);
+  } else {
+    bits.push('Never run yet.');
+  }
+  if (job.enabled && job.next_run_in_seconds != null) {
+    bits.push(`next in ~${fmtDuration(job.next_run_in_seconds)}`);
+  }
+  el.innerHTML = bits.join(' · ');
+}
+
+async function saveScheduledSettings() {
+  const body = {
+    enabled: document.getElementById('sb-enabled').checked,
+    interval_hours: parseInt(document.getElementById('sb-interval').value, 10) || 24,
+    retention: parseInt(document.getElementById('sb-retention').value, 10) || 14,
+    active_only: document.getElementById('sb-active-only').checked,
+  };
+  try {
+    await put('/api/backups/settings', body);
+    toast.success('Backup schedule saved');
+    await loadScheduledSettings();
+  } catch (e) {
+    toast.error(e.message);
+  }
+}
+
+async function runScheduledBackupNow() {
+  const btn = document.getElementById('sb-run-btn');
+  btn.disabled = true;
+  toast.info('Running backup...');
+  try {
+    const r = await post('/api/backups/run', {});
+    const res = r.last_result;
+    if (res) {
+      toast.success(`Backed up ${res.instances_ok}/${res.instances_total} instances, ${res.workflows_total} workflows`);
+    } else if (r.skipped) {
+      toast.info(`Skipped: ${r.skipped}`);
+    } else if (r.last_status === 'error') {
+      toast.error(r.last_error || 'Backup failed');
+    }
+    await loadScheduledSettings();
+    await loadBackupList();
+  } catch (e) {
+    toast.error(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadBackupList() {
+  const el = document.getElementById('sb-list');
+  try {
+    const data = await get('/api/backups');
+    const instances = data.instances || [];
+    if (!instances.length) {
+      el.innerHTML = '<div style="font-size:12px;color:var(--text-dim)">No stored snapshots yet.</div>';
+      return;
+    }
+    el.innerHTML = instances.map(inst => `
+      <div style="margin-top:8px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px">
+          ${esc(inst.instance_name)}
+          ${inst.known ? '' : '<span class="pill pill-neutral" style="font-size:10px;margin-left:4px">removed instance</span>'}
+          <span style="color:var(--text-dim);font-weight:400">${inst.count} snapshot${inst.count === 1 ? '' : 's'}</span>
+        </div>
+        ${inst.files.map(f => `
+          <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
+            <a href="/api/backups/${encodeURIComponent(inst.instance_id)}/${encodeURIComponent(f.filename)}"
+               download style="color:var(--accent)">${esc(f.filename)}</a>
+            <span style="color:var(--text-dim)">${f.created_at ? new Date(f.created_at).toLocaleString() : ''} · ${fmtBytes(f.size_bytes)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--error)">${esc(e.message)}</div>`;
+  }
+}
+
+function fmtDuration(secs) {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m`;
+  return `${Math.round(secs / 3600)}h`;
+}
+
+function fmtBytes(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function setupHandlers() {

@@ -1,6 +1,6 @@
 # Import & Export
 
-AgeniusDesk moves n8n workflows in and out of an instance as plain JSON. The **Import Workflows** view brings JSON into the active instance (single or bulk, file or paste, with optional rename and tagging). The **Export / Backup** view pulls workflows back out: individual selections, a full backup file, or an active-only backup, plus a drop zone to restore a backup file. All of these act on whichever instance is currently active. See [Workflows](workflows.md) for browsing and running what you import, and [Authentication & RBAC](../architecture/auth.md) for who can perform these actions.
+AgeniusDesk moves n8n workflows in and out of an instance as plain JSON. The **Import Workflows** view brings JSON into the active instance (single or bulk, file or paste, with optional rename and tagging). The **Export / Backup** view pulls workflows back out: scheduled snapshots of the whole fleet, individual selections, a full backup file, or an active-only backup, plus a drop zone to restore a backup file. The on-demand exports act on whichever instance is currently active; scheduled backups fan out across every connected instance. See [Workflows](workflows.md) for browsing and running what you import, and [Authentication & RBAC](../architecture/auth.md) for who can perform these actions.
 
 ---
 
@@ -56,7 +56,22 @@ Each import (success or failure) is logged in the **Import History** card for th
 
 ## Export & backup
 
-The **Export / Backup** view has three sections: a full-backup row, an individual-export checklist, and a restore drop zone.
+The **Export / Backup** view has four sections: a scheduled-backups card, a full-backup row, an individual-export checklist, and a restore drop zone.
+
+### Scheduled backups
+
+Unlike the on-demand exports below (which download to your browser and act on the active instance only), scheduled backups run on the server and snapshot **every connected instance** to disk on a schedule. They are **off by default**.
+
+1. In the **Scheduled Backups** card, toggle **Enabled**.
+2. Set **Every (hours)** (the interval, 1 to 720), **Keep (snapshots/instance)** (retention, 1 to 500), and optionally **Active workflows only**.
+3. Click **Save**. The schedule takes effect immediately, no restart.
+4. Click **Back up now** to run a snapshot on demand at any time.
+
+Each run writes one JSON snapshot per instance under `data/backups/<instance_id>/<timestamp>.json` (the same envelope as a full backup), then prunes each instance's folder to the retention count, keeping the newest. A failing or unreachable instance is isolated: the rest still snapshot, and the card's status line shows the last run's result and the next scheduled run. Stored snapshots are listed per instance below the controls with a download link and size; snapshots from an instance you later remove are still listed (flagged "removed instance") so you can recover them.
+
+The interval scheduler is dependency-free and in-process, so backups run only while the dashboard is running. The schedule persists in `config.json`, so it survives restarts.
+
+**Endpoints** (operator role): `GET/PUT /api/backups/settings`, `GET /api/backups` (list), `POST /api/backups/run` (run now), `GET /api/backups/{instance_id}/{filename}` (download), `DELETE /api/backups/{instance_id}/{filename}`.
 
 ### Full backup
 

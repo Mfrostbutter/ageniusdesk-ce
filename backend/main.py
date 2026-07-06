@@ -103,6 +103,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("price book refresh kickoff failed: %s", e)
 
+    # Interval scheduler for built-in maintenance jobs (workflow backups today).
+    # Job config is read live from config.json, so an operator toggling a
+    # schedule in Settings takes effect without a restart.
+    try:
+        from backend.modules.backups import service as _backups
+        from backend.modules.backups.router import JOB_ID as _backup_job
+        from backend.scheduler import scheduler as _scheduler
+        _scheduler.register(
+            _backup_job,
+            _backups.run_backup,
+            interval_fn=_backups.interval_seconds,
+            enabled_fn=_backups.is_enabled,
+        )
+        _scheduler.start()
+    except Exception as e:
+        logger.exception("scheduler start failed: %s", e)
+
     # Out-of-process module isolation: start the loopback capability bridge before
     # serving, THEN spawn the isolated-module workers (deferred from import-time
     # registration) so a worker that calls the bridge during startup finds it
@@ -153,6 +170,11 @@ async def lifespan(app: FastAPI):
     else:
         yield
     # Shutdown
+    try:
+        from backend.scheduler import scheduler as _scheduler
+        await _scheduler.stop()
+    except Exception as e:
+        logger.warning("scheduler stop failed: %s", e)
     try:
         from backend.modules._runtime import supervisor as _supervisor
         _supervisor.stop_all()  # subprocess workers (skips container workers)
