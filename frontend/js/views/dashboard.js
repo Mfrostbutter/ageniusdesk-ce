@@ -90,6 +90,11 @@ export function deleteDashboard(id) {
 // ── Main render entry point ──────────────────────────────────────────────────
 
 let unsub = null;
+let _pollTimer = null;
+// How often the overview re-pulls executions/stats from the active instance.
+// n8n has no push channel for executions, so a modest poll is what keeps the
+// timeline and health grid current without a manual reload.
+const POLL_MS = 20000;
 let _executions = [];
 // Populated by loadDashboardData so the errors widget can surface an instance
 // pill on every row — the raw error payload only carries instance_id, not a
@@ -98,6 +103,7 @@ let _instanceMap = {};
 
 export function cleanup() {
   if (unsub) { unsub(); unsub = null; }
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
   document.getElementById('agd-step-panel')?.remove();
   document.getElementById('agd-drawer-scrim')?.remove();
   if (_wfDrawerEscHandler) { document.removeEventListener('keydown', _wfDrawerEscHandler); _wfDrawerEscHandler = null; }
@@ -154,6 +160,14 @@ export async function render(container) {
 
   loadDashboardData();
   loadInstances();
+
+  // Keep the overview live. n8n has no execution push, so poll on an interval.
+  // Skip ticks while the tab is hidden to avoid pointless load on the instance.
+  if (_pollTimer) clearInterval(_pollTimer);
+  _pollTimer = setInterval(() => {
+    if (document.hidden) return;
+    loadDashboardData({ sync: false });
+  }, POLL_MS);
 }
 
 // ── Widget grid rendering ────────────────────────────────────────────────────
@@ -501,7 +515,7 @@ function mountAssistant(el) {
 
 // ── Data loading ─────────────────────────────────────────────────────────────
 
-async function loadDashboardData() {
+async function loadDashboardData({ sync = true } = {}) {
   try {
     const lookback = getErrorLookback();
     const [wfData, errData, execData, insData, statusData, instData] = await Promise.all([
@@ -547,6 +561,8 @@ async function loadDashboardData() {
   }
   // Auto-sync errors from n8n in the background; reload only the errors widget if new ones found.
   // The stat cards read n8n executions directly, so a store sync doesn't change them.
+  // Skipped on poll ticks (sync:false) so the interval never fires a write every cycle.
+  if (!sync) return;
   post('/api/errors/sync').then(async res => {
     if (res.synced > 0) {
       const lookback = getErrorLookback();
