@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Optional
 
 import httpx
@@ -13,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 TIMEOUT = 30.0
 MAX_RETRIES = 3
+
+# Workflow id -> name lookup is fetched for every execution-list enrichment, which
+# otherwise duplicates the 250-workflow pull the dashboard already makes on load.
+# Cache it per base URL for a short window to cut that redundant round-trip.
+_WF_NAME_TTL = 30.0  # seconds
+_wf_name_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
@@ -468,10 +475,23 @@ async def get_workflow(workflow_id: str) -> dict[str, Any]:
 
 
 async def _get_workflow_names() -> dict[str, str]:
-    """Build a workflow_id -> name mapping for enriching execution data."""
+    """Build a workflow_id -> name mapping for enriching execution data.
+
+    Cached per base URL for _WF_NAME_TTL seconds so repeated execution-list
+    calls do not each re-pull the full workflow set.
+    """
+    key = _base_url()
+    hit = _wf_name_cache.get(key)
+    if hit and (time.monotonic() - hit[0]) < _WF_NAME_TTL:
+        return hit[1]
+
     result = await _get("/api/v1/workflows", {"limit": 250})
     workflows = result.get("data", []) if isinstance(result, dict) else []
-    return {w.get("id", ""): w.get("name", "Unknown") for w in workflows}
+    names = {w.get("id", ""): w.get("name", "Unknown") for w in workflows}
+    # Only cache a real result; an empty pull (transient error) should retry next time.
+    if names:
+        _wf_name_cache[key] = (time.monotonic(), names)
+    return names
 
 
 async def list_executions(
