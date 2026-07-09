@@ -4,9 +4,16 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
-## Current Release: v0.4.1 (2026-06-30)
+## Current Release: v0.4.4 (2026-07-06)
 
-v0.4.1 is a patch that makes the **n8n-only-by-default** agent gate a tagged release: a default install now reads as a pure n8n control plane, and the Agent Fleet view + Code Lab's Agent Builder appear only when the optional agent extra is installed (or `AGD_AGENTS_ENABLED=true`). It sits on the v0.4.0 agent layer below.
+The v0.4.2 to v0.4.4 line hardens and extends the platform on top of the v0.4.0 agent layer. See the [CHANGELOG](CHANGELOG.md) for full detail.
+
+- **v0.4.4** adds **scheduled workflow backups** (per-instance snapshots to disk on an interval, fleet-wide, off by default) with an optional **offsite S3-compatible destination** (S3 / R2 / B2 / Wasabi / self-hosted MinIO, opt-in extra, encrypt-before-upload), plus local-model cost clarity in the waterfall.
+- **v0.4.3** makes **Python Code nodes work out of the box** in deployed n8n by shipping the built-in template as a two-container bundle (external task runners plus a runners sidecar, Python standard library open by default).
+- **v0.4.2** is a **security release**: four high-severity findings from the full security review plus the medium/low batch, with setup-wizard name/port fields and a configurable Overview error window.
+- **v0.4.1** made the **n8n-only-by-default** agent gate a tagged release: a default install reads as a pure n8n control plane, and the Agent Fleet view + Code Lab's Agent Builder appear only when the optional agent extra is installed (or `AGD_AGENTS_ENABLED=true`).
+
+**In development (see CHANGELOG [Unreleased]):** silent-failure detection (green but broken runs), tracked in Near-Term below.
 
 ## Previous Release: v0.4.0 (2026-06-28)
 
@@ -156,6 +163,10 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 - [ ] **Health monitoring**: surface uptime via an **Uptime Kuma connector** (read the operator's existing monitors over Kuma's API and fold up/down + uptime % into Fleet Health) rather than rebuilding generic endpoint polling. Native HTTP/TCP checks remain a later fallback for operators not already on Kuma. See [community-module candidates](docs/specs/2026-06-28-community-module-candidates.md).
 - [x] **Local-model cost clarity** ([spec](docs/specs/2026-07-02-local-model-cost-clarity.md)): the price book already tracks token usage for every provider (n8n run-data is provider-agnostic), but Ollama and self-hosted Custom-endpoint models fell through to `price_source: "unknown"` since they're absent from OpenRouter and the bundled table. Ollama node types are now tagged `local` (via `n8n.node.type`) so the waterfall surfaces token usage with a plain "local" tag instead of the ambiguous "price unknown" or a meaningless dollar figure. Custom-endpoint base-URL sniffing is deferred (see spec Non-goals). Shipped — see CHANGELOG [Unreleased].
 - [ ] **Expanded notification sinks**: email, PagerDuty, webhook routing per instance
+- [x] **Silent-failure detection (green but broken runs)**: catch runs n8n marks success while a node errored under Continue-On-Fail or quietly stopped producing data, the failure class with no failed execution to alert on. On OpenTelemetry ingest it reads output shape rather than status (a normalized demoted-error union plus per-node output-volume-vs-history), suppresses drop cascades to the origin node so one root cause is one alert, and surfaces a distinct `Silent failure` class across the Overview card, Insights, the Observe metrics strip, and the Errors feed. Tunable per instance via `AGD_HEALTH_*`. Shipped (see CHANGELOG [Unreleased]). [Architecture note](docs/architecture/silent-failure-detection.md), [spec](docs/specs/2026-07-07-silent-failure-detection.md). Follow-ups:
+  - [ ] **Dead-man's-switch (never-ran node)**: a node that produced no span at all (branch skipped, instance down, schedule missed) is not yet detected. Two layers: an external heartbeat for "the workflow never fired," plus a definition-vs-trace node diff for "a node went missing inside a run that did fire."
+  - [ ] **Configurable expected-output thresholds**: a per-node declared output floor/range so "returned 10, always returns 100" fires explicitly rather than only via the learned drop heuristic. Config on the node, policy defaults roll down from the workspace, and values are suggested from history (one-click accept, only prompting the steady producers that matter) so per-node config scales. Doubles as the per-node override for cases history infers wrong.
+  - [ ] **Upstream n8n OTel error semantics** (feature request): get the continued error onto the OpenTelemetry span (standard exception attributes plus span status) so any backend can read it, since n8n currently holds the typed error and then exports the Continue-On-Fail span as OK. Would make detection easier for the whole ecosystem, not just AgeniusDesk.
 - [ ] **Workflow security audit scan**: detect missing error handlers, unused credentials, exposed webhooks (this audits n8n workflows; distinct from the community-module code scanner in v0.2)
 - [ ] **Project landing page**: a public web page introducing AgeniusDesk CE (overview, screenshots, install, docs and repo links)
 
