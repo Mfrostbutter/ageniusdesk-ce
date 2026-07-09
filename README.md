@@ -34,6 +34,7 @@ A quick tour of the dashboard ([full-quality video](https://github.com/Mfrostbut
 - Real-time error feed across all instances
 - Errors grouped by workflow, node, and error type with occurrence counts
 - Full node-level details and last-seen timestamps
+- Silent failures land in the same feed as their own `Silent failure` class: runs n8n reported as success but where a node errored under Continue-On-Fail or quietly stopped producing data, so "green but broken" runs show up where you already triage. See [Silent-failure detection](docs/architecture/silent-failure-detection.md)
 
 **Code Lab**
 - Monaco-based editor for writing n8n Code-node logic
@@ -88,7 +89,7 @@ A quick tour of the dashboard ([full-quality video](https://github.com/Mfrostbut
 - Observe view: a live trace list and parent/child execution waterfall, plus a metrics strip (executions, error rate, p50/p95, throughput)
 - LLM cost tracking folded into the trace layer: per-trace and per-call spend, enriched from token usage and a layered price book
 - Per-execution trace links from Errors and Insights
-- Silent-failure detection: flags "green but broken" runs that n8n reported as success (a node that errored under Continue-On-Fail, or a node that normally produces data and quietly returned nothing) with a toast, a per-run "silent" badge, and the exact node that broke. How it works, and why n8n's own status can't catch it, is written up in [Silent-failure detection](docs/architecture/silent-failure-detection.md)
+- Silent-failure detection: flags "green but broken" runs that n8n reported as success (a node that errored under Continue-On-Fail, or a steady producer that quietly returned nothing or dropped far below its normal volume). It flags the origin node, not the downstream cascade, and surfaces everywhere you look: a toast, a per-run "silent" badge in Observe, its own `Silent failure` class in the Errors feed, and a count on the Overview and Insights. How it works, and why n8n's own status can't catch it, is written up in [Silent-failure detection](docs/architecture/silent-failure-detection.md)
 
 **Enabling OpenTelemetry on your n8n**
 
