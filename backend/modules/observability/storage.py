@@ -72,7 +72,7 @@ async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") 
                MAX(end_ns)                                     AS end_ns,
                COUNT(*)                                        AS span_count,
                MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS has_error,
-               MAX(CASE WHEN health_status='ERROR' THEN 1 ELSE 0 END) AS has_silent,
+               MAX(CASE WHEN health_status IN ('ERROR','LOW') THEN 1 ELSE 0 END) AS has_silent,
                MAX(workflow_name)                              AS workflow_name,
                MAX(workflow_id)                                AS workflow_id,
                MAX(execution_id)                               AS execution_id,
@@ -260,10 +260,30 @@ async def set_health(updates: list[dict]) -> int:
         UPDATE otel_spans SET
             health_status = :health_status, error_type = :error_type,
             error_summary = :error_summary, http_status = :http_status,
-            output_items = :output_items, checked_at = :checked_at
+            output_items = :output_items, node_id = :node_id, checked_at = :checked_at
         WHERE span_id = :span_id
         """,
         updates,
     )
     await db.commit()
     return len(updates)
+
+
+async def node_output_history(node_id: str, window: int, exclude_trace_id: str = "") -> list[int]:
+    """Recent output-item counts for a node id (newest first), for the anomaly
+    classifier. Reads enriched spans only (output_items populated on ingest);
+    excludes the current trace so a run is never compared against itself.
+    """
+    if not node_id:
+        return []
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT output_items FROM otel_spans
+        WHERE node_id = ? AND output_items IS NOT NULL AND trace_id != ?
+        ORDER BY start_ns DESC
+        LIMIT ?
+        """,
+        (node_id, exclude_trace_id, int(window)),
+    )
+    return [int(r["output_items"]) for r in await cur.fetchall()]

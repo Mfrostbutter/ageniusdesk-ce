@@ -151,16 +151,21 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     cursor = await db.execute("PRAGMA table_info(otel_spans)")
     ocols = {row["name"] for row in await cursor.fetchall()}
     _health_cols = [
-        ("health_status", "TEXT"),   # OK | ERROR | EMPTY | UNKNOWN
+        ("health_status", "TEXT"),   # OK | ERROR | LOW | EMPTY | UNKNOWN
         ("error_type", "TEXT"),      # AxiosError | thrown | node error name
         ("error_summary", "TEXT"),   # normalized human message (truncated)
         ("http_status", "INTEGER"),  # when the error object carried one
         ("output_items", "INTEGER"), # item count on the node's main output
+        ("node_id", "TEXT"),         # n8n node id (stable across renames), for per-node history
         ("checked_at", "TEXT"),      # enrichment timestamp (idempotency guard)
     ]
     for col, typ in _health_cols:
         if col not in ocols:
             await db.execute(f"ALTER TABLE otel_spans ADD COLUMN {col} {typ}")
+    # Per-node output history lookup (Phase 2 anomaly classifier) is keyed by node_id.
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_otel_spans_node ON otel_spans(node_id, start_ns DESC)"
+    )
     await db.commit()
 
     # module_installs — tamper-light audit trail of community module installs.

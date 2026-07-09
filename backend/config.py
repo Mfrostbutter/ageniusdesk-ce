@@ -137,6 +137,16 @@ class Settings(BaseSettings):
     agd_otel_token: str = ""
     agd_otel_retention_hours: int = 72       # age-based span pruning
     agd_otel_max_spans: int = 500000         # hard row cap, oldest pruned first
+    # Silent-failure detection: low-output anomaly classifier (spec
+    # 2026-07-07-silent-failure-detection, Phase 2). A zero/low output only alerts
+    # when the node is historically a reliable producer; idle pollers (frequently
+    # zero) never fire. Precision over recall: cold-start and intermittent stay
+    # quiet. All thresholds are per-instance overridable.
+    agd_health_min_samples: int = 20         # below this a node is cold-start (never fires)
+    agd_health_steady_zero_rate: float = 0.05  # zero-rate at/under which a node is a steady producer
+    agd_health_dormant_zero_rate: float = 0.95  # zero-rate at/over which a node is dormant
+    agd_health_drop_factor: float = 0.1      # output under median*this is a magnitude-drop anomaly
+    agd_health_window: int = 200             # rolling history size (runs) per node
     # Cost observability: how often to refresh the LLM price book from OpenRouter's
     # public models API. The fetched table is cached to data/price_book.json with a
     # last-good fallback; operator overrides and a bundled default layer over it.

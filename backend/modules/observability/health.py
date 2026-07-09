@@ -9,9 +9,12 @@ health so a run the execution log called "success" surfaces loud.
 
 Two detectors, split by cost:
 
-- **Empty output (mode 3)** — read ``n8n.node.items.output`` straight off the
-  span. Free; no n8n round-trip. Recorded as ``EMPTY`` (a zero count is often
-  legitimate, so it is not itself alerted until a per-node baseline lands).
+- **Low output (mode 3)** — read ``n8n.node.items.output``/``.input`` off the
+  span (free; no n8n round-trip) and classify against the node's own history
+  (``_classify_low_output``). A zero is ``EMPTY`` (informational) unless the node
+  is a historically reliable producer that had input and dropped it, in which
+  case it is ``LOW`` (alertable) — this also catches magnitude drops (200 -> 3),
+  not just zeros. Idle pollers and cold-start stay quiet.
 - **Silent error (modes 1/2)** — the demoted error has no span signal, so fetch
   run-data once per execution and union the three places n8n may record a node
   error, because the shape is inconsistent by source (object vs string):
@@ -20,7 +23,8 @@ Two detectors, split by cost:
   3. item-level ``runData[node][i].data.main[*][*].json.error`` (object or string)
 
 A trace is a **silent failure** when its root ``workflow.execute`` reports
-``n8n.execution.status = success`` yet a node span resolves to ``ERROR``.
+``n8n.execution.status = success`` yet a node span resolves to ``ERROR`` or
+``LOW``.
 Idempotent and best-effort, mirroring ``cost.py``: only the active instance's
 run-data is fetchable, and an already-checked trace is skipped.
 """
@@ -30,8 +34,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from statistics import median
 
-from backend.config import get_active_instance_id
+from backend.config import get_active_instance_id, settings
 from backend.modules.n8n_proxy import client as n8n_client
 from backend.websocket import manager
 
@@ -85,6 +90,50 @@ def _node_error_from_run(run: dict):
     return _normalize_error(run_err if run_err else item_err)
 
 
+def _classify_low_output(history: list[int], out_items, in_items) -> tuple[str, str]:
+    """Classify a node run's output volume against its own history.
+
+    Returns (status, reason). ``OK`` and ``EMPTY`` are informational; only ``LOW``
+    is an alertable anomaly. Precision over recall (spec, locked 2026-07-09): only
+    a historically reliable producer that had input fires, so idle pollers,
+    dormant nodes, and cold-start stay quiet.
+    """
+    if out_items is None:
+        return "OK", ""
+    n = len(history)
+    if n < settings.agd_health_min_samples:
+        # Cold start: not enough history to know this node's normal. Never fire.
+        return ("EMPTY" if out_items == 0 else "OK"), "cold_start"
+
+    zero_rate = sum(1 for x in history if x == 0) / n
+    nonzero = [x for x in history if x > 0]
+    median_nz = median(nonzero) if nonzero else 0
+    steady = zero_rate <= settings.agd_health_steady_zero_rate and median_nz >= 1
+    if not steady:
+        # Intermittent or dormant: a low/zero count is within this node's normal.
+        return ("EMPTY" if out_items == 0 else "OK"), "expected"
+
+    # Steady producer. The real failure is a node that had work and dropped it; a
+    # node with no input just inherited emptiness from upstream, so flag the origin
+    # of the cascade, not its downstream victims. Unknown input -> stay quiet.
+    had_input = isinstance(in_items, int) and in_items > 0
+    if not had_input:
+        return ("EMPTY" if out_items == 0 else "OK"), "inherited"
+    if out_items == 0:
+        return "LOW", "empty"
+    if out_items < median_nz * settings.agd_health_drop_factor:
+        return "LOW", "drop"
+    return "OK", ""
+
+
+def _low_summary(reason: str, out_items, in_items) -> str:
+    if reason == "empty":
+        return f"reliable producer returned 0 items (had {in_items} input)"
+    if reason == "drop":
+        return f"output {out_items} far below this node's normal volume"
+    return ""
+
+
 async def enrich_trace_health(trace_id: str) -> int:
     """Enrich one trace with per-node health. Returns spans written (0 if skipped)."""
     if await storage.has_health(trace_id):
@@ -129,15 +178,25 @@ async def enrich_trace_health(trace_id: str) -> int:
             attrs = s.get("attributes") or {}
             out = attrs.get("n8n.node.items.output")
             out_items = int(out) if isinstance(out, (int, float)) else None
+            inp = attrs.get("n8n.node.items.input")
+            in_items = int(inp) if isinstance(inp, (int, float)) else None
+            node_id = str(attrs.get("n8n.node.id") or "")
             run = runs[i] if i < len(runs) else (runs[-1] if runs else None)
             err = _node_error_from_run(run) if run else None
 
             if err:
                 status, etype, summary, http = "ERROR", err[0], err[1], err[2]
-            elif out_items == 0:
-                status, etype, summary, http = "EMPTY", "", "", None
             else:
-                status, etype, summary, http = "OK", "", "", None
+                http = None
+                history = await storage.node_output_history(
+                    node_id, settings.agd_health_window, exclude_trace_id=trace_id
+                )
+                status, reason = _classify_low_output(history, out_items, in_items)
+                if status == "LOW":
+                    etype = "empty_output" if reason == "empty" else "low_output"
+                    summary = _low_summary(reason, out_items, in_items)
+                else:
+                    etype, summary = "", ""
 
             updates.append({
                 "span_id": s["span_id"],
@@ -146,9 +205,10 @@ async def enrich_trace_health(trace_id: str) -> int:
                 "error_summary": summary,
                 "http_status": http,
                 "output_items": out_items,
+                "node_id": node_id,
                 "checked_at": now,
             })
-            if status == "ERROR" and exec_status == "success":
+            if status in ("ERROR", "LOW") and exec_status == "success":
                 silent_hits.append({"node": nn, "error_type": etype, "error_summary": summary})
 
     n = await storage.set_health(updates)
