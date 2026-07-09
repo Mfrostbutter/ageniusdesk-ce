@@ -72,6 +72,7 @@ async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") 
                MAX(end_ns)                                     AS end_ns,
                COUNT(*)                                        AS span_count,
                MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS has_error,
+               MAX(CASE WHEN health_status='ERROR' THEN 1 ELSE 0 END) AS has_silent,
                MAX(workflow_name)                              AS workflow_name,
                MAX(workflow_id)                                AS workflow_id,
                MAX(execution_id)                               AS execution_id,
@@ -99,6 +100,7 @@ async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") 
             "instance_id": r["instance_id"] or "",
             "span_count": int(r["span_count"] or 0),
             "has_error": bool(r["has_error"]),
+            "has_silent": bool(r["has_silent"]),
             "start_ns": start_ns,
             "duration_ms": round((end_ns - start_ns) / 1e6, 2) if end_ns > start_ns else 0.0,
             "cost_usd": round(float(r["cost_total"]), 6) if r["cost_total"] else 0.0,
@@ -199,6 +201,11 @@ async def get_trace(trace_id: str) -> list[dict]:
             "cost_source": r["cost_source"] or "",
             "price_source": r["price_source"] or "",
             "cost_is_estimate": bool(r["cost_is_estimate"]) if r["cost_is_estimate"] is not None else None,
+            "health_status": r["health_status"] or "",
+            "error_type": r["error_type"] or "",
+            "error_summary": r["error_summary"] or "",
+            "http_status": int(r["http_status"]) if r["http_status"] is not None else None,
+            "output_items": int(r["output_items"]) if r["output_items"] is not None else None,
             "attributes": attrs,
         })
     return spans
@@ -226,6 +233,34 @@ async def set_costs(updates: list[dict]) -> int:
             price_in_per_mtok = :price_in_per_mtok, price_out_per_mtok = :price_out_per_mtok,
             price_source = :price_source, cost_is_estimate = :cost_is_estimate,
             priced_at = :priced_at
+        WHERE span_id = :span_id
+        """,
+        updates,
+    )
+    await db.commit()
+    return len(updates)
+
+
+async def has_health(trace_id: str) -> bool:
+    """True if the trace's spans have been health-checked already (idempotency)."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT 1 FROM otel_spans WHERE trace_id = ? AND checked_at IS NOT NULL LIMIT 1", (trace_id,)
+    )
+    return (await cur.fetchone()) is not None
+
+
+async def set_health(updates: list[dict]) -> int:
+    """Write per-span silent-failure health rows. Update by span_id. Idempotent."""
+    if not updates:
+        return 0
+    db = await get_db()
+    await db.executemany(
+        """
+        UPDATE otel_spans SET
+            health_status = :health_status, error_type = :error_type,
+            error_summary = :error_summary, http_status = :http_status,
+            output_items = :output_items, checked_at = :checked_at
         WHERE span_id = :span_id
         """,
         updates,

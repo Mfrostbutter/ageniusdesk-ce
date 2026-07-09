@@ -1,0 +1,167 @@
+"""Silent-failure detection: flag "green but broken" runs.
+
+n8n marks an execution `success` even when a node failed under Continue-On-Fail
+(or a half-wired error output). The failure survives only in the execution
+run-data and in per-node item counts, never in span status: the OTel exporter
+reports the continued node `OK` (confirmed 2026-07-07, spec
+2026-07-07-silent-failure-detection). This enriches captured traces with per-node
+health so a run the execution log called "success" surfaces loud.
+
+Two detectors, split by cost:
+
+- **Empty output (mode 3)** — read ``n8n.node.items.output`` straight off the
+  span. Free; no n8n round-trip. Recorded as ``EMPTY`` (a zero count is often
+  legitimate, so it is not itself alerted until a per-node baseline lands).
+- **Silent error (modes 1/2)** — the demoted error has no span signal, so fetch
+  run-data once per execution and union the three places n8n may record a node
+  error, because the shape is inconsistent by source (object vs string):
+  1. ``runData[node][i].executionStatus == "error"``
+  2. ``runData[node][i].error`` (an object with ``.message``)
+  3. item-level ``runData[node][i].data.main[*][*].json.error`` (object or string)
+
+A trace is a **silent failure** when its root ``workflow.execute`` reports
+``n8n.execution.status = success`` yet a node span resolves to ``ERROR``.
+Idempotent and best-effort, mirroring ``cost.py``: only the active instance's
+run-data is fetchable, and an already-checked trace is skipped.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+from backend.config import get_active_instance_id
+from backend.modules.n8n_proxy import client as n8n_client
+from backend.websocket import manager
+
+from . import storage
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_error(raw) -> tuple[str, str, int | None]:
+    """Collapse n8n's inconsistent error shapes to (type, summary, http_status).
+
+    HTTP failures arrive as an object with ``.status``; a thrown Code error
+    arrives as a bare string. Same meaning, different shape.
+    """
+    if isinstance(raw, dict):
+        etype = raw.get("name") or raw.get("code") or "error"
+        summary = raw.get("message") or raw.get("description") or ""
+        http = raw.get("status") if raw.get("status") is not None else raw.get("httpCode")
+        try:
+            http = int(http) if http is not None else None
+        except (TypeError, ValueError):
+            http = None
+        return str(etype)[:80], str(summary)[:500], http
+    return "thrown", str(raw)[:500], None
+
+
+def _node_error_from_run(run: dict):
+    """Return (type, summary, http) if this run errored, else None.
+
+    Unions the three signals n8n may populate; the item-level ``json.error`` is
+    the one Continue-On-Fail demotes into the normal output, invisible to spans.
+    """
+    if not isinstance(run, dict):
+        return None
+    exec_status = run.get("executionStatus")
+    run_err = run.get("error")
+
+    item_err = None
+    data = run.get("data") or {}
+    for out in (data.get("main") or []):
+        for item in (out or []):
+            j = (item or {}).get("json") or {}
+            if isinstance(j, dict) and "error" in j:
+                item_err = j["error"]
+                break
+        if item_err is not None:
+            break
+
+    if not (exec_status == "error" or run_err or item_err is not None):
+        return None
+    return _normalize_error(run_err if run_err else item_err)
+
+
+async def enrich_trace_health(trace_id: str) -> int:
+    """Enrich one trace with per-node health. Returns spans written (0 if skipped)."""
+    if await storage.has_health(trace_id):
+        return 0
+    spans = await storage.get_trace(trace_id)
+    if not spans:
+        return 0
+
+    root = next((s for s in spans if s.get("name") == "workflow.execute"), None)
+    exec_status = ((root or {}).get("attributes") or {}).get("n8n.execution.status", "")
+    node_spans = [s for s in spans if s.get("name") == "node.execute"]
+    if not node_spans:
+        return 0
+
+    exec_id = next((s["execution_id"] for s in spans if s.get("execution_id")), "")
+    inst = next((s["instance_id"] for s in spans if s.get("instance_id")), "")
+
+    # Run-data is only fetchable for the active instance, and only needed for the
+    # error detectors (mode 3 works from span attributes alone). Best-effort and
+    # bounded so a slow fetch never blocks the caller.
+    run_by_node: dict[str, list] = {}
+    if exec_id and (not inst or inst == get_active_instance_id()):
+        try:
+            raw = await asyncio.wait_for(n8n_client.get_execution_raw(exec_id), timeout=8.0)
+            run_by_node = ((raw or {}).get("data") or {}).get("resultData", {}).get("runData", {}) or {}
+        except Exception as e:  # noqa: BLE001 - best-effort, retries on next open
+            logger.debug("health enrich: run-data fetch failed/slow for exec %s: %s", exec_id, e)
+
+    # node name -> its node.execute spans in execution order (one span per run).
+    by_node: dict[str, list[dict]] = {}
+    for s in sorted(node_spans, key=lambda x: x["start_ns"]):
+        nn = (s.get("attributes") or {}).get("n8n.node.name")
+        if nn:
+            by_node.setdefault(nn, []).append(s)
+
+    now = datetime.now(timezone.utc).isoformat()
+    updates: list[dict] = []
+    silent_hits: list[dict] = []
+    for nn, sps in by_node.items():
+        runs = run_by_node.get(nn, [])
+        for i, s in enumerate(sps):
+            attrs = s.get("attributes") or {}
+            out = attrs.get("n8n.node.items.output")
+            out_items = int(out) if isinstance(out, (int, float)) else None
+            run = runs[i] if i < len(runs) else (runs[-1] if runs else None)
+            err = _node_error_from_run(run) if run else None
+
+            if err:
+                status, etype, summary, http = "ERROR", err[0], err[1], err[2]
+            elif out_items == 0:
+                status, etype, summary, http = "EMPTY", "", "", None
+            else:
+                status, etype, summary, http = "OK", "", "", None
+
+            updates.append({
+                "span_id": s["span_id"],
+                "health_status": status,
+                "error_type": etype,
+                "error_summary": summary,
+                "http_status": http,
+                "output_items": out_items,
+                "checked_at": now,
+            })
+            if status == "ERROR" and exec_status == "success":
+                silent_hits.append({"node": nn, "error_type": etype, "error_summary": summary})
+
+    n = await storage.set_health(updates)
+    if silent_hits:
+        logger.info("silent-failure: %d node(s) errored under a green run, exec %s", len(silent_hits), exec_id)
+        try:
+            await manager.broadcast("otel:silent", {
+                "trace_id": trace_id,
+                "execution_id": exec_id,
+                "instance_id": inst,
+                "workflow_name": (root or {}).get("workflow_name", ""),
+                "nodes": silent_hits,
+            })
+        except Exception:  # noqa: BLE001 - notification is best-effort
+            pass
+    return n

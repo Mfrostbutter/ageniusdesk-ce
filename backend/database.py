@@ -144,6 +144,25 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             await db.execute(f"ALTER TABLE otel_spans ADD COLUMN {col} {typ}")
     await db.commit()
 
+    # Health columns on otel_spans (silent-failure detection). Same idempotent
+    # ALTER pattern. Populated by the run-data health enrichment: span status
+    # lies for Continue-On-Fail nodes, so per-node health is derived from run-data
+    # (errors) and the item-count span attribute (empty output).
+    cursor = await db.execute("PRAGMA table_info(otel_spans)")
+    ocols = {row["name"] for row in await cursor.fetchall()}
+    _health_cols = [
+        ("health_status", "TEXT"),   # OK | ERROR | EMPTY | UNKNOWN
+        ("error_type", "TEXT"),      # AxiosError | thrown | node error name
+        ("error_summary", "TEXT"),   # normalized human message (truncated)
+        ("http_status", "INTEGER"),  # when the error object carried one
+        ("output_items", "INTEGER"), # item count on the node's main output
+        ("checked_at", "TEXT"),      # enrichment timestamp (idempotency guard)
+    ]
+    for col, typ in _health_cols:
+        if col not in ocols:
+            await db.execute(f"ALTER TABLE otel_spans ADD COLUMN {col} {typ}")
+    await db.commit()
+
     # module_installs — tamper-light audit trail of community module installs.
     # One row per confirmed install: what capabilities were declared, what the
     # scan found, who approved it, and when. Makes "what did we agree to, and

@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from backend.auth_gate import require_role
 from backend.config import get_active_instance_id, settings
 
-from . import cost, ingest, pricing, storage
+from . import cost, health, ingest, pricing, storage
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +82,15 @@ async def metrics(window_hours: int = 24, instance_id: str = "", workflow_id: st
 
 
 async def _enrich(trace_id: str) -> None:
-    """Best-effort lazy cost enrichment before returning a trace's spans."""
+    """Best-effort lazy cost + health enrichment before returning a trace's spans."""
     try:
         await cost.enrich_trace(trace_id)
     except Exception as e:
         logger.debug("cost enrich skipped for %s: %s", trace_id, e)
+    try:
+        await health.enrich_trace_health(trace_id)
+    except Exception as e:
+        logger.debug("health enrich skipped for %s: %s", trace_id, e)
 
 
 @router.get("/traces/{trace_id}")

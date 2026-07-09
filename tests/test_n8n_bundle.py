@@ -112,3 +112,50 @@ def test_webhook_url_optional():
     assert "WEBHOOK_URL=https://n8n.example.com/" in by["n8n"].config["Env"]
     by2 = _by_name(templates.get("n8n").build(_fields(webhook_url="")))
     assert not any(e.startswith("WEBHOOK_URL=") for e in by2["n8n"].config["Env"])
+
+
+# ── OTLP auto-export: every provisioned n8n self-registers with the receiver ──
+
+
+def _otel_on(monkeypatch, url="http://localhost:3066", token="otel-tok"):
+    monkeypatch.setattr(templates.settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(templates.settings, "agd_public_url", url)
+    monkeypatch.setattr(templates.settings, "agd_otel_token", token)
+
+
+def test_otel_export_wired_when_enabled(monkeypatch):
+    _otel_on(monkeypatch)
+    env = _by_name(templates.get("n8n").build(_fields()))["n8n"].config["Env"]
+    assert "N8N_OTEL_ENABLED=true" in env
+    # loopback public URL is rewritten so a bridged container can reach the host.
+    assert "N8N_OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:3066/api/otel" in env
+    assert "N8N_OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer otel-tok" in env
+
+
+def test_otel_export_lan_ip_passthrough(monkeypatch):
+    _otel_on(monkeypatch, url="http://10.10.0.15:3066")
+    env = _by_name(templates.get("n8n").build(_fields()))["n8n"].config["Env"]
+    # A LAN-IP dashboard URL is already container-reachable; used verbatim.
+    assert "N8N_OTEL_EXPORTER_OTLP_ENDPOINT=http://10.10.0.15:3066/api/otel" in env
+
+
+def test_otel_export_token_optional(monkeypatch):
+    _otel_on(monkeypatch, token="")
+    env = _by_name(templates.get("n8n").build(_fields()))["n8n"].config["Env"]
+    assert "N8N_OTEL_ENABLED=true" in env
+    assert not any(e.startswith("N8N_OTEL_EXPORTER_OTLP_HEADERS=") for e in env)
+
+
+def test_otel_export_noop_when_disabled(monkeypatch):
+    _otel_on(monkeypatch)
+    monkeypatch.setattr(templates.settings, "agd_otel_enabled", False)
+    env = _by_name(templates.get("n8n").build(_fields()))["n8n"].config["Env"]
+    assert not any(e.startswith("N8N_OTEL_") for e in env)
+
+
+def test_otel_export_noop_when_no_public_url(monkeypatch):
+    # Receiver on but the dashboard's reachable URL is unknown -> skip, don't emit
+    # a broken endpoint. (A warning is logged.)
+    _otel_on(monkeypatch, url="")
+    env = _by_name(templates.get("n8n").build(_fields()))["n8n"].config["Env"]
+    assert not any(e.startswith("N8N_OTEL_") for e in env)

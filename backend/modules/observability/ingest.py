@@ -8,6 +8,7 @@ mapping survives minor n8n naming changes; the full attribute set is stored
 verbatim so nothing is lost while the schema settles.
 """
 
+import asyncio
 import json
 import logging
 
@@ -143,4 +144,15 @@ async def ingest_trace_request(req) -> int:
         await manager.broadcast("otel:trace", {"trace_ids": trace_ids, "spans": len(rows)})
     except Exception:
         pass
+    # Eager silent-failure check: a batch carrying a workflow.execute root means
+    # the execution has finished, so run health enrichment now (loud without
+    # anyone opening the trace). Fire-and-forget: the run-data fetch is bounded
+    # inside enrich_trace_health and must never block the ingest response.
+    try:
+        from . import health
+        completed = {r["trace_id"] for r in rows if r["name"] == "workflow.execute"}
+        for tid in completed:
+            asyncio.create_task(health.enrich_trace_health(tid))
+    except Exception as e:  # noqa: BLE001 - scheduling is best-effort
+        logger.debug("health schedule failed: %s", e)
     return inserted

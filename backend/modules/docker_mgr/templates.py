@@ -18,11 +18,48 @@ import string
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+from backend.config import settings
 
 from . import bundle as bundle_mod
 from . import template_state
 
 logger = logging.getLogger(__name__)
+
+
+def _otel_export_env() -> list[str]:
+    """OTLP export env so a provisioned n8n self-registers its telemetry with the
+    dashboard's embedded receiver — no manual per-instance step.
+
+    Empty (a no-op) when the receiver is off, or when the dashboard's public URL
+    is unknown: auto-export needs a container-reachable endpoint, and
+    AGD_PUBLIC_URL is that contract. n8n 2.29.7+ emits native OTel
+    (workflow.execute / node.execute spans) and appends /v1/traces to the
+    endpoint. A loopback public URL is rewritten to host.docker.internal so the
+    endpoint resolves from inside the bridged container; a LAN-IP URL is already
+    reachable and used as-is.
+    """
+    if not settings.agd_otel_enabled:
+        return []
+    base = (settings.agd_public_url or "").strip().rstrip("/")
+    if not base:
+        logger.warning(
+            "OTLP auto-export skipped for new n8n instance: AGD_PUBLIC_URL is unset. "
+            "Set it to the dashboard's container-reachable URL to auto-instrument."
+        )
+        return []
+    parts = urlsplit(base)
+    if parts.hostname in ("localhost", "127.0.0.1", "::1"):
+        netloc = "host.docker.internal" + (f":{parts.port}" if parts.port else "")
+        base = urlunsplit(parts._replace(netloc=netloc))
+    env = [
+        "N8N_OTEL_ENABLED=true",
+        f"N8N_OTEL_EXPORTER_OTLP_ENDPOINT={base}/api/otel",
+    ]
+    if settings.agd_otel_token:
+        env.append(f"N8N_OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer {settings.agd_otel_token}")
+    return env
 
 COMMUNITY_TEMPLATE_DIR = Path("/app/data/templates")
 
@@ -152,6 +189,10 @@ def _build_n8n(f: dict) -> list[bundle_mod.ContainerSpec]:
     ]
     if f.get("webhook_url"):
         n8n_env.append(f"WEBHOOK_URL={f['webhook_url'].rstrip('/')}/")
+    # Auto-instrument: every AGD-provisioned n8n exports OTLP to the dashboard's
+    # embedded receiver so observability (and silent-failure detection) works out
+    # of the box. No-op when the receiver is off or the public URL is unset.
+    n8n_env.extend(_otel_export_env())
 
     n8n_spec = bundle_mod.ContainerSpec(
         name="n8n",
