@@ -117,7 +117,8 @@ def test_silent_failure_detected_under_green_run(client, monkeypatch):
         return {"data": {"resultData": {"runData": {
             # HTTP node: error demoted into the normal output (span said OK).
             "HTTP Call": [{"executionStatus": "success",
-                           "data": {"main": [[{"json": {"error": {"name": "AxiosError", "status": 503, "message": "boom"}}}]]}}],
+                           "data": {"main": [[{"json": {"error": {
+                               "name": "AxiosError", "status": 503, "message": "boom"}}}]]}}],
             "Empty Sheet": [{"executionStatus": "success", "data": {"main": [[]]}}],
             "Good Node": [{"executionStatus": "success", "data": {"main": [[{"json": {"x": 1}}]]}}],
         }}}}
