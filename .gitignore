@@ -1,3 +1,6 @@
+# Personal workspace registry (not part of the application)
+KNOWLEDGE-REGISTRY.yaml
+
 __pycache__/
 *.py[cod]
 *.egg-info/
