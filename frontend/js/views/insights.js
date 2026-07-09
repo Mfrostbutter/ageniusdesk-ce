@@ -139,6 +139,7 @@ async function loadAndRender() {
     renderTile('Executions', fmtNum(s.total_executions), `${s.success || 0} ok · ${s.error || 0} err · ${s.running || 0} running`),
     renderTile('Success rate', fmtPct(sr), `${s.success || 0} of ${s.total_executions || 0}`, rateColor(sr)),
     renderTile('Errors', fmtNum(s.error || 0), `${s.local_errors || 0} in local log`, s.error ? '#ef4444' : null),
+    renderTile('Silent failures', fmtNum(s.silent_failures || 0), 'green runs, dropped work', s.silent_failures ? '#f59e0b' : null),
     renderTile('Avg duration', fmtMs(s.avg_duration_ms), 'measured per execution'),
   ].join('');
 
@@ -174,7 +175,7 @@ async function loadAndRender() {
     : '';
 
   root.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:12px;margin-bottom:18px">${tiles}</div>
+    <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:12px;margin-bottom:18px">${tiles}</div>
     ${truncWarn}
     <div class="card" style="margin-bottom:18px">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">

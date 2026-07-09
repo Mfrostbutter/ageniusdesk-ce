@@ -44,6 +44,12 @@ from . import storage
 
 logger = logging.getLogger(__name__)
 
+# Distinct error class for silent failures written into the errors table, so the
+# Overview / Insights / Executions-Errors views (all driven by that table) can
+# style and count them apart from loud n8n errors. Mirrored in the frontend
+# (components/error-item.js) and the insights aggregator; keep the string in sync.
+SILENT_ERROR_TYPE = "Silent failure"
+
 
 def _normalize_error(raw) -> tuple[str, str, int | None]:
     """Collapse n8n's inconsistent error shapes to (type, summary, http_status).
@@ -257,4 +263,28 @@ async def enrich_trace_health(trace_id: str) -> int:
             })
         except Exception:  # noqa: BLE001 - notification is best-effort
             pass
+
+        # Surface into the errors pipeline too. The Overview, Insights, and
+        # Executions/Errors views are all driven by the errors table; most
+        # operators live there, not in the trace waterfall. store_error broadcasts
+        # an "error" event, so a silent failure appears live in those views the
+        # moment it is detected. Distinct error_type keeps it a separate class.
+        from backend.modules.errors import collector as errors_collector
+
+        wf_id = (root or {}).get("workflow_id", "") or "unknown"
+        wf_name = (root or {}).get("workflow_name", "") or "Unknown Workflow"
+        for hit in silent_hits:
+            try:
+                await errors_collector.store_error({
+                    "instance_id": inst,
+                    "workflow_id": wf_id,
+                    "workflow_name": wf_name,
+                    "execution_id": exec_id,
+                    "node_name": hit["node"],
+                    "error_message": hit.get("error_summary")
+                    or "Node produced no/low output on a run n8n reported as success.",
+                    "error_type": SILENT_ERROR_TYPE,
+                })
+            except Exception:  # noqa: BLE001 - surfacing is best-effort
+                logger.debug("silent-failure: could not store error row for node %s", hit.get("node"))
     return n

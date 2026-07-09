@@ -96,6 +96,24 @@ Mirror the cost-column ALTER pattern in `database.py` (idempotent `ADD COLUMN`, 
 
 `storage.py` gains `set_health(updates)` (update by `span_id`, mirrors `set_costs`) and `has_health(trace_id)` (idempotency guard, mirrors `has_cost`). `list_traces` and `metrics_summary` gain `is_silent` / `silent_rate` derived like `has_error` / `error_rate`.
 
+### Surface in every operator view, not just the trace waterfall (added 2026-07-09)
+
+Most operators live in the Executions/Errors tab and the Overview, not the OTel
+waterfall. A silent failure that only shows in Observability is still, in
+practice, silent. So the health enrichment writes each silent-failure node into
+the **errors table** (the collector that already drives the Errors feed, grouped
+view, Overview "Recent Errors" widget + Failure-Rate card, and the Insights local
+error log), with a distinct `error_type = "Silent failure"` so it reads as its
+own class and can be styled/counted apart from loud n8n errors. `store_error`
+broadcasts an `error` event, so it appears live. The frontend renders a `SILENT`
+badge (shared `components/error-item.js`, so Overview + Errors + Fleet Health get
+it at once) and Insights gains a dedicated `Silent failures` tile
+(`summary.silent_failures`). One write, all three views.
+
+Note: span-only anomalies (LOW/drop) surface immediately on ingest; the demoted
+**error** path needs a run-data fetch, so those can lag the execution by up to
+~a minute (the eager-enrichment latency tracked below). Both still land loud.
+
 ### Reporting (make it loud)
 
 - **Websocket alert.** On detecting a new silent failure, broadcast `otel:silent` `{execution_id, workflow_name, node, error_type, error_summary}`. Frontend raises a toast and badges the Errors view — the run the log called success shows up red.

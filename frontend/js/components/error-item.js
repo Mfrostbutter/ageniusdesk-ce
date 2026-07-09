@@ -50,8 +50,22 @@ function formatTime(iso) {
   } catch { return iso; }
 }
 
+// A silent failure is a run n8n reported as success while a node dropped its
+// work; it reaches this feed via the observability health enrichment with a
+// distinct type (mirrors backend health.SILENT_ERROR_TYPE). Style it apart from
+// loud errors so operators can tell "green but broken" from an ordinary failure.
+const SILENT_TYPE = 'Silent failure';
+
+function silentBadge() {
+  return `<span class="silent-badge" title="Run reported success, but a node dropped its work" `
+    + `style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:600;letter-spacing:.04em;`
+    + `padding:2px 6px;border-radius:var(--radius);background:rgba(245,158,11,.15);color:var(--warning,#f59e0b);`
+    + `border:1px solid rgba(245,158,11,.35);text-transform:uppercase;flex:none">&#9888; Silent</span>`;
+}
+
 export function renderErrorItem(e, ctx = {}) {
   const map = ctx.instanceMap || {};
+  const isSilent = e.error_type === SILENT_TYPE;
   const inst = map[e.instance_id] || {};
   const n8nBase = (inst.n8nUrl || window.__n8nUrl || '').replace(/\/$/, '');
   // encodeURIComponent (not esc): these ids land in an href attribute, and esc()
@@ -61,10 +75,11 @@ export function renderErrorItem(e, ctx = {}) {
     ? `${n8nBase}/workflow/${encodeURIComponent(e.workflow_id)}/executions/${encodeURIComponent(e.execution_id)}`
     : '';
   return `
-    <div class="error-item" onclick="this.classList.toggle('expanded')">
+    <div class="error-item${isSilent ? ' error-item--silent' : ''}"${isSilent ? ' style="border-left:2px solid var(--warning,#f59e0b)"' : ''} onclick="this.classList.toggle('expanded')">
       <div class="error-item-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <span class="error-item-workflow" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
           ${instanceBadge(e.instance_id, map)}
+          ${isSilent ? silentBadge() : ''}
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.workflow_name)}</span>
         </span>
         <span class="error-item-time">${esc(formatTime(e.occurred_at))}</span>

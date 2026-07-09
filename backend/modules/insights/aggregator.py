@@ -145,6 +145,12 @@ async def _build_payload(instance_id: str, range_key: str) -> dict[str, Any]:
     success = sum(1 for e in executions if e.get("status") == "success")
     error = sum(1 for e in executions if e.get("status") == "error")
     running = sum(1 for e in executions if e.get("status") == "running")
+    # Silent failures hide inside the success bucket: n8n reports the run success
+    # while a node dropped its work. They are recorded in the errors table with a
+    # distinct type by the observability health enrichment. Count them separately
+    # so the tile reads as its own class. (Type string mirrors
+    # observability.health.SILENT_ERROR_TYPE.)
+    silent = sum(1 for e in errors if e.get("error_type") == "Silent failure")
     total = len(executions)
     durations = [d for d in (_duration_ms(e) for e in executions) if d is not None]
     avg_ms = int(sum(durations) / len(durations)) if durations else 0
@@ -229,6 +235,7 @@ async def _build_payload(instance_id: str, range_key: str) -> dict[str, Any]:
             "success_rate": success_rate,
             "avg_duration_ms": avg_ms,
             "local_errors": len(errors),
+            "silent_failures": silent,
         },
         "timeseries": {"points": points},
         "top_by_volume": by_volume,

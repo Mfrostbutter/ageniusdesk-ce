@@ -549,6 +549,7 @@ async function loadDashboardData({ sync = true } = {}) {
     const base = {
       total: workflows.length, active: activeCount, status: statusData,
       execTotal, nSuccess: sum.success || 0, nErr, nRunning: sum.running || 0, localErr, failRate,
+      silent: sum.silent_failures || 0, // green runs that dropped work (own class)
     };
     renderStats(base, lookback);
     renderTimeline(executions.slice(0, 30));
@@ -760,7 +761,7 @@ function fmtNum(n) {
 }
 
 function renderStats(base, lookback) {
-  const { total, active, execTotal, nSuccess, nErr, nRunning, localErr, failRate, status } = base;
+  const { total, active, execTotal, nSuccess, nErr, nRunning, localErr, failRate, status, silent } = base;
   const el = document.getElementById('stats-grid');
   if (!el) return;
   const instanceName = status.active_instance ? status.active_instance.name : '';
@@ -801,6 +802,7 @@ function renderStats(base, lookback) {
       <div class="stat-value" style="color:${failRate > 0 ? 'var(--error)' : 'var(--text-primary)'}">${failRate}%</div>
       <div class="stat-label">Failure Rate</div>
       <div class="stat-trend ${failClass}">${esc(failTrend)}</div>
+      ${silent > 0 ? `<div class="stat-trend" style="color:var(--warning,#f59e0b)" title="Runs n8n reported success while a node dropped its work">&#9888; ${esc(fmtNum(silent))} silent (${esc(windowLabel)})</div>` : ''}
     </div>
     <div class="stat-card-accent stat-card-accent--warning" style="cursor:pointer" onclick="window.__nav('insights')" title="Executions in ${esc(windowLabel)}">
       <div class="stat-value">${esc(fmtNum(execTotal))}</div>

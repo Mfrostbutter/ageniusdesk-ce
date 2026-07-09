@@ -336,3 +336,12 @@ def test_low_output_flags_silent_by_history(client, monkeypatch):
 
     t = next(t for t in client.get("/api/otel/traces").json()["traces"] if t["trace_id"] == LOW_TRACE_HEX)
     assert t["has_silent"] is True
+
+    # It must also surface in the errors pipeline (Overview / Insights / Errors
+    # views), as a distinct "Silent failure" class, so operators who never open
+    # the trace waterfall still see it.
+    errs = client.get("/api/errors?instance_id=all&limit=50").json()["errors"]
+    silent_rows = [e for e in errs if e.get("error_type") == "Silent failure"]
+    assert any(e.get("node_name") == "Reliable" for e in silent_rows)
+    # The informational EMPTY node ("New") must NOT emit an error row.
+    assert all(e.get("node_name") != "New" for e in silent_rows)
