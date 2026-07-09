@@ -88,7 +88,7 @@ A quick tour of the dashboard ([full-quality video](https://github.com/Mfrostbut
 - Observe view: a live trace list and parent/child execution waterfall, plus a metrics strip (executions, error rate, p50/p95, throughput)
 - LLM cost tracking folded into the trace layer: per-trace and per-call spend, enriched from token usage and a layered price book
 - Per-execution trace links from Errors and Insights
-- Silent-failure detection: flags "green but broken" runs that n8n reported as success (a node that errored under Continue-On-Fail, or a node that normally produces data and quietly returned nothing) with a toast, a per-run "silent" badge, and the exact node that broke
+- Silent-failure detection: flags "green but broken" runs that n8n reported as success (a node that errored under Continue-On-Fail, or a node that normally produces data and quietly returned nothing) with a toast, a per-run "silent" badge, and the exact node that broke. How it works, and why n8n's own status can't catch it, is written up in [Silent-failure detection](docs/architecture/silent-failure-detection.md)
 
 **Enabling OpenTelemetry on your n8n**
 
