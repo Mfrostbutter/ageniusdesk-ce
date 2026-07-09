@@ -123,6 +123,7 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
                MIN(start_ns) AS s,
                MAX(end_ns)   AS e,
                MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS err,
+               MAX(CASE WHEN health_status IN ('ERROR','LOW') THEN 1 ELSE 0 END) AS silent,
                COALESCE(SUM(cost_usd), 0) AS cost
         FROM otel_spans
         WHERE (? = '' OR instance_id = ?)
@@ -136,6 +137,7 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
     durs = sorted((int(r["e"]) - int(r["s"])) / 1e6 for r in rows if int(r["e"]) > int(r["s"]))
     n = len(rows)
     errs = sum(int(r["err"]) for r in rows)
+    silent = sum(int(r["silent"]) for r in rows)
     spend = sum(float(r["cost"] or 0) for r in rows)
 
     def pct(p: int) -> float:
@@ -149,6 +151,8 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
         "executions": n,
         "errors": errs,
         "error_rate": round(errs / n, 4) if n else 0.0,
+        "silent_failures": silent,
+        "silent_rate": round(silent / n, 4) if n else 0.0,
         "p50_ms": pct(50),
         "p95_ms": pct(95),
         "throughput_per_hr": round(n / window_hours, 2) if window_hours else 0.0,

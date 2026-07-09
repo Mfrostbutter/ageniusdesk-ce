@@ -146,6 +146,11 @@ def test_silent_failure_detected_under_green_run(client, monkeypatch):
     assert t["has_silent"] is True
     assert t["has_error"] is False  # no span carried ERROR status — that's the whole point
 
+    # The metrics strip surfaces the silent-failure count for the UI card.
+    m = client.get("/api/otel/metrics?window_hours=24").json()
+    assert m["silent_failures"] >= 1
+    assert m["silent_rate"] > 0
+
 
 # ── Phase 2: low-output anomaly classifier ────────────────────────────────────
 

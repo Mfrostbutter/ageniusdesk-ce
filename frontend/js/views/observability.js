@@ -46,6 +46,11 @@ export async function render(container) {
     onEvent('otel:trace', () => {
       if (window.__currentView === 'observe') { refreshList(); renderMetrics(); }
     });
+    // Silent-failure detected (the global toast lives in app.js); refresh the
+    // list + strip so the flagged run and the count update live.
+    onEvent('otel:silent', () => {
+      if (window.__currentView === 'observe') { refreshList(); renderMetrics(); }
+    });
     _wsBound = true;
   }
 }
@@ -109,11 +114,14 @@ async function renderMetrics() {
   try { m = await get(`/api/otel/metrics?window_hours=24${wfQuery()}`); } catch { return; }
   const errPct = `${((m.error_rate || 0) * 100).toFixed(1)}%`;
   const errColor = (m.error_rate || 0) > 0 ? 'var(--error)' : 'var(--text-primary)';
+  const silent = m.silent_failures ?? 0;
+  const silentColor = silent > 0 ? 'var(--warning,#f59e0b)' : 'var(--text-primary)';
   const spend = Number(m.spend_usd || 0);
   el.innerHTML = `
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       ${metricCard('Executions (24h)', m.executions ?? 0, `${(m.throughput_per_hr ?? 0)}/hr`)}
       ${metricCard('Error rate', `<span style="color:${errColor}">${errPct}</span>`, `${m.errors ?? 0} failed`)}
+      ${metricCard('Silent failures', `<span style="color:${silentColor}">${silent}</span>`, 'green but broken')}
       ${metricCard('p50 latency', `${m.p50_ms ?? 0} ms`, 'median run')}
       ${metricCard('p95 latency', `${m.p95_ms ?? 0} ms`, 'slow tail')}
       ${metricCard('Spend (24h)', `$${spend.toFixed(spend < 1 ? 4 : 2)}`, 'LLM cost (est)')}
@@ -148,7 +156,11 @@ async function refreshList() {
       style="display:block;width:100%;text-align:left;border:1px solid ${t.trace_id === _selected ? 'var(--accent)' : 'var(--border-dim)'};border-radius:8px;background:var(--bg-elevated);padding:10px 12px;margin-bottom:8px;cursor:pointer">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
         <span style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.workflow_name || '(unknown workflow)')}</span>
-        <span class="pill pill-${t.has_error ? 'error' : 'success'}">${t.has_error ? 'error' : 'ok'}</span>
+        ${t.has_error
+          ? '<span class="pill pill-error">error</span>'
+          : t.has_silent
+            ? '<span class="pill pill-warning" title="Ran green but a node failed or dropped its output">silent</span>'
+            : '<span class="pill pill-success">ok</span>'}
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">
         <span>exec ${esc(t.execution_id || '—')} · ${t.span_count} spans</span>

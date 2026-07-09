@@ -69,8 +69,14 @@ export function buildWaterfall(spans) {
   ordered.forEach(s => {
     const leftPct = ((s.start_ns - t0) / total) * 100;
     const widthPct = Math.max(((s.end_ns - s.start_ns) / total) * 100, 0.6);
-    const isErr = s.status === 'ERROR';
-    const barColor = isErr ? 'var(--error)' : 'var(--accent)';
+    // Span status lies for silent failures (n8n reports a Continue-On-Fail node
+    // OK), so colour by the derived health_status too: ERROR = red, LOW (silent
+    // under-output on a reliable producer) = amber. EMPTY is informational.
+    const hs = s.health_status || '';
+    const isErr = s.status === 'ERROR' || hs === 'ERROR';
+    const isSilent = hs === 'LOW';
+    const dotColor = isErr ? 'var(--error)' : (isSilent ? 'var(--warning,#f59e0b)' : '');
+    const barColor = isErr ? 'var(--error)' : (isSilent ? 'var(--warning,#f59e0b)' : 'var(--accent)');
     const indent = (dmap[s.span_id] || 0) * 14;
 
     // n8n names every node span "node.execute"; the useful label is in the
@@ -83,7 +89,7 @@ export function buildWaterfall(spans) {
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:3px 0;cursor:pointer';
     row.innerHTML = `
       <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${esc(label)} (${esc(kindHint)})">
-        ${isErr ? '<span style="color:var(--error)">●</span> ' : ''}${esc(label)}
+        ${dotColor ? `<span style="color:${dotColor}">●</span> ` : ''}${esc(label)}
       </div>
       <div style="flex:1;position:relative;height:16px;background:var(--bg-input,rgba(255,255,255,.04));border-radius:3px">
         <div style="position:absolute;left:${leftPct}%;width:${widthPct}%;top:2px;height:12px;background:${barColor};border-radius:3px;min-width:2px"></div>
@@ -109,7 +115,12 @@ export function buildWaterfall(spans) {
     const costLine = (s.cost_usd != null || s.tokens_in != null)
       ? `<div style="margin-bottom:6px;color:var(--text-primary)">${esc(s.model || 'model ?')} · in ${s.tokens_in ?? '?'} / out ${s.tokens_out ?? '?'} tok · ${costTail}</div>`
       : '';
-    detail.innerHTML = `${costLine}<div style="margin-bottom:6px">status <strong style="color:${isErr ? 'var(--error)' : 'var(--success,#34d399)'}">${esc(s.status || 'UNSET')}</strong> · span ${esc((s.span_id || '').slice(0, 8))} · parent ${esc((s.parent_id || '—').slice(0, 8))}</div>${attrRows}`;
+    // Surface the derived health when it differs from (or refines) span status:
+    // the demoted error message, or the low/empty output count and why it fired.
+    const healthLine = (hs === 'ERROR' || hs === 'LOW' || hs === 'EMPTY')
+      ? `<div style="margin-bottom:6px;color:${isErr ? 'var(--error)' : (isSilent ? 'var(--warning,#f59e0b)' : 'var(--text-secondary)')}">health <strong>${esc(hs)}</strong>${s.error_type ? ` · ${esc(s.error_type)}` : ''}${s.output_items != null ? ` · out ${esc(s.output_items)} items` : ''}${s.http_status != null ? ` · HTTP ${esc(s.http_status)}` : ''}${s.error_summary ? `<br><span style="color:var(--text-secondary)">${esc(s.error_summary)}</span>` : ''}</div>`
+      : '';
+    detail.innerHTML = `${costLine}${healthLine}<div style="margin-bottom:6px">status <strong style="color:${isErr ? 'var(--error)' : 'var(--success,#34d399)'}">${esc(s.status || 'UNSET')}</strong> · span ${esc((s.span_id || '').slice(0, 8))} · parent ${esc((s.parent_id || '—').slice(0, 8))}</div>${attrRows}`;
 
     row.addEventListener('click', () => { detail.style.display = detail.style.display === 'none' ? '' : 'none'; });
     wrap.appendChild(row);

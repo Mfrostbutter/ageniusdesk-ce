@@ -341,6 +341,24 @@ onEvent('message', (data) => {
   fn(text);
 });
 
+// A run that n8n reported "success" but that dropped work under Continue-On-Fail
+// (or a reliable producer that went empty). The whole point is that you are NOT
+// looking at the Observe view when it happens, so alert globally and bump the
+// nav error badge.
+onEvent('otel:silent', (data) => {
+  const nodes = (data && data.nodes) || [];
+  const first = nodes[0] || {};
+  const wf = (data && data.workflow_name) || 'a workflow';
+  const more = nodes.length > 1 ? ` (+${nodes.length - 1} more)` : '';
+  const what = first.node ? (first.error_type ? `${first.node} — ${first.error_type}` : first.node) : 'a node';
+  toast.toast(`Silent failure: ${wf} ran green but ${what} failed${more}`, 'warning', 8000);
+  const badge = document.getElementById('error-badge');
+  if (badge) {
+    badge.textContent = (parseInt(badge.textContent) || 0) + 1;
+    badge.classList.remove('hidden');
+  }
+});
+
 // ── Add-instance modal (subsequent adds — first-run uses the wizard) ────────
 
 window.__hasInstances = false;
