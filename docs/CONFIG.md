@@ -62,6 +62,11 @@ Tracing and per-run cost are self-contained: no external account or SaaS is requ
 | `AGD_OTEL_TOKEN` | (none) | Bearer token gating the OTLP ingest endpoint. Unset = open (trusted-LAN only). Set this before exposing the port publicly. |
 | `AGD_OTEL_RETENTION_HOURS` | `72` | Age-based span pruning; spans older than this are dropped. |
 | `AGD_OTEL_MAX_SPANS` | `500000` | Hard cap on stored spans; the oldest are pruned first past this limit. |
+| `AGD_HEALTH_MIN_SAMPLES` | `20` | Silent-failure low-output classifier: runs of history a node needs before it can be judged. Below this the node is cold-start and never flags. |
+| `AGD_HEALTH_STEADY_ZERO_RATE` | `0.05` | Zero-rate at or under which a node counts as a reliable producer; a zero/low output on such a node is a silent failure. |
+| `AGD_HEALTH_DORMANT_ZERO_RATE` | `0.95` | Zero-rate at or over which a node is treated as normally-empty (a poller/filter); its zeros never flag. |
+| `AGD_HEALTH_DROP_FACTOR` | `0.1` | An output below `median * this` for a reliable producer is a magnitude-drop anomaly (e.g. 200 → 3). |
+| `AGD_HEALTH_WINDOW` | `200` | Rolling history size (runs) per node for the classifier. |
 | `AGD_PRICEBOOK_REFRESH_HOURS` | `24` | How often to refresh the LLM price book from OpenRouter's public models API. Cached to `data/price_book.json` with a last-good fallback. Per-run cost is computed locally from token counts against this book. |
 | `LANGSMITH_TRACING` | `false` | **Optional.** Set to `true` (with `LANGSMITH_API_KEY`) to also send Agent Fleet runs to LangSmith. For teams already on LangSmith; not required for tracing or cost. When on, it overrides the local price-book cost estimate with LangSmith's exact figures and adds a per-call breakdown plus an external trace link. Self-disables if the key is missing. |
 | `LANGSMITH_API_KEY` | (none) | LangSmith API key. Only used when `LANGSMITH_TRACING=true`. A LangSmith account is needed only for this optional integration. |

@@ -88,6 +88,19 @@ A quick tour of the dashboard ([full-quality video](https://github.com/Mfrostbut
 - Observe view: a live trace list and parent/child execution waterfall, plus a metrics strip (executions, error rate, p50/p95, throughput)
 - LLM cost tracking folded into the trace layer: per-trace and per-call spend, enriched from token usage and a layered price book
 - Per-execution trace links from Errors and Insights
+- Silent-failure detection: flags "green but broken" runs that n8n reported as success (a node that errored under Continue-On-Fail, or a node that normally produces data and quietly returned nothing) with a toast, a per-run "silent" badge, and the exact node that broke
+
+**Enabling OpenTelemetry on your n8n**
+
+Observability and silent-failure detection only work once n8n is exporting traces. Instances AgeniusDesk **provisions for you are auto-wired** (nothing to do). For an **existing instance you connect by URL, you enable n8n's native OpenTelemetry export yourself**, or the Observe view and silent-failure detection stay empty. Set these in the n8n instance's environment and restart it (n8n appends `/v1/traces` to the endpoint):
+
+```
+N8N_OTEL_ENABLED=true
+N8N_OTEL_EXPORTER_OTLP_ENDPOINT=http://<dashboard-host>:<port>/api/otel
+N8N_OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <AGD_OTEL_TOKEN>
+```
+
+The receiver side also needs `AGD_OTEL_ENABLED=true` (and ideally `AGD_OTEL_TOKEN`) on AgeniusDesk. See [CONFIG.md](docs/CONFIG.md).
 
 **Community Modules**
 - Install third-party modules from a GitHub repo through a two-phase inspect then install flow
