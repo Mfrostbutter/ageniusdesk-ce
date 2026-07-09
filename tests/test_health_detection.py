@@ -242,6 +242,28 @@ def test_classify_normal_output_is_ok():
     assert health._classify_low_output([200] * 25, 190, 5)[0] == "OK"
 
 
+def test_classify_drop_origin_flags_when_input_normal():
+    # Origin of a drop: a data source (input is the steady trigger count) whose
+    # output collapsed vs its own baseline -> fire.
+    out_hist = [500] * 25
+    in_hist = [1] * 25
+    assert health._classify_low_output(out_hist, 5, 1, in_hist) == ("LOW", "drop")
+
+
+def test_classify_drop_victim_suppressed_when_input_also_dropped():
+    # Downstream victim: normally receives 500, now receives 5 because upstream
+    # dropped. It only passed the reduced volume through -> suppressed so only the
+    # origin fires (root-cause dedup, locked 2026-07-09).
+    out_hist = [500] * 25
+    in_hist = [500] * 25
+    assert health._classify_low_output(out_hist, 5, 5, in_hist) == ("OK", "inherited_drop")
+
+
+def test_classify_drop_not_suppressed_without_input_history():
+    # Too little input history to prove a victim -> keep the flag (recall on origin).
+    assert health._classify_low_output([500] * 25, 5, 5, [500] * 2) == ("LOW", "drop")
+
+
 LOW_TRACE_HEX = "66" * 16
 
 
@@ -294,6 +316,10 @@ def test_low_output_flags_silent_by_history(client, monkeypatch):
         # "rel" is a steady producer; "new" has no history (cold start).
         return [200] * 25 if node_id == "rel" else []
     monkeypatch.setattr(health.storage, "node_output_history", fake_history)
+
+    async def fake_input_history(node_id, window, exclude_trace_id=""):
+        return []  # no input baseline -> drop-origin suppression stays off
+    monkeypatch.setattr(health.storage, "node_input_history", fake_input_history)
 
     r = client.post("/api/otel/v1/traces",
                     content=_low_request().SerializeToString(),

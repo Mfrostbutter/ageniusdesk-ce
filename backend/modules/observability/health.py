@@ -90,7 +90,26 @@ def _node_error_from_run(run: dict):
     return _normalize_error(run_err if run_err else item_err)
 
 
-def _classify_low_output(history: list[int], out_items, in_items) -> tuple[str, str]:
+def _input_dropped(input_history: list[int], in_items) -> bool:
+    """True when this node's input is itself anomalously low vs its own input
+    history, i.e. an upstream node already dropped and this node merely passed the
+    reduced volume through. Used to suppress downstream victims of a magnitude
+    drop so only the origin fires. Needs enough input history to be sure; when
+    unsure it returns False (do not suppress), keeping recall on the origin.
+    """
+    if not isinstance(in_items, int):
+        return False
+    if len(input_history) < settings.agd_health_min_samples:
+        return False
+    nonzero = [x for x in input_history if x > 0]
+    if not nonzero:
+        return False
+    return in_items < median(nonzero) * settings.agd_health_drop_factor
+
+
+def _classify_low_output(
+    history: list[int], out_items, in_items, input_history: list[int] | None = None
+) -> tuple[str, str]:
     """Classify a node run's output volume against its own history.
 
     Returns (status, reason). ``OK`` and ``EMPTY`` are informational; only ``LOW``
@@ -122,6 +141,12 @@ def _classify_low_output(history: list[int], out_items, in_items) -> tuple[str, 
     if out_items == 0:
         return "LOW", "empty"
     if out_items < median_nz * settings.agd_health_drop_factor:
+        # Magnitude drop. Flag only the ORIGIN of the cascade: a node whose input
+        # is itself anomalously low just carried an upstream drop through (a
+        # victim), so stay quiet. The origin's input held normal while its own
+        # output collapsed (a data source's input is the steady trigger count).
+        if _input_dropped(input_history or [], in_items):
+            return "OK", "inherited_drop"
         return "LOW", "drop"
     return "OK", ""
 
@@ -191,7 +216,10 @@ async def enrich_trace_health(trace_id: str) -> int:
                 history = await storage.node_output_history(
                     node_id, settings.agd_health_window, exclude_trace_id=trace_id
                 )
-                status, reason = _classify_low_output(history, out_items, in_items)
+                input_history = await storage.node_input_history(
+                    node_id, settings.agd_health_window, exclude_trace_id=trace_id
+                )
+                status, reason = _classify_low_output(history, out_items, in_items, input_history)
                 if status == "LOW":
                     etype = "empty_output" if reason == "empty" else "low_output"
                     summary = _low_summary(reason, out_items, in_items)
@@ -208,6 +236,7 @@ async def enrich_trace_health(trace_id: str) -> int:
                 "error_summary": summary,
                 "http_status": http,
                 "output_items": out_items,
+                "input_items": in_items,
                 "node_id": node_id,
                 "silent": is_silent,
                 "checked_at": now,

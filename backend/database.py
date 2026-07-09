@@ -156,6 +156,7 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         ("error_summary", "TEXT"),   # normalized human message (truncated)
         ("http_status", "INTEGER"),  # when the error object carried one
         ("output_items", "INTEGER"), # item count on the node's main output
+        ("input_items", "INTEGER"),  # item count on the node's main input (drop-origin suppression)
         ("node_id", "TEXT"),         # n8n node id (stable across renames), for per-node history
         ("silent", "INTEGER"),       # 1 = node broke (ERROR/LOW) under a success run (green-but-broken)
         ("checked_at", "TEXT"),      # enrichment timestamp (idempotency guard)

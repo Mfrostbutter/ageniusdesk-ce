@@ -264,8 +264,8 @@ async def set_health(updates: list[dict]) -> int:
         UPDATE otel_spans SET
             health_status = :health_status, error_type = :error_type,
             error_summary = :error_summary, http_status = :http_status,
-            output_items = :output_items, node_id = :node_id, silent = :silent,
-            checked_at = :checked_at
+            output_items = :output_items, input_items = :input_items,
+            node_id = :node_id, silent = :silent, checked_at = :checked_at
         WHERE span_id = :span_id
         """,
         updates,
@@ -292,3 +292,24 @@ async def node_output_history(node_id: str, window: int, exclude_trace_id: str =
         (node_id, exclude_trace_id, int(window)),
     )
     return [int(r["output_items"]) for r in await cur.fetchall()]
+
+
+async def node_input_history(node_id: str, window: int, exclude_trace_id: str = "") -> list[int]:
+    """Recent input-item counts for a node id (newest first). Mirrors
+    ``node_output_history``; used by the drop-origin rule to tell a node whose
+    input itself collapsed (a downstream victim) from the node where the volume
+    actually dropped (the origin, whose input stayed normal).
+    """
+    if not node_id:
+        return []
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT input_items FROM otel_spans
+        WHERE node_id = ? AND input_items IS NOT NULL AND trace_id != ?
+        ORDER BY start_ns DESC
+        LIMIT ?
+        """,
+        (node_id, exclude_trace_id, int(window)),
+    )
+    return [int(r["input_items"]) for r in await cur.fetchall()]

@@ -141,6 +141,12 @@ The real failure is a node with **`items.input > 0` and `items.output == 0`** (i
 
 Same machinery, wider than zero. A steady producer whose output falls far below its historical band (e.g. below `median * drop_factor`, or below the historical min) is a "partial empty" anomaly — catches "200 rows → 3 rows," which a zero-only rule misses. Emitted at a lower confidence than a hard zero.
 
+### Drop-origin suppression (locked 2026-07-09, validated live)
+
+The `input == 0` cascade rule above suppresses zero-victims cleanly because n8n does not run a node with no input, so downstream nodes emit no span. A **magnitude drop** is different: every downstream node still runs with reduced-but-nonzero volume, so each independently reads below its own baseline and all fire. Live test (2026-07-09, real HTTP workflow, query drifted so the API returned 5 rows instead of 500): the four-node chain produced four flags for one root cause.
+
+Fix, symmetric to the output-history classifier: store `items.input` per node (`input_items` column) and keep a per-node **input** history alongside the output history. A drop node is a **pass-through victim** when its input is itself anomalously low versus its own input history (`in < median(input_history) * drop_factor`) — it merely carried an upstream drop through, so suppress it (`inherited_drop`). The **origin** is the node whose input held normal (a data source's input is the steady trigger count) while its output collapsed. When input history is too short to be sure, do **not** suppress (keep recall on the origin). Validated: the same 4-node drop now yields exactly one flag at `Fetch Leads`, the three downstream nodes return to OK. Implemented in `health._input_dropped` + `storage.node_input_history`.
+
 ### Thresholds configurable per instance (locked: yes, from day one)
 
 Ship sane defaults, all overridable via config (env → settings), never hard-coded:
