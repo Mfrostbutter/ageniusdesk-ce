@@ -442,7 +442,7 @@ function openAddWidgetModal(dashId) {
 // ── Widget mount functions ───────────────────────────────────────────────────
 
 function mountStats(el) {
-  el.innerHTML = `<div class="grid-4" id="stats-grid"></div>`;
+  el.innerHTML = `<div class="grid-5" id="stats-grid"></div>`;
 }
 
 function mountTimeline(el) {
@@ -802,7 +802,11 @@ function renderStats(base, lookback) {
       <div class="stat-value" style="color:${failRate > 0 ? 'var(--error)' : 'var(--text-primary)'}">${failRate}%</div>
       <div class="stat-label">Failure Rate</div>
       <div class="stat-trend ${failClass}">${esc(failTrend)}</div>
-      ${silent > 0 ? `<div class="stat-trend" style="color:var(--warning,#f59e0b)" title="Runs n8n reported success while a node dropped its work">&#9888; ${esc(fmtNum(silent))} silent (${esc(windowLabel)})</div>` : ''}
+    </div>
+    <div class="stat-card-accent stat-card-accent--warning" style="cursor:pointer" onclick="window.__nav('errors')" title="Runs n8n reported success while a node dropped its work">
+      <div class="stat-value" style="color:${silent > 0 ? 'var(--warning, #f59e0b)' : 'var(--text-primary)'}">${esc(fmtNum(silent))}</div>
+      <div class="stat-label">Silent Failures</div>
+      <div class="stat-trend ${silent > 0 ? 'stat-trend--down' : 'stat-trend--up'}">${silent > 0 ? `green runs, dropped work (${esc(windowLabel)})` : `none detected (${esc(windowLabel)})`}</div>
     </div>
     <div class="stat-card-accent stat-card-accent--warning" style="cursor:pointer" onclick="window.__nav('insights')" title="Executions in ${esc(windowLabel)}">
       <div class="stat-value">${esc(fmtNum(execTotal))}</div>
