@@ -74,9 +74,15 @@ anomalous for that specific node, which is the whole problem.
 A run is a **silent failure** when its top-level status is `success` and yet a
 node resolves to `ERROR` or `LOW`.
 
-Here is the same broken order-sync run in AgeniusDesk's Observe view. n8n called
-`Get Orders` OK; the detector reads the 503 out of the output and marks it
-`health ERROR`, then flags the validator that dropped to zero:
+The clearest way to see it is the same node on two runs. Here is the healthy one:
+`Get Orders` reports `status OK` and 100 items out, the whole span reading the way
+it should.
+
+![AgeniusDesk Observe: healthy Get Orders span, status OK, 100 items out](../media/silent-failures/agd-observe-order-sync-ok.png)
+
+Now the broken run in AgeniusDesk's Observe view. n8n still called `Get Orders`
+OK; the detector reads the 503 out of the output and marks it `health ERROR`,
+with the output collapsed:
 
 ![AgeniusDesk Observe: Get Orders shows node status OK but health ERROR, AxiosError HTTP 503, on a run n8n reported as success](../media/silent-failures/agd-observe-order-sync-error.png)
 
