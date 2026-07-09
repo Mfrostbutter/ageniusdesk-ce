@@ -198,6 +198,9 @@ async def enrich_trace_health(trace_id: str) -> int:
                 else:
                     etype, summary = "", ""
 
+            # Silent = the node broke but the execution reported success. A node
+            # error under a run n8n already flagged "error" is loud, not silent.
+            is_silent = 1 if (status in ("ERROR", "LOW") and exec_status == "success") else 0
             updates.append({
                 "span_id": s["span_id"],
                 "health_status": status,
@@ -206,9 +209,10 @@ async def enrich_trace_health(trace_id: str) -> int:
                 "http_status": http,
                 "output_items": out_items,
                 "node_id": node_id,
+                "silent": is_silent,
                 "checked_at": now,
             })
-            if status in ("ERROR", "LOW") and exec_status == "success":
+            if is_silent:
                 silent_hits.append({"node": nn, "error_type": etype, "error_summary": summary})
 
     n = await storage.set_health(updates)

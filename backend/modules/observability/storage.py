@@ -72,7 +72,7 @@ async def list_traces(instance_id: str, limit: int = 50, workflow_id: str = "") 
                MAX(end_ns)                                     AS end_ns,
                COUNT(*)                                        AS span_count,
                MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS has_error,
-               MAX(CASE WHEN health_status IN ('ERROR','LOW') THEN 1 ELSE 0 END) AS has_silent,
+               MAX(CASE WHEN silent=1 THEN 1 ELSE 0 END) AS has_silent,
                MAX(workflow_name)                              AS workflow_name,
                MAX(workflow_id)                                AS workflow_id,
                MAX(execution_id)                               AS execution_id,
@@ -123,7 +123,7 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
                MIN(start_ns) AS s,
                MAX(end_ns)   AS e,
                MAX(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS err,
-               MAX(CASE WHEN health_status IN ('ERROR','LOW') THEN 1 ELSE 0 END) AS silent,
+               MAX(CASE WHEN silent=1 THEN 1 ELSE 0 END) AS silent,
                COALESCE(SUM(cost_usd), 0) AS cost
         FROM otel_spans
         WHERE (? = '' OR instance_id = ?)
@@ -264,7 +264,8 @@ async def set_health(updates: list[dict]) -> int:
         UPDATE otel_spans SET
             health_status = :health_status, error_type = :error_type,
             error_summary = :error_summary, http_status = :http_status,
-            output_items = :output_items, node_id = :node_id, checked_at = :checked_at
+            output_items = :output_items, node_id = :node_id, silent = :silent,
+            checked_at = :checked_at
         WHERE span_id = :span_id
         """,
         updates,

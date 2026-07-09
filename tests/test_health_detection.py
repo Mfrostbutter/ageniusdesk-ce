@@ -152,6 +152,64 @@ def test_silent_failure_detected_under_green_run(client, monkeypatch):
     assert m["silent_rate"] > 0
 
 
+LOUD_TRACE_HEX = "77" * 16
+
+
+def _loud_request() -> ExportTraceServiceRequest:
+    """An execution n8n itself reported as error (loud, not silent)."""
+    req = ExportTraceServiceRequest()
+    rs = req.resource_spans.add()
+    rs.resource.attributes.append(_kv("service.name", "n8n"))
+    ss = rs.scope_spans.add()
+    wf = ss.spans.add()
+    wf.trace_id = b"\x77" * 16
+    wf.span_id = b"\x01" * 8
+    wf.name = "workflow.execute"
+    wf.start_time_unix_nano = 1_000_000_000
+    wf.end_time_unix_nano = 1_500_000_000
+    wf.status.code = 1
+    wf.attributes.append(_kv("n8n.workflow.name", "Halting WF"))
+    wf.attributes.append(_kv("n8n.execution.id", "7007"))
+    wf.attributes.append(_kv("n8n.execution.status", "error"))  # loud: n8n reported it
+    node = ss.spans.add()
+    node.trace_id = b"\x77" * 16
+    node.span_id = b"\x02" * 8
+    node.parent_span_id = b"\x01" * 8
+    node.name = "node.execute"
+    node.start_time_unix_nano = 1_100_000_000
+    node.end_time_unix_nano = 1_200_000_000
+    node.status.code = 1
+    node.attributes.append(_kv("n8n.node.name", "Boom"))
+    return req
+
+
+def test_loud_error_is_not_flagged_silent(client, monkeypatch):
+    monkeypatch.setattr(settings, "agd_otel_enabled", True)
+    monkeypatch.setattr(settings, "agd_otel_token", "")
+    _auth(client)
+    from backend.modules.observability import ingest as ingest_mod
+    monkeypatch.setattr(ingest_mod, "get_active_instance_id", lambda: "test-inst")
+    monkeypatch.setattr(health, "get_active_instance_id", lambda: "test-inst")
+
+    async def fake_raw(execution_id):
+        return {"data": {"resultData": {"runData": {
+            "Boom": [{"executionStatus": "error", "error": {"name": "NodeApiError", "message": "down"},
+                      "data": {"main": [[]]}}],
+        }}}}
+    monkeypatch.setattr(health.n8n_client, "get_execution_raw", fake_raw)
+
+    r = client.post("/api/otel/v1/traces",
+                    content=_loud_request().SerializeToString(),
+                    headers={"Content-Type": "application/x-protobuf"})
+    assert r.status_code == 200
+
+    spans = client.get(f"/api/otel/traces/{LOUD_TRACE_HEX}").json()["spans"]
+    boom = next(s for s in spans if (s.get("attributes") or {}).get("n8n.node.name") == "Boom")
+    assert boom["health_status"] == "ERROR"  # the node error is still detected...
+    t = next(t for t in client.get("/api/otel/traces").json()["traces"] if t["trace_id"] == LOUD_TRACE_HEX)
+    assert t["has_silent"] is False  # ...but the run was loud, so not a silent failure
+
+
 # ── Phase 2: low-output anomaly classifier ────────────────────────────────────
 
 
