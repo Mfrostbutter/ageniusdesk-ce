@@ -140,10 +140,9 @@ def test_silent_failure_detected_under_green_run(client, monkeypatch):
     monkeypatch.setattr(settings, "agd_otel_token", "")
     _auth(client)
 
-    # Pin instance identity so the health fetch guard matches.
-    from backend.modules.observability import ingest as ingest_mod
-    monkeypatch.setattr(ingest_mod, "get_active_instance_id", lambda: "test-inst")
-    monkeypatch.setattr(health, "get_active_instance_id", lambda: "test-inst")
+    # This stamp-less test payload carries no n8n.instance.id, so ingest maps it
+    # to "" (unattributed), and enrichment fetches run-data via the active/default
+    # instance (mocked below) — no active-instance pin needed.
 
     async def fake_raw(execution_id):
         assert execution_id == "5555"
@@ -221,9 +220,8 @@ def test_loud_error_is_not_flagged_silent(client, monkeypatch):
     monkeypatch.setattr(settings, "agd_otel_enabled", True)
     monkeypatch.setattr(settings, "agd_otel_token", "")
     _auth(client)
-    from backend.modules.observability import ingest as ingest_mod
-    monkeypatch.setattr(ingest_mod, "get_active_instance_id", lambda: "test-inst")
-    monkeypatch.setattr(health, "get_active_instance_id", lambda: "test-inst")
+    # Stamp-less payload maps to "" (unattributed); enrichment fetches via the
+    # active/default instance (mocked below), so no active-instance pin is needed.
 
     async def fake_raw(execution_id):
         return {"data": {"resultData": {"runData": {
@@ -338,9 +336,8 @@ def test_low_output_flags_silent_by_history(client, monkeypatch):
     monkeypatch.setattr(settings, "agd_otel_token", "")
     _auth(client)
 
-    from backend.modules.observability import ingest as ingest_mod
-    monkeypatch.setattr(ingest_mod, "get_active_instance_id", lambda: "test-inst")
-    monkeypatch.setattr(health, "get_active_instance_id", lambda: "test-inst")
+    # Stamp-less payload maps to "" (unattributed); enrichment fetches via the
+    # active/default instance (mocked below), so no active-instance pin is needed.
 
     async def no_rundata(execution_id):
         return {}  # pure mode-3 path, no errors

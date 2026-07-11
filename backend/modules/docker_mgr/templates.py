@@ -18,7 +18,7 @@ import string
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from backend.config import settings
 
@@ -28,7 +28,7 @@ from . import template_state
 logger = logging.getLogger(__name__)
 
 
-def _otel_export_env() -> list[str]:
+def _otel_export_env(instance_name: str = "") -> list[str]:
     """OTLP export env so a provisioned n8n self-registers its telemetry with the
     dashboard's embedded receiver — no manual per-instance step.
 
@@ -39,6 +39,12 @@ def _otel_export_env() -> list[str]:
     endpoint. A loopback public URL is rewritten to host.docker.internal so the
     endpoint resolves from inside the bridged container; a LAN-IP URL is already
     reachable and used as-is.
+
+    When ``instance_name`` is given, the exporter is stamped with a deterministic
+    ``agd.instance.name`` resource attribute so the receiver maps this instance's
+    traces back to it without probing (n8n's own resource id is an opaque hash the
+    receiver cannot recognize on its own). The value is percent-encoded because
+    OTEL_RESOURCE_ATTRIBUTES is W3C-baggage (comma/equals-delimited).
     """
     if not settings.agd_otel_enabled:
         return []
@@ -59,6 +65,8 @@ def _otel_export_env() -> list[str]:
     ]
     if settings.agd_otel_token:
         env.append(f"N8N_OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer {settings.agd_otel_token}")
+    if instance_name:
+        env.append(f"OTEL_RESOURCE_ATTRIBUTES=agd.instance.name={quote(instance_name, safe='')}")
     return env
 
 COMMUNITY_TEMPLATE_DIR = Path("/app/data/templates")
@@ -192,7 +200,7 @@ def _build_n8n(f: dict) -> list[bundle_mod.ContainerSpec]:
     # Auto-instrument: every AGD-provisioned n8n exports OTLP to the dashboard's
     # embedded receiver so observability (and silent-failure detection) works out
     # of the box. No-op when the receiver is off or the public URL is unset.
-    n8n_env.extend(_otel_export_env())
+    n8n_env.extend(_otel_export_env(instance_name))
 
     n8n_spec = bundle_mod.ContainerSpec(
         name="n8n",

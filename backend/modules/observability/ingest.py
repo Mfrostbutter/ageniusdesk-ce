@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 
-from backend.config import decrypt_value, get_active_instance_id, get_instances, settings
+from backend.config import get_instances, settings
 from backend.websocket import manager
 
 from . import storage
@@ -73,39 +73,43 @@ def _pick(attrs: dict, *keys: str) -> str:
     return ""
 
 
-def _map_instance(resource_attrs: dict) -> str:
-    """Best-effort attribution of a resource to a configured n8n instance.
+def _name_to_id() -> dict[str, str]:
+    """Lowercased instance name -> id, for matching the deterministic stamp."""
+    out: dict[str, str] = {}
+    for inst in get_instances():
+        name = (inst.get("name") or "").strip().lower()
+        if name:
+            out[name] = inst["id"]
+    return out
 
-    Matches common resource attributes against each instance's name/url; falls
-    back to the active instance. The exact n8n resource attribute for instance
-    identity is still being confirmed against real payloads, hence the wide net
-    plus a fallback (we store the resource attrs on every span so the mapping
-    can be tightened later without data loss).
+
+def _map_instance(resource_attrs: dict, pins: dict[str, str], name_to_id: dict[str, str]) -> str:
+    """Attribute a resource to a configured instance (deterministic stamp, then a
+    learned hash pin, then a stable ``unknown-<hash>`` bucket).
+
+    Delegates to ``instance_map.map_from_attrs``. It deliberately never falls back
+    to the active instance: an observed trace belongs to its source instance, and
+    stamping it with whoever is active corrupts cross-instance cost/health/counts.
+    Unknown hashes are resolved and re-attributed after insert by
+    ``instance_map.learn_unknowns``.
     """
-    candidates = [
-        str(resource_attrs.get(k, "")).lower()
-        for k in ("service.name", "service.instance.id", "host.name", "n8n.instance.id", "n8n.instance.url")
-        if resource_attrs.get(k)
-    ]
-    if candidates:
-        for inst in get_instances():
-            name = (inst.get("name") or "").lower()
-            try:
-                url = decrypt_value(inst.get("url", "")).lower()
-            except Exception:
-                url = (inst.get("url") or "").lower()
-            for c in candidates:
-                if c and (c == name or (name and name in c) or (url and c in url) or (c in url if url else False)):
-                    return inst["id"]
-    return get_active_instance_id()
+    from . import instance_map
+
+    return instance_map.map_from_attrs(resource_attrs, pins, name_to_id)
 
 
-def parse_request(req) -> list[dict]:
-    """Flatten an ExportTraceServiceRequest into otel_spans row dicts."""
+def parse_request(req, pins: dict[str, str] | None = None, name_to_id: dict[str, str] | None = None) -> list[dict]:
+    """Flatten an ExportTraceServiceRequest into otel_spans row dicts.
+
+    ``pins`` (resource_hash -> instance_id) and ``name_to_id`` are loaded once by
+    the caller so the per-resource mapping stays synchronous and network-free.
+    """
+    pins = pins if pins is not None else {}
+    name_to_id = name_to_id if name_to_id is not None else _name_to_id()
     rows: list[dict] = []
     for rs in req.resource_spans:
         resource_attrs = _attrs(rs.resource.attributes) if rs.resource else {}
-        instance_id = _map_instance(resource_attrs)
+        instance_id = _map_instance(resource_attrs, pins, name_to_id)
         res_prefixed = {f"resource.{k}": v for k, v in resource_attrs.items()}
         for ss in rs.scope_spans:
             for sp in ss.spans:
@@ -131,10 +135,26 @@ def parse_request(req) -> list[dict]:
 
 async def ingest_trace_request(req) -> int:
     """Persist a decoded OTLP trace request, prune, and broadcast. Returns inserted span count."""
-    rows = parse_request(req)
+    from . import instance_map
+
+    pins = await instance_map.load_pins()
+    name_to_id = _name_to_id()
+    rows = parse_request(req, pins, name_to_id)
     if not rows:
         return 0
     inserted = await storage.insert_spans(rows)
+    # Learn any still-unknown exporter hashes: probe the fleet for the execution,
+    # pin hash->instance, and re-attribute this batch's unknown rows. One probe
+    # per new hash ever; fire-and-forget so it never delays the ingest response.
+    unknowns: dict[str, tuple[str, str]] = {}
+    for r in rows:
+        inst = r["instance_id"]
+        if inst.startswith(instance_map.UNKNOWN_PREFIX) and r.get("execution_id"):
+            rhash = inst[len(instance_map.UNKNOWN_PREFIX):]
+            if rhash and rhash not in unknowns:
+                unknowns[rhash] = (r["execution_id"], r.get("workflow_id", ""))
+    if unknowns:
+        asyncio.create_task(instance_map.learn_unknowns(unknowns))
     try:
         await storage.prune(settings.agd_otel_retention_hours, settings.agd_otel_max_spans)
     except Exception as e:

@@ -14,7 +14,6 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from backend.config import get_active_instance_id
 from backend.modules.n8n_proxy import client as n8n_client
 
 from . import pricing, storage
@@ -66,13 +65,17 @@ async def enrich_trace(trace_id: str) -> int:
     inst = next((s["instance_id"] for s in spans if s.get("instance_id")), "")
     if not exec_id:
         return 0
-    # Only the active instance's run-data is fetchable through the n8n client.
-    if inst and inst != get_active_instance_id():
+    # An unattributed-and-unresolved trace (unknown-<hash>) is not yet mapped to a
+    # fetchable instance; skip until the learn step re-attributes it. Any known
+    # instance (active or not) is fetched through its own creds.
+    if inst.startswith("unknown-"):
         return 0
     try:
         # Bound the fetch: run-data for a big execution can be multi-MB; never let
         # a slow fetch stall the trace-open request. Best-effort, retries next open.
-        raw = await asyncio.wait_for(n8n_client.get_execution_raw(exec_id), timeout=8.0)
+        raw = await asyncio.wait_for(
+            n8n_client.get_execution_raw_by_instance(exec_id, inst), timeout=8.0
+        )
     except Exception as e:
         logger.debug("cost enrich: fetch failed/slow for exec %s: %s", exec_id, e)
         return 0

@@ -170,6 +170,26 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    # otel_instance_map — resolves an n8n exporter's identity (the opaque
+    # resource `n8n.instance.id` hash n8n emits over OTLP) to a configured AGD
+    # instance. n8n's resource attributes carry no name/url AGD can match, so
+    # without this every trace fell back to whatever instance was *active* at
+    # ingest, mis-attributing cost/health/counts. A hash is learned once (probe
+    # each instance's API for the trace's execution) and pinned here; every
+    # later trace with that hash maps in O(1) with no probe. Source records how
+    # a pin was established (learned by probe, or a deterministic resource attr).
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS otel_instance_map (
+            resource_hash TEXT PRIMARY KEY,
+            instance_id   TEXT NOT NULL,
+            source        TEXT NOT NULL DEFAULT 'learned',
+            learned_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.commit()
+
     # module_installs — tamper-light audit trail of community module installs.
     # One row per confirmed install: what capabilities were declared, what the
     # scan found, who approved it, and when. Makes "what did we agree to, and

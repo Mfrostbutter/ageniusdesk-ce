@@ -40,7 +40,7 @@ import logging
 from datetime import datetime, timezone
 from statistics import median
 
-from backend.config import get_active_instance_id, settings
+from backend.config import settings
 from backend.modules.n8n_proxy import client as n8n_client
 from backend.websocket import manager
 
@@ -231,13 +231,17 @@ async def enrich_trace_health(trace_id: str) -> int:
     exec_id = next((s["execution_id"] for s in spans if s.get("execution_id")), "")
     inst = next((s["instance_id"] for s in spans if s.get("instance_id")), "")
 
-    # Run-data is only fetchable for the active instance, and only needed for the
-    # error detectors (mode 3 works from span attributes alone). Best-effort and
-    # bounded so a slow fetch never blocks the caller.
+    # Run-data is fetched from the trace's OWNING instance (not just the active
+    # one) and is only needed for the error detectors (mode 3 works from span
+    # attributes alone). An unresolved unknown-<hash> trace is skipped until the
+    # learn step re-attributes it. Best-effort and bounded so a slow fetch never
+    # blocks the caller.
     run_by_node: dict[str, list] = {}
-    if exec_id and (not inst or inst == get_active_instance_id()):
+    if exec_id and not inst.startswith("unknown-"):
         try:
-            raw = await asyncio.wait_for(n8n_client.get_execution_raw(exec_id), timeout=8.0)
+            raw = await asyncio.wait_for(
+                n8n_client.get_execution_raw_by_instance(exec_id, inst), timeout=8.0
+            )
             run_by_node = ((raw or {}).get("data") or {}).get("resultData", {}).get("runData", {}) or {}
         except Exception as e:  # noqa: BLE001 - best-effort, retries on next open
             logger.debug("health enrich: run-data fetch failed/slow for exec %s: %s", exec_id, e)

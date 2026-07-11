@@ -583,8 +583,53 @@ async def get_execution_raw(execution_id: str) -> dict[str, Any]:
     """Raw execution payload including un-flattened run data (for cost enrichment).
 
     Unlike get_execution (which summarizes), this returns n8n's full object so the
-    caller can read per-node token usage under data.resultData.runData."""
+    caller can read per-node token usage under data.resultData.runData. Targets
+    the ACTIVE instance; use get_execution_raw_by_instance to reach another."""
     return await _get(f"/api/v1/executions/{execution_id}?includeData=true") or {}
+
+
+async def get_execution_raw_for(inst: dict, execution_id: str) -> dict[str, Any]:
+    """Raw execution payload from a SPECIFIC instance's API (not the active one).
+
+    Mirrors _instance_health's direct per-instance call so cost/health enrichment
+    can price/inspect a trace from whatever instance actually owns it, not only
+    the one that happens to be active. Never raises: an unreachable / rejecting
+    instance returns {}."""
+    from backend.config import decrypt_value
+
+    try:
+        url = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
+        api_key = decrypt_value(inst.get("api_key", ""))
+    except Exception:
+        return {}
+    if not url:
+        return {}
+    headers = {"X-N8N-API-KEY": api_key, "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+            resp = await client.get(
+                f"{url}/api/v1/executions/{execution_id}?includeData=true", headers=headers
+            )
+        return (resp.json() or {}) if resp.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+async def get_execution_raw_by_instance(execution_id: str, instance_id: str) -> dict[str, Any]:
+    """Fetch raw run-data for a trace's OWNING instance.
+
+    The active instance is the fast path (shared client). For any other configured
+    instance, fetch directly with that instance's creds. An empty ``instance_id``
+    (a degenerate/unattributed trace) defaults to the active instance; an
+    unrecognized id returns {}."""
+    from backend.config import get_active_instance_id, get_instances
+
+    if not instance_id or instance_id == get_active_instance_id():
+        return await get_execution_raw(execution_id)
+    inst = next((i for i in get_instances() if i.get("id") == instance_id), None)
+    if not inst:
+        return {}
+    return await get_execution_raw_for(inst, execution_id)
 
 
 async def trigger_workflow(workflow_id: str, payload: Optional[dict] = None) -> dict[str, Any]:
