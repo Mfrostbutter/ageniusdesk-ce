@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # silent until the nodes-base marker migration lands. Default keeps current
     # recall on stock n8n.
     agd_health_scan_loose_json_error: bool = True
+    # Dead-man's switch: on a completed green run, flag a declared node that had
+    # input available (an upstream node produced output) but emitted no span, when
+    # that node historically runs. A definition-vs-trace diff, graph-aware so a
+    # legitimate cascade skip downstream of an empty node is not flagged.
+    agd_health_deadman_enabled: bool = True
+    agd_health_deadman_min_run_rate: float = 0.9  # node must have run in >= this share of recent workflow executions
     # Cost observability: how often to refresh the LLM price book from OpenRouter's
     # public models API. The fetched table is cached to data/price_book.json with a
     # last-good fallback; operator overrides and a bundled default layer over it.

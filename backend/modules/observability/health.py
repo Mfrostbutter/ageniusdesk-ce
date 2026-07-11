@@ -29,6 +29,15 @@ Two detectors, split by cost:
 A trace is a **silent failure** when its root ``workflow.execute`` reports
 ``n8n.execution.status = success`` yet a node span resolves to ``ERROR`` or
 ``LOW``.
+
+A third detector, the **dead-man's switch**, handles the node that produced no
+span at all. On a completed green run it diffs the workflow's declared nodes
+(from ``workflowData`` on the run-data fetch) against the spans that landed. A
+declared node that had input available (an upstream node produced output) but
+never ran, and that historically runs in nearly every execution, is flagged.
+Graph-aware, so a legitimate cascade skip downstream of an empty node is not.
+Having no span, it surfaces through the errors pipeline rather than span health.
+
 Idempotent and best-effort, mirroring ``cost.py``: only the active instance's
 run-data is fetchable, and an already-checked trace is skipped.
 """
@@ -214,6 +223,59 @@ def _low_summary(reason: str, out_items, in_items) -> str:
     return ""
 
 
+def _predecessors(connections: dict) -> dict[str, set[str]]:
+    """Map each node name to the set of upstream nodes that feed it, from n8n's
+    connection graph (``connections[src].main[outputIdx] = [{node: tgt}, ...]``).
+    """
+    preds: dict[str, set[str]] = {}
+    for src, outs in (connections or {}).items():
+        if not isinstance(outs, dict):
+            continue
+        for out_list in (outs.get("main") or []):
+            for link in (out_list or []):
+                tgt = link.get("node") if isinstance(link, dict) else None
+                if tgt:
+                    preds.setdefault(tgt, set()).add(src)
+    return preds
+
+
+_TRIGGER_TYPE_HINTS = ("trigger", "webhook")
+
+
+def _missing_candidates(
+    workflow_data: dict, ran_names: set[str], out_by_node: dict[str, int]
+) -> list[str]:
+    """Declared nodes that should have run but produced no span this execution.
+
+    A node is a candidate when it is declared, enabled, not a trigger, produced no
+    span, and had input available (a predecessor produced output). Graph-aware: a
+    node whose every feeder was empty or itself missing is a legitimate cascade
+    skip downstream of an already-flagged empty node, not a dead node, so it is not
+    flagged. The caller still gates each candidate on run-history for precision.
+    """
+    nodes = (workflow_data or {}).get("nodes") or []
+    if not nodes:
+        return []
+    preds = _predecessors((workflow_data or {}).get("connections") or {})
+    out: list[str] = []
+    for nd in nodes:
+        name = nd.get("name")
+        if not name or name in ran_names:
+            continue
+        if nd.get("disabled"):
+            continue
+        if any(h in str(nd.get("type") or "").lower() for h in _TRIGGER_TYPE_HINTS):
+            continue
+        feeders = preds.get(name) or set()
+        if not feeders:
+            # No inputs: a source/trigger. A missing one is "the workflow never
+            # fired", which only an external heartbeat can see, not this diff.
+            continue
+        if any((out_by_node.get(src) or 0) > 0 for src in feeders):
+            out.append(name)
+    return out
+
+
 async def enrich_trace_health(trace_id: str) -> int:
     """Enrich one trace with per-node health. Returns spans written (0 if skipped)."""
     if await storage.has_health(trace_id):
@@ -303,16 +365,46 @@ async def enrich_trace_health(trace_id: str) -> int:
             if is_silent:
                 silent_hits.append({"node": nn, "error_type": etype, "error_summary": summary})
 
+    # Dead-man's switch: a node that should have run but produced no span. Only on
+    # a completed green run, only when the workflow definition came back with the
+    # run-data (so we can diff declared nodes against the trace), and only for a
+    # node that historically runs and had input available this time. A missing node
+    # has no span to enrich, so these surface through the errors pipeline below.
+    deadman_hits: list[dict] = []
+    wf_data = (raw or {}).get("workflowData") or {}
+    if settings.agd_health_deadman_enabled and exec_status == "success" and wf_data.get("nodes"):
+        ran_names = set(by_node.keys()) | set(run_by_node.keys())
+        out_by_node: dict[str, int] = {}
+        for name, sps in by_node.items():
+            vals: list[int] = []
+            for s in sps:
+                o = (s.get("attributes") or {}).get("n8n.node.items.output")
+                if isinstance(o, (int, float)):
+                    vals.append(int(o))
+            out_by_node[name] = max(vals) if vals else 0
+        wf_id_hist = next((s["workflow_id"] for s in spans if s.get("workflow_id")), "")
+        for name in _missing_candidates(wf_data, ran_names, out_by_node):
+            ran, total = await storage.node_run_rate(
+                wf_id_hist, name, settings.agd_health_window, exclude_trace_id=trace_id
+            )
+            if total >= settings.agd_health_min_samples and ran / total >= settings.agd_health_deadman_min_run_rate:
+                deadman_hits.append({
+                    "node": name,
+                    "error_type": "did_not_run",
+                    "error_summary": f"node ran in {ran}/{total} recent executions but produced no output this run",
+                })
+
     n = await storage.set_health(updates)
-    if silent_hits:
-        logger.info("silent-failure: %d node(s) errored under a green run, exec %s", len(silent_hits), exec_id)
+    all_hits = silent_hits + deadman_hits
+    if all_hits:
+        logger.info("silent-failure: %d node(s) broke under a green run, exec %s", len(all_hits), exec_id)
         try:
             await manager.broadcast("otel:silent", {
                 "trace_id": trace_id,
                 "execution_id": exec_id,
                 "instance_id": inst,
                 "workflow_name": (root or {}).get("workflow_name", ""),
-                "nodes": silent_hits,
+                "nodes": all_hits,
             })
         except Exception:  # noqa: BLE001 - notification is best-effort
             pass
@@ -326,7 +418,7 @@ async def enrich_trace_health(trace_id: str) -> int:
 
         wf_id = (root or {}).get("workflow_id", "") or "unknown"
         wf_name = (root or {}).get("workflow_name", "") or "Unknown Workflow"
-        for hit in silent_hits:
+        for hit in all_hits:
             try:
                 await errors_collector.store_error({
                     "instance_id": inst,

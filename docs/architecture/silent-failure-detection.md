@@ -258,8 +258,15 @@ This is an experiment, and it has rough edges worth naming:
 - **History poisoning.** A node that fails often enough teaches the classifier
   that being empty is normal for it, and it stops firing. That is correct
   precision behavior, but it means a chronically half-broken node can go quiet.
-- **Dead-man's switch.** A node that was supposed to run and did not run at all
-  (never produced a span) is not yet detected. That is the natural next detector.
+- **Dead-man's switch.** Half done. A node that never produced a span is now
+  caught *inside a run that did fire*: on a completed green run the detector diffs
+  the workflow's declared nodes against the spans that landed and flags one that
+  had input available but did not run and that historically runs (graph-aware, so
+  a legitimate cascade skip is not flagged; gated on run-history for precision;
+  `AGD_HEALTH_DEADMAN_*`). Because a missing node has no span, it surfaces in the
+  errors feed rather than on the span timeline. The other half, a workflow that
+  never fired at all (schedule missed, instance down), is invisible from inside
+  n8n and needs an external heartbeat. Still open.
 - **Per-node overrides.** Some nodes should always be treated as must-produce, and
   some pollers should always be ignored, regardless of what history infers. A
   per-node override is the obvious escape hatch for the cases history cannot know.

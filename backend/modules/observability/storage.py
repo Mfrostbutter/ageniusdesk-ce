@@ -340,3 +340,47 @@ async def node_input_history(node_id: str, window: int, exclude_trace_id: str = 
         (node_id, exclude_trace_id, int(window)),
     )
     return [int(r["input_items"]) for r in await cur.fetchall()]
+
+
+async def node_run_rate(
+    workflow_id: str, node_name: str, window: int, exclude_trace_id: str = ""
+) -> tuple[int, int]:
+    """How reliably a node runs, for the dead-man's switch.
+
+    Over the most recent ``window`` executions of ``workflow_id``, returns
+    ``(ran, total)`` where ``ran`` is how many had a ``node.execute`` span for
+    ``node_name``. A node that ran in nearly every recent execution but produced
+    no span this run is a dead-man candidate. Matched by node NAME (unique within
+    a workflow) since a missing node has no span/id to join on. Excludes the
+    current trace so a run is never judged against itself.
+    """
+    if not workflow_id or not node_name:
+        return (0, 0)
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT execution_id FROM otel_spans
+        WHERE workflow_id = ? AND execution_id != '' AND trace_id != ?
+        GROUP BY execution_id
+        ORDER BY MAX(start_ns) DESC
+        LIMIT ?
+        """,
+        (workflow_id, exclude_trace_id, int(window)),
+    )
+    exec_ids = [r["execution_id"] for r in await cur.fetchall()]
+    total = len(exec_ids)
+    if not total:
+        return (0, 0)
+    placeholders = ",".join("?" * total)
+    cur = await db.execute(
+        f"""
+        SELECT COUNT(DISTINCT execution_id) AS c FROM otel_spans
+        WHERE name = 'node.execute'
+          AND execution_id IN ({placeholders})
+          AND json_extract(attributes_json, '$."n8n.node.name"') = ?
+        """,
+        (*exec_ids, node_name),
+    )
+    row = await cur.fetchone()
+    ran = int(row["c"]) if row and row["c"] is not None else 0
+    return (ran, total)
