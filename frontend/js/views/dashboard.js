@@ -457,7 +457,7 @@ function mountTimeline(el) {
     <div style="display:flex;gap:14px;margin-top:10px">
       <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)"><span class="exec-block exec-block--success" style="width:10px;height:10px;display:inline-block"></span> Success</span>
       <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)"><span class="exec-block exec-block--error" style="width:10px;height:10px;display:inline-block"></span> Error</span>
-      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)"><span class="exec-block exec-block--running" style="width:10px;height:10px;display:inline-block"></span> Running</span>
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)"><span class="exec-block exec-block--silent" style="width:10px;height:10px;display:inline-block"></span> Silent error</span>
     </div>
   `;
 }
@@ -780,7 +780,7 @@ function renderStats(base, lookback) {
     failClass = 'stat-trend--up';
   }
   const execTrend = execTotal
-    ? `${nSuccess} ok · ${nErr} err · ${nRunning} running`
+    ? `${nSuccess} ok · ${nErr} err · ${silent} silent`
     : `no runs (${windowLabel})`;
   const successRate = execTotal ? Math.round((nSuccess / execTotal) * 100) : 0;
   const execClass = !execTotal ? 'stat-trend--neutral'
@@ -876,11 +876,15 @@ function renderTimeline(executions) {
     const url = (e.workflow_id && execId && window.__n8nUrl)
       ? `${window.__n8nUrl}/workflow/${e.workflow_id}/executions/${execId}`
       : (window.__n8nUrl ? `${window.__n8nUrl}/executions` : '');
-    return `<div class="exec-block exec-block--${statusClass(e.status)}"
+    // A green run AGD flagged as silently broken renders in its own class, not success.
+    const cls = e.silent ? 'silent' : statusClass(e.status);
+    const disp = e.silent ? 'silent error' : e.status;
+    return `<div class="exec-block exec-block--${cls}"
          onclick="if('${jsStr(url)}')window.open('${jsStr(url)}','_blank')"
          data-idx="${executions.length - 1 - i}"
          data-name="${esc(e.workflow_name)}"
-         data-status="${e.status}"
+         data-status="${esc(disp)}"
+         data-cls="${cls}"
          data-time="${relativeTime(e.started_at)}">
     </div>`;
   }).join('');
@@ -897,7 +901,7 @@ function renderTimeline(executions) {
     tooltip.innerHTML = `
       <div style="font-weight:600;margin-bottom:1px">${block.dataset.name}</div>
       <div style="display:flex;gap:6px;align-items:center">
-        <span class="pill pill-${statusClass(block.dataset.status)}" style="font-size:8px">${block.dataset.status}</span>
+        <span class="pill pill-${block.dataset.cls}" style="font-size:8px">${block.dataset.status}</span>
         <span class="time-relative">${block.dataset.time}</span>
       </div>
       <div style="font-size:8px;color:rgba(255,255,255,.5);margin-top:2px">Click to open in n8n ↗</div>
@@ -1245,6 +1249,7 @@ function relativeTime(iso) {
 function statusClass(s) {
   if (s === 'success') return 'success';
   if (s === 'error') return 'error';
+  if (s === 'silent') return 'silent';
   if (s === 'running') return 'running';
   if (s === 'waiting') return 'waiting';
   return 'success';

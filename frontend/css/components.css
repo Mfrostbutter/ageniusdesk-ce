@@ -223,6 +223,7 @@ tr.clickable {
 .pill-success { background: var(--success-glow); color: var(--success); }
 .pill-error { background: var(--error-glow); color: var(--error); }
 .pill-warning { background: var(--warning-glow); color: var(--warning); }
+.pill-silent { background: var(--warning-glow); color: var(--warning); }
 .pill-info { background: var(--info-glow); color: var(--info); }
 .pill-neutral { background: var(--bg-hover); color: var(--text-secondary); }
 
@@ -1214,6 +1215,7 @@ tr.clickable {
 .exec-block:hover { opacity: 0.85; transform: translateY(-2px); }
 .exec-block--success { background: var(--success); }
 .exec-block--error { background: var(--error); }
+.exec-block--silent { background: var(--warning); }
 .exec-block--running { background: var(--warning); }
 .exec-block--waiting { background: var(--info); }
 

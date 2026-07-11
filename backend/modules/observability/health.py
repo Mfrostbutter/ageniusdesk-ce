@@ -16,11 +16,15 @@ Two detectors, split by cost:
   case it is ``LOW`` (alertable) — this also catches magnitude drops (200 -> 3),
   not just zeros. Idle pollers and cold-start stay quiet.
 - **Silent error (modes 1/2)** — the demoted error has no span signal, so fetch
-  run-data once per execution and union the three places n8n may record a node
-  error, because the shape is inconsistent by source (object vs string):
+  run-data once per execution and read, in priority order:
+  0. ``runData[node][i].continuation`` — the typed continued-error rollup a
+     patched n8n records (sound: fires only on a real swallow). Preferred.
   1. ``runData[node][i].executionStatus == "error"``
   2. ``runData[node][i].error`` (an object with ``.message``)
   3. item-level ``runData[node][i].data.main[*][*].json.error`` (object or string)
+     — legacy content-scan, unsound (a legitimate ``error`` field trips it), so
+     it is gated behind ``agd_health_scan_loose_json_error`` and only consulted
+     when the sound signals above are silent.
 
 A trace is a **silent failure** when its root ``workflow.execute`` reports
 ``n8n.execution.status = success`` yet a node span resolves to ``ERROR`` or
@@ -69,16 +73,61 @@ def _normalize_error(raw) -> tuple[str, str, int | None]:
     return "thrown", str(raw)[:500], None
 
 
+def _continuation_error(run: dict):
+    """Return (type, summary, http) from the typed continued-error rollup, else None.
+
+    A patched n8n records ``taskData.continuation`` (``{count, first, byType}``)
+    when a node swallowed a per-item error under Continue-On-Fail. This is the
+    sound signal: the engine only folds a node's typed ``INodeExecutionData.error``
+    marker into it, never a loose ``json.error`` a node emitted on purpose. So it
+    fires on a real swallow and stays quiet on a node that legitimately outputs a
+    field named ``error``. Prefer it whenever present.
+    """
+    cont = run.get("continuation")
+    if not isinstance(cont, dict):
+        return None
+    count = cont.get("count")
+    if not count:
+        return None
+    first = cont.get("first") or {}
+    etype = first.get("errorType") or "error"
+    http = first.get("httpCode")
+    try:
+        http = int(http) if http is not None else None
+    except (TypeError, ValueError):
+        http = None
+    plural = "s" if count != 1 else ""
+    return str(etype)[:80], f"continued past {count} item error{plural}", http
+
+
 def _node_error_from_run(run: dict):
     """Return (type, summary, http) if this run errored, else None.
 
-    Unions the three signals n8n may populate; the item-level ``json.error`` is
-    the one Continue-On-Fail demotes into the normal output, invisible to spans.
+    Signal priority, sound before heuristic:
+    1. ``taskData.continuation`` — the typed continued-error rollup a patched n8n
+       records. Sound; preferred whenever present (``_continuation_error``).
+    2. ``executionStatus == "error"`` / ``run.error`` — n8n set the node status
+       itself. Always loud, always sound.
+    3. item-level ``json.error`` content-scan — the legacy path, unsound (a
+       legitimate ``error`` field trips it). Gated behind
+       ``agd_health_scan_loose_json_error`` and only consulted when the sound
+       signals are silent, so it still covers the loose-emitter nodes the engine
+       scan cannot see while a patched instance can turn the false positives off.
     """
     if not isinstance(run, dict):
         return None
+
+    cont_err = _continuation_error(run)
+    if cont_err is not None:
+        return cont_err
+
     exec_status = run.get("executionStatus")
     run_err = run.get("error")
+    if exec_status == "error" or run_err:
+        return _normalize_error(run_err if run_err else "error")
+
+    if not settings.agd_health_scan_loose_json_error:
+        return None
 
     item_err = None
     data = run.get("data") or {}
@@ -91,9 +140,9 @@ def _node_error_from_run(run: dict):
         if item_err is not None:
             break
 
-    if not (exec_status == "error" or run_err or item_err is not None):
+    if item_err is None:
         return None
-    return _normalize_error(run_err if run_err else item_err)
+    return _normalize_error(item_err)
 
 
 def _input_dropped(input_history: list[int], in_items) -> bool:

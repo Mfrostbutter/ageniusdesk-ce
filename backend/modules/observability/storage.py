@@ -160,6 +160,33 @@ async def metrics_summary(instance_id: str, window_hours: int = 24, workflow_id:
     }
 
 
+async def silent_execution_ids(execution_ids: list[str], instance_id: str = "") -> set[str]:
+    """Of the given execution ids, which ones had a silent failure (a node span
+    flagged ``silent=1`` under a green run). Scoped to ``instance_id`` when given
+    so per-instance execution-id reuse (n8n ids are small integers) can't leak a
+    false positive across instances. Empty input returns an empty set."""
+    ids = [str(e) for e in execution_ids if e]
+    if not ids:
+        return set()
+    # silent=1 rides the node.execute spans, which carry no execution_id (only the
+    # workflow.execute span does). Bridge the two via trace_id: keep an execution
+    # id whose trace contains at least one silent node span.
+    placeholders = ",".join("?" * len(ids))
+    q = (
+        f"SELECT DISTINCT execution_id FROM otel_spans "
+        f"WHERE execution_id IN ({placeholders}) "
+        f"AND trace_id IN (SELECT trace_id FROM otel_spans WHERE silent = 1)"
+    )
+    params: list = list(ids)
+    if instance_id:
+        q += " AND instance_id = ?"
+        params.append(instance_id)
+    db = await get_db()
+    cur = await db.execute(q, tuple(params))
+    rows = await cur.fetchall()
+    return {r["execution_id"] for r in rows if r["execution_id"]}
+
+
 async def trace_id_for_execution(execution_id: str) -> str:
     """Most recent trace id for an n8n execution id, or '' if none captured."""
     db = await get_db()

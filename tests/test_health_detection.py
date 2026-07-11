@@ -49,6 +49,39 @@ def test_node_error_none_when_clean():
     assert health._node_error_from_run(run) is None
 
 
+def test_continuation_signal_preferred_and_sound():
+    # Patched n8n records the typed rollup on taskData.continuation.
+    run = {"executionStatus": "success",
+           "continuation": {"count": 1, "first": {"errorType": "NodeApiError", "httpCode": 400},
+                            "byType": {"NodeApiError": 1}},
+           "data": {"main": [[{"json": {"error": "demoted message"}}]]}}
+    t, s, http = health._node_error_from_run(run)
+    assert t == "NodeApiError" and http == 400 and "continued past 1" in s
+
+
+def test_continuation_wins_over_loose_json_error():
+    # When both are present, the sound signal decides the type, not the demoted json.
+    run = {"executionStatus": "success",
+           "continuation": {"count": 2, "first": {"errorType": "AxiosError"}, "byType": {"AxiosError": 2}},
+           "data": {"main": [[{"json": {"error": "kaboom"}}]]}}
+    t, s, http = health._node_error_from_run(run)
+    assert t == "AxiosError" and "continued past 2 item errors" in s
+
+
+def test_loose_json_error_suppressed_when_scan_disabled(monkeypatch):
+    # Sound mode against a patched instance: a node that legitimately outputs a
+    # field named "error" (no continuation) is NOT a silent failure.
+    monkeypatch.setattr(settings, "agd_health_scan_loose_json_error", False)
+    run = {"executionStatus": "success", "data": {"main": [[{"json": {"error": "legit field"}}]]}}
+    assert health._node_error_from_run(run) is None
+
+
+def test_loose_json_error_still_caught_when_scan_enabled():
+    # Default: loose-emitter nodes the engine scan cannot see are still covered.
+    run = {"executionStatus": "success", "data": {"main": [[{"json": {"error": "kaboom"}}]]}}
+    assert health._node_error_from_run(run) == ("thrown", "kaboom", None)
+
+
 # ── End-to-end: green trace, one demoted error + one zero-items node ───────────
 
 

@@ -147,6 +147,16 @@ class Settings(BaseSettings):
     agd_health_dormant_zero_rate: float = 0.95  # zero-rate at/over which a node is dormant
     agd_health_drop_factor: float = 0.1      # output under median*this is a magnitude-drop anomaly
     agd_health_window: int = 200             # rolling history size (runs) per node
+    # Continue-On-Fail signal source. A patched n8n (continued-error signal PR)
+    # records a typed rollup on taskData.continuation that fires ONLY on a real
+    # swallowed error, so it is always preferred when present. The legacy path is
+    # a content-scan of item json.error, which is unsound: a node that legitimately
+    # outputs a field named "error" (a Set node, an API error body) trips it. Turn
+    # the scan off against a patched instance to drop those false positives; the
+    # tradeoff is the ~64 loose-emitter nodes the engine scan cannot see yet stay
+    # silent until the nodes-base marker migration lands. Default keeps current
+    # recall on stock n8n.
+    agd_health_scan_loose_json_error: bool = True
     # Cost observability: how often to refresh the LLM price book from OpenRouter's
     # public models API. The fetched table is cached to data/price_book.json with a
     # last-good fallback; operator overrides and a bundled default layer over it.

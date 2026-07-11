@@ -331,7 +331,18 @@ async def delete_workflow(workflow_id: str):
 @router.get("/executions")
 async def list_executions(workflow_id: str = "", status: str = "", limit: int = 20, cursor: str = ""):
     _check_configured()
-    return await client.list_executions(workflow_id, status, limit, cursor)
+    result = await client.list_executions(workflow_id, status, limit, cursor)
+    # Fold in AGD's own silent-failure verdict: n8n reports these runs "success",
+    # but a node continued past an error (green-but-broken). Mark them so the
+    # timeline can render them distinctly instead of a misleading green.
+    from backend.modules.observability import storage
+
+    execs = result.get("executions", []) if isinstance(result, dict) else []
+    ids = [e.get("id") for e in execs if e.get("id")]
+    silent_ids = await storage.silent_execution_ids(ids, get_active_instance_id())
+    for e in execs:
+        e["silent"] = e.get("id") in silent_ids
+    return result
 
 
 @router.get("/executions/{execution_id}")
