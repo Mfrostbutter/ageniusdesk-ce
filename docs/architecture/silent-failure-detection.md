@@ -13,6 +13,13 @@ status cannot, and how the detector decides which "green" run is actually broken
 without drowning you in false alarms. It is a working experiment, not a finished
 science; the open questions are called out at the end.
 
+Since the first version of this writeup the detector gained a second, sounder
+signal. n8n does not expose the continued error on its OpenTelemetry span, so we
+patched n8n to emit it, and AgeniusDesk now prefers that typed signal over the
+heuristic it started with. This is a **cross-program initiative**: an upstream
+n8n core patch plus the AgeniusDesk feature that consumes it. This doc covers the
+consumer; the patch and the research live in `research-vault`.
+
 ## The problem: green, but broken
 
 Here is a small, realistic workflow. It fetches orders over HTTP, validates and
@@ -21,21 +28,29 @@ those. On a healthy run it pulls 100 orders, keeps 50, and passes them on.
 
 ![Healthy run: 100 orders fetched, 100 parsed, 50 queued, every node green](../media/silent-failures/n8n-order-sync-success.png)
 
-Now the orders API returns a 503. The HTTP node has Continue-On-Fail enabled (a
+Now the orders API returns a 500. The HTTP node has Continue-On-Fail enabled (a
 very common choice, so one bad upstream call does not nuke the whole run). Watch
 what n8n reports:
 
-![Broken run: the HTTP node hit a 503, downstream collapses to zero, yet n8n reports "Succeeded in 98ms" with every node green](../media/silent-failures/n8n-order-sync-fail.png)
+![Broken run: the HTTP node hit a 500, downstream collapses to zero, yet n8n reports "Succeeded" with every node green](../media/silent-failures/n8n-order-sync-fail.png)
 
-**Succeeded in 98ms.** Every node has a green check. The HTTP node swallowed the
-503 and passed an error item downstream; the validator found nothing valid and
+**Succeeded.** Every node has a green check. The HTTP node swallowed the error
+and passed it downstream as a data item; the validator found nothing valid and
 emitted zero; the last two nodes had no input and never ran. Zero orders were
 queued. To the execution log, to any dashboard that reads execution status, and
 to the operator scanning a list of green runs, nothing happened here worth
 looking at. The integration has "just stopped working" with no trail.
 
-This is the single worst failure class in n8n because the usual signal (a failed
-execution) never fires.
+The error is not lost, though. It is sitting right there in the node's output,
+demoted from an exception to an ordinary item. Open the node and n8n shows it to
+you plainly, under a banner that literally says the run will continue anyway:
+
+![n8n Get Orders node output: one item, an error object with name AxiosError, message "500", code ERR_BAD_RESPONSE, status 500, under the banner "Execution will continue even if the node fails"](../media/silent-failures/n8n-get-orders-output.png)
+
+That output item is the whole game. The run is green, but the node's own output
+says `AxiosError`, `status 500`. This is the single worst failure class in n8n
+because the usual signal (a failed execution) never fires, while the evidence is
+right there in the data the entire time.
 
 ## Why the status can't catch it
 
@@ -44,47 +59,69 @@ OpenTelemetry exporter marks a Continue-On-Fail node's span **OK**, because from
 the engine's point of view the node did continue successfully. The status lies at
 every layer: execution status, node status, span status all say fine.
 
-The truth survives in exactly two places:
+The truth survives in three places, in order of how trustworthy it is:
 
-1. **The run's data.** The demoted error is still there, moved into the node's
+1. **A typed continued-error rollup**, but only if n8n emits one. Stock n8n does
+   not. A **patched** n8n (our upstream contribution) records
+   `taskData.continuation` on the run and `n8n.continuation.*` on the span
+   whenever a node actually swallowed a per-item error under Continue-On-Fail.
+   This is the sound signal, and it is new.
+2. **The run's data.** On any n8n, the demoted error is still in the node's
    normal output as an error item. n8n records it inconsistently depending on the
    source (an HTTP failure is an object with a `.status`; a thrown Code error is a
    bare string), but it is recorded.
-2. **The item counts.** A node that normally emits N items and now emits 0 (or
+3. **The item counts.** A node that normally emits N items and now emits 0 (or
    far fewer) is visible in the per-node input/output counts the OTel spans
    already carry, with no extra round-trip.
 
-So the detector ignores status entirely and reads output shape instead.
+So the detector ignores status entirely and reads these instead.
 
-## The approach: two detectors, split by cost
+## The approach: read the signal, not the status
 
 AgeniusDesk receives n8n's OpenTelemetry traces on an embedded OTLP receiver and,
-on ingest, enriches each run with per-node health.
+on ingest, enriches each run with per-node health. Two detectors do the work,
+split by cost.
 
-**Demoted error (free-ish).** For each node, union the three places n8n may have
-recorded an error: the execution status on the run, a run-level `error` object,
-and the item-level `json.error` that Continue-On-Fail pushes into normal output.
-Normalize the inconsistent shapes to one `(type, summary, http_status)`. This
-needs one run-data fetch per execution, so it is done once and cached.
+### Detector 1: the demoted error (one run-data fetch)
 
-**Low output (free).** Read `n8n.node.items.output` and `.input` straight off the
-span. No round-trip. A zero or a sharp drop is the signal, but only when it is
-anomalous for that specific node, which is the whole problem.
+The continued error has no honest span status, so for each execution AgeniusDesk
+fetches the run-data once and reads it in priority order, sound signal first:
+
+1. **The typed continuation rollup** (`taskData.continuation`) a patched n8n
+   records. The engine only folds a node's typed error marker into it, never a
+   loose `error` field a node emitted on purpose, so it fires on a real swallow
+   and stays quiet otherwise. **Preferred whenever present.**
+2. **An explicit node error** (`executionStatus == "error"` or a run-level
+   `error` object) that n8n set itself. Always sound.
+3. **An item-level `json.error` content-scan.** The original heuristic: walk the
+   node's output items and look for an `error` field. This catches loose-emitter
+   nodes (a Code node that returns `{ error: ... }` on a caught exception) that
+   the engine rollup cannot see, but it is **unsound** because a node that
+   legitimately outputs a field named `error` trips it. It is gated behind
+   `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR` and only consulted when the sound signals
+   above are silent.
+
+Whatever fires is normalized to one `(type, summary, http_status)` shape.
+
+On a patched instance the payoff is visible in the trace. Here is the order-sync
+run from above in AgeniusDesk's Observe view. n8n called `Get Orders` OK; the node
+carries the typed continuation marker (`n8n.continuation.reason = continueOnFail`),
+and the detector reads it as `health ERROR`, HTTP 500, "continued past 1 item
+error", on a run n8n reported as success:
+
+![AgeniusDesk Observe: Get Orders node, health ERROR, HTTP 500, "continued past 1 item error", with span attributes n8n.continuation.reason = continueOnFail and n8n.continuation.item_count = 1](../media/silent-failures/agd-observe-continuation.png)
+
+This is the same 500 the n8n node output showed two figures up, now caught
+automatically off the telemetry, with no human opening the node.
+
+### Detector 2: low output (free, span-only)
+
+Read `n8n.node.items.output` and `.input` straight off the span. No round-trip. A
+zero or a sharp drop is the signal, but only when it is anomalous for that
+specific node, which is the whole problem below.
 
 A run is a **silent failure** when its top-level status is `success` and yet a
-node resolves to `ERROR` or `LOW`.
-
-The clearest way to see it is the same node on two runs. Here is the healthy one:
-`Get Orders` reports `status OK` and 100 items out, the whole span reading the way
-it should.
-
-![AgeniusDesk Observe: healthy Get Orders span, status OK, 100 items out](../media/silent-failures/agd-observe-order-sync-ok.png)
-
-Now the broken run in AgeniusDesk's Observe view. n8n still called `Get Orders`
-OK; the detector reads the 503 out of the output and marks it `health ERROR`,
-with the output collapsed:
-
-![AgeniusDesk Observe: Get Orders shows node status OK but health ERROR, AxiosError HTTP 503, on a run n8n reported as success](../media/silent-failures/agd-observe-order-sync-error.png)
+node resolves to `ERROR` (from Detector 1) or `LOW` (from Detector 2).
 
 ## Deciding which zero is a failure
 
@@ -120,38 +157,70 @@ of them turns one root cause into fifteen alerts. Two rules keep it to one:
   origin is the node whose input held normal while its output collapsed.
 
 The lead-pull workflow shows the drop path. A query drifted and the API returned
-5 rows instead of its usual 500. n8n, again, calls it a success with every node
-green:
+5 rows instead of its usual 500. n8n calls it a success with every node green;
+AgeniusDesk flags `Fetch Leads` as the origin (`health LOW`, `out 5 items`, "far
+below this node's normal volume") while the downstream nodes that faithfully
+passed 5 through stay quiet:
 
-![n8n: lead-pull "Succeeded" with only 5 items flowing through every green node](../media/silent-failures/n8n-lead-pull-fail.png)
+![AgeniusDesk Observe: Fetch Leads flagged health LOW, low_output, out 5 items, "far below this node's normal volume", status OK, while downstream pass-through nodes stay quiet](../media/silent-failures/agd-observe-drop.png)
 
-`Fetch Leads` is flagged as the origin; the three downstream nodes that
-faithfully passed 5 through are suppressed:
+## The coverage boundary
 
-![AgeniusDesk Observe: Fetch Leads flagged health LOW, low_output, out 5 items, "far below this node's normal volume," while downstream pass-through nodes stay quiet](../media/silent-failures/agd-observe-lead-pull-drop.png)
+The two signals do not overlap perfectly, and the gap is worth naming because it
+decides what a patched instance can safely turn off.
+
+A single test workflow trips three failure modes at once: an HTTP node that
+swallows a 500, a Code node that throws and swallows it, and a Code node that
+emits zero items. On a patched instance AgeniusDesk catches all three, but by
+different signals:
+
+![AgeniusDesk Observe: the SPIKE trap trace with Mode1 HTTP 500 CoF and Mode2 Code throw CoF both flagged; the Code node shows status OK but health ERROR, "thrown", caught by the content-scan](../media/silent-failures/agd-observe-spike-modes.png)
+
+- **Mode 1, HTTP Continue-On-Fail.** The engine folds this into the typed
+  continuation rollup, so it is caught by the sound signal and the span carries
+  `n8n.continuation.*`. Independent of any flag.
+- **Mode 2, Code node throw.** Notice the Code node reads `status OK` but
+  `health ERROR, thrown`. Code nodes run in n8n's **task runner**, a separate
+  process the engine's continuation collector cannot instrument, so no
+  continuation marker is emitted. The only thing catching this is the item-level
+  content-scan. Turn `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR` off and this node goes
+  dark.
+- **Mode 3, zero items.** No error anywhere, just an empty output, handled by the
+  low-output classifier as informational unless the node is a steady producer.
+
+So on a **patched** instance you can turn the content-scan off to drop its false
+positives (nodes that legitimately output an `error` field), at the cost of
+Code-node Continue-On-Fail coverage until the nodes-base marker migration lands
+upstream. On **stock** n8n you leave it on for full recall. The default is on.
 
 ## Making it loud everywhere
 
 Detection is worthless if it only lives in a trace viewer most operators never
 open. A detected silent failure is written into the same errors pipeline that
-already drives the Executions/Errors feed, so it surfaces in every view, as its
-own distinct class rather than lumped in with ordinary errors.
+already drives the Executions/Errors feed, as its own distinct class rather than
+lumped in with ordinary errors, so it surfaces in every view.
 
-The Observe metrics strip counts them directly:
+The Overview pulls it together: a **Silent Failures** stat card, an **Execution
+Timeline** that renders green-but-broken runs as their own amber block next to
+the green successes and red errors, and a **Recent Errors** feed where each
+silent run reads its cause in plain language ("continued past 1 item error", "far
+below this node's normal volume"):
 
-![Observe metrics strip with a Silent Failures tile reading "green but broken"](../media/silent-failures/agd-observe-stats.png)
+![AgeniusDesk Overview: Silent Failures stat card reading 11, an Execution Timeline with amber Silent-error blocks and a Success/Error/Silent-error legend, and a Recent Errors feed listing silent runs with their causes](../media/silent-failures/agd-overview-timeline.png)
 
-The Overview gets a dedicated stat card:
+The same count carries into the Observe metrics strip and the Insights tiles, and
+in the Executions/Errors feed each one renders with a `SILENT` badge and a jump
+straight to its trace, so the analytics page and the home dashboard always agree.
 
-![Overview stats strip with a Silent Failures card](../media/silent-failures/agd-overview-stats.png)
+## A note on attribution
 
-And Insights carries the matching tile, so the analytics page and the home
-dashboard always agree:
-
-![Insights tiles including a Silent Failures tile](../media/silent-failures/agd-insights-tiles.png)
-
-In the Executions/Errors feed each one renders with a `SILENT` badge and a jump
-straight to its trace.
+Enrichment fetches run-data from n8n's API, which means it has to fetch from the
+**right** n8n. n8n's OTLP export identifies its source only by an opaque instance
+hash, so early on every trace fell back to whichever instance was active and the
+cost and health lookups quietly failed against a foreign execution. That is fixed:
+traces are now attributed to their source instance and enrichment fetches from the
+owning one. The mechanism has its own writeup in
+[instance-attribution.md](instance-attribution.md).
 
 ## Configuration
 
@@ -159,6 +228,7 @@ The classifier is tunable per instance. Defaults are conservative on purpose.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR` | `true` | Consult the item-level `json.error` content-scan when no sound signal fired. On = full recall on stock n8n. Off = patched instances drop the false positives (and Code-node CoF coverage). |
 | `AGD_HEALTH_MIN_SAMPLES` | 20 | Runs of history before a node can be judged (cold-start floor) |
 | `AGD_HEALTH_STEADY_ZERO_RATE` | 0.05 | A node is a "steady producer" only if it is this rarely empty |
 | `AGD_HEALTH_DORMANT_ZERO_RATE` | 0.95 | Above this zero rate a node is treated as dormant (never fires) |
@@ -168,16 +238,23 @@ The classifier is tunable per instance. Defaults are conservative on purpose.
 Detection only works once n8n is exporting OpenTelemetry to AgeniusDesk. See the
 [README](../../README.md#enabling-opentelemetry-on-your-n8n) for the exporter
 setup (instances AgeniusDesk provisions are auto-wired; existing instances you
-connect by URL need it enabled once).
+connect by URL need it enabled once). The typed continuation signal additionally
+requires the patched n8n; without it the content-scan carries the demoted-error
+load.
 
 ## Open questions and limits
 
 This is an experiment, and it has rough edges worth naming:
 
+- **Code-node Continue-On-Fail is content-scan only.** As the coverage boundary
+  shows, a Code node that swallows a throw is invisible to the sound engine
+  signal because it runs in the task runner. Until the nodes-base marker
+  migration lands upstream, a patched instance running with the content-scan off
+  will miss it. Demonstrated live, not theoretical.
 - **Enrichment latency.** Span-only anomalies (the LOW/drop path) surface the
   moment spans land. The demoted-error path needs a run-data fetch, so a
-  Continue-On-Fail HTTP error can lag the execution by up to about a minute
-  before it appears. Both still land loud.
+  Continue-On-Fail error can lag the execution by up to about a minute before it
+  appears. Both still land loud.
 - **History poisoning.** A node that fails often enough teaches the classifier
   that being empty is normal for it, and it stops firing. That is correct
   precision behavior, but it means a chronically half-broken node can go quiet.
