@@ -13,6 +13,7 @@ import { secretField, invalidateRefsCache } from './components/secretfield.js';
 import * as wizard from './wizard.js';
 import * as dashboardView from './views/dashboard.js';
 import * as workflowsView from './views/workflows.js';
+import * as promoteView from './views/promote.js';
 import * as errorsView from './views/errors.js';
 import * as importView from './views/import.js';
 import * as backupView from './views/backup.js';
@@ -50,6 +51,7 @@ if (new URLSearchParams(location.search).has('fresh')) {
 const views = {
   dashboard: dashboardView,
   workflows: workflowsView,
+  promote: promoteView,
   errors: errorsView,
   import: importView,
   backup: backupView,

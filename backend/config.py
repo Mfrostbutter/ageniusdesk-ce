@@ -1,6 +1,8 @@
 """Application configuration loaded from environment and config.json."""
 
 import base64
+import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -277,18 +279,67 @@ def get_instances() -> list[dict]:
 
 def get_active_instance_id() -> str:
     """Get the active instance ID."""
+    override = _instance_override.get()
+    if override is not None:
+        return override.get("id", "")
     return load_config().get("active_instance", "")
 
 
 def get_active_instance() -> Optional[dict]:
-    """Get the active n8n instance config."""
-    active_id = get_active_instance_id()
+    """Get the active n8n instance config.
+
+    A `use_instance()` override (context-local) wins over the persisted active
+    instance. This lets a single request target an explicit instance — e.g. the
+    promote feature reading from a source instance and writing to a target —
+    without any change to the active-instance-bound n8n client.
+    """
+    override = _instance_override.get()
+    if override is not None:
+        return override
+    active_id = load_config().get("active_instance", "")
     for inst in get_instances():
         if inst["id"] == active_id:
             return inst
     # Fall back to first instance
     instances = get_instances()
     return instances[0] if instances else None
+
+
+def get_instance_by_id(instance_id: str) -> Optional[dict]:
+    """Return the stored instance config for an id, or None. Values stay in
+    their at-rest (possibly encrypted) form — get_n8n_url/get_n8n_api_key
+    decrypt on read."""
+    for inst in get_instances():
+        if inst.get("id") == instance_id:
+            return inst
+    return None
+
+
+# Context-local override for which instance the n8n client targets. Default
+# None = use the persisted active instance. contextvars are async-safe and
+# inherited by awaited coroutines in the same task, so `with use_instance(x):
+# await client.export_workflow(...)` routes that call to instance x.
+_instance_override: "contextvars.ContextVar[Optional[dict]]" = contextvars.ContextVar(
+    "n8n_instance_override", default=None
+)
+
+
+@contextlib.contextmanager
+def use_instance(instance: Optional[dict]):
+    """Temporarily route the n8n client at an explicit instance.
+
+    `instance` is a stored instance dict (from get_instance_by_id/get_instances).
+    Passing None is a no-op. Nesting is supported; the previous value is
+    restored on exit.
+    """
+    if instance is None:
+        yield
+        return
+    token = _instance_override.set(instance)
+    try:
+        yield
+    finally:
+        _instance_override.reset(token)
 
 
 # ── Secret encryption ────────────────────────────────────────────────────────

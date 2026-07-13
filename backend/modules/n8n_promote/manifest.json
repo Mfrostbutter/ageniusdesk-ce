@@ -1,0 +1,13 @@
+{
+  "id": "n8n_promote",
+  "name": "Workflow Promotion",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Promote workflows across n8n instances (dev -> staging -> prod) with credential-mapping preflight. The OSS answer to n8n Enterprise environments.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/promote",
+  "builtin": true,
+  "frontend": {
+    "nav": { "label": "Promote", "icon": "git-branch", "view": "promote" }
+  }
+}
