@@ -170,9 +170,12 @@ async def ingest_trace_request(req) -> int:
     # inside enrich_trace_health and must never block the ingest response.
     try:
         from . import health
+        from . import cost as cost_mod
         completed = {r["trace_id"] for r in rows if r["name"] == "workflow.execute"}
         for tid in completed:
             asyncio.create_task(health.enrich_trace_health(tid))
+            # price the run now too, so SPEND aggregates without anyone opening the trace
+            asyncio.create_task(cost_mod.enrich_trace(tid))
     except Exception as e:  # noqa: BLE001 - scheduling is best-effort
-        logger.debug("health schedule failed: %s", e)
+        logger.debug("enrich schedule failed: %s", e)
     return inserted
