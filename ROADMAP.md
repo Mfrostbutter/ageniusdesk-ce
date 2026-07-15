@@ -227,7 +227,7 @@ Not every valuable module folds into the existing chrome; some **add their own s
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
 - [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
 - [ ] **Cost tracking** — folded into Observability ([cost-observability spec](docs/specs/2026-06-27-cost-observability.md)); LLM spend is the cost dimension of the trace store, not a standalone feature
-- [ ] **Workflow promotion**: promote workflows across dev, staging, production instances
+- [x] **Workflow promotion**: promote workflows across dev, staging, production instances (shipped 2026-07-13, `n8n_promote` module: preflight, credential mapping with auto-provision from Secrets, activation guarding; dogfooded on the beta instance 2026-07-15)
 - [ ] **Public API hardening**: expand and stabilize the existing versioned `/api/v1` (X-API-Key) surface
 
 ---

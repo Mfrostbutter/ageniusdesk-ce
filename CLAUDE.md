@@ -18,6 +18,7 @@ An open-source command center for managing multiple n8n automation instances. MI
 - `backend/main.py` - FastAPI entry point, CORS, WebSocket at `/ws`, static file serving
 - `backend/modules/` - auto-discovered packages, each exposes a `router` and `manifest.json`
   - `n8n_proxy/` - multi-instance proxy for workflows, executions, credentials
+  - `n8n_promote/` - workflow promotion across instances (preflight, credential mapping + auto-provision from Secrets, activation guarding)
   - `errors/` - error collection, grouping by workflow, node, error type
   - `assistant/` - AI chat with LLM providers (OpenRouter, OpenAI, Anthropic, Ollama, plus Perplexity, Groq, DeepSeek, Mistral, xAI, Together, and a Custom OpenAI-compatible endpoint), MCP client, RAG
   - `agent_fleet/` - managed LangGraph + PydanticAI agent fleet (catalog, live graph, run waterfall, human-in-the-loop); opt-in `langgraph` extra, n8n-only by default

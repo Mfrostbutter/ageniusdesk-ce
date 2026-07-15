@@ -1149,7 +1149,15 @@ async def set_workflow_active(workflow_id: str, active: bool) -> dict[str, Any]:
             )
             if resp.status_code in (200, 204):
                 return {"success": True, "active": active}
-            return {"success": False, "error": f"HTTP {resp.status_code}"}
+            # Surface n8n's message — e.g. activate 400s carry the exact list of
+            # nodes with missing credentials/parameters, which the caller needs.
+            detail = resp.text[:300]
+            try:
+                body = resp.json()
+                detail = body.get("message") or body.get("detail") or detail
+            except Exception:  # noqa: BLE001
+                pass
+            return {"success": False, "error": f"HTTP {resp.status_code}: {detail}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
