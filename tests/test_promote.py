@@ -11,6 +11,7 @@ import pytest
 from backend.modules.n8n_promote.promote import (
     _extract_node_credentials,
     _rewrite_node_credentials,
+    resolve_target_credentials,
 )
 
 
@@ -141,3 +142,100 @@ class TestPromoteRefusesActivationWhenUnmapped:
     @pytest.fixture
     def anyio_backend(self):
         return "asyncio"
+
+
+class TestResolveTargetCredentials:
+    """The 'anything ambiguous is surfaced, never guessed' contract."""
+
+    @pytest.fixture
+    def anyio_backend(self):
+        return "asyncio"
+
+    def _mirrors(self, entries):
+        # entries: list of (secret_name, cred_type, cred_id)
+        return {"t1": {sn: {"credential_type": ct, "credential_id": cid,
+                            "credential_name": sn} for sn, ct, cid in entries}}
+
+    @pytest.mark.anyio
+    async def test_two_type_mirrors_are_ambiguous_not_guessed(self, monkeypatch):
+        # Two existing target credentials of the same type: the reuse branch must
+        # NOT silently bind the first (which could point at the wrong account).
+        from backend.modules.n8n_promote import promote as svc
+
+        monkeypatch.setattr(svc, "_load_mirrors",
+                            lambda: self._mirrors([("KEY_A", "httpHeaderAuth", "cA"),
+                                                   ("KEY_B", "httpHeaderAuth", "cB")]))
+        monkeypatch.setattr(svc, "load_secrets", lambda: {})
+        res = await resolve_target_credentials(
+            {"id": "t1"},
+            [{"source_id": "s1", "cred_type": "httpHeaderAuth", "name": "hdr"}],
+        )
+        assert res[0]["method"] == "ambiguous"
+        assert res[0]["target_id"] == ""
+        assert set(res[0]["candidates"]) == {"KEY_A", "KEY_B"}
+
+    @pytest.mark.anyio
+    async def test_single_type_mirror_is_reused(self, monkeypatch):
+        from backend.modules.n8n_promote import promote as svc
+
+        monkeypatch.setattr(svc, "_load_mirrors",
+                            lambda: self._mirrors([("KEY_A", "httpHeaderAuth", "cA")]))
+        monkeypatch.setattr(svc, "load_secrets", lambda: {})
+        res = await resolve_target_credentials(
+            {"id": "t1"},
+            [{"source_id": "s1", "cred_type": "httpHeaderAuth", "name": "hdr"}],
+        )
+        assert res[0]["method"] == "reused"
+        assert res[0]["target_id"] == "cA"
+
+
+class TestProvisionGuards:
+    @pytest.fixture
+    def anyio_backend(self):
+        return "asyncio"
+
+    @pytest.mark.anyio
+    async def test_scope_denied_secret_is_not_written(self, monkeypatch):
+        # A secret not scoped to the target must never be POSTed as a credential.
+        from backend.modules.n8n_promote import promote as svc
+
+        monkeypatch.setattr(svc, "_load_mirrors", lambda: {})
+        monkeypatch.setattr(svc, "_resolve_instance_creds", lambda inst: ("http://t", "k"))
+        monkeypatch.setattr(svc, "assert_safe_probe_url", lambda url: None)
+        monkeypatch.setattr(svc, "is_secret_allowed_on_instance", lambda sec, iid: False)
+
+        posted = []
+
+        class _Boom:
+            async def __aenter__(self):
+                posted.append(True)
+                raise AssertionError("must not open an HTTP client for a denied secret")
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(svc.httpx, "AsyncClient", lambda *a, **k: _Boom())
+
+        with pytest.raises(ValueError, match="not scoped"):
+            await svc._provision_credential({"id": "t1"}, "DEV_KEY", "httpHeaderAuth")
+        assert posted == []
+
+    @pytest.mark.anyio
+    async def test_existing_mirror_is_reused_without_recreate(self, monkeypatch):
+        # Idempotency by reuse: an already-mirrored secret returns the existing id
+        # and issues no delete/create (which would orphan promoted workflows).
+        from backend.modules.n8n_promote import promote as svc
+
+        monkeypatch.setattr(svc, "_load_mirrors",
+                            lambda: {"t1": {"DEV_KEY": {"credential_id": "existing",
+                                                        "credential_name": "Dev Key",
+                                                        "credential_type": "httpHeaderAuth"}}})
+        monkeypatch.setattr(svc, "_resolve_instance_creds", lambda inst: ("http://t", "k"))
+
+        def _no_http(*a, **k):
+            raise AssertionError("reuse path must not touch n8n")
+
+        monkeypatch.setattr(svc.httpx, "AsyncClient", _no_http)
+        cid, cname = await svc._provision_credential({"id": "t1"}, "DEV_KEY", "httpHeaderAuth")
+        assert cid == "existing"
+        assert cname == "Dev Key"

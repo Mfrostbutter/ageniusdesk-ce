@@ -17,6 +17,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -63,6 +64,15 @@ _SCHEMA_CACHE_TTL_SECS = 300  # 5 minutes
 # ── Mirror-state storage ─────────────────────────────────────────────────────
 
 
+# Serializes read-modify-write on credential_mirrors.json. The store is a whole-
+# file JSON blob, so two overlapping writers (a promote auto-provision and a
+# Secrets-UI mirror run, or two concurrent promotes) would each load a snapshot,
+# await network I/O, and write their snapshot back — the later write silently
+# erasing the other's entries. Every mutation goes through _record_mirror under
+# this lock, which re-reads fresh state inside the lock so nothing is clobbered.
+_MIRRORS_LOCK = asyncio.Lock()
+
+
 def _load_mirrors() -> dict:
     if MIRRORS_FILE.exists():
         try:
@@ -75,6 +85,20 @@ def _load_mirrors() -> dict:
 def _save_mirrors(data: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MIRRORS_FILE.write_text(json.dumps(data, indent=2))
+
+
+async def _record_mirror(instance_id: str, secret_name: str, entry: dict) -> None:
+    """Merge one credential-mirror entry into the shared store under the lock.
+
+    Re-reads fresh state inside the lock and merges, so a concurrent writer's
+    entries survive instead of being clobbered by a stale whole-file snapshot.
+    """
+    async with _MIRRORS_LOCK:
+        mirrors = _load_mirrors()
+        state = mirrors.setdefault(instance_id, {})
+        state[secret_name] = entry
+        mirrors[instance_id] = state
+        _save_mirrors(mirrors)
 
 
 # ── Instance lookup ──────────────────────────────────────────────────────────
@@ -287,12 +311,16 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
                 body = r.json()
                 cred_id = body.get("id") or ""
                 cred_name = body.get("name") or payload["name"]
-                instance_state[item.secret_name] = {
+                entry = {
                     "credential_id": cred_id,
                     "credential_name": cred_name,
                     "credential_type": item.credential_type,
                     "mirrored_at": datetime.utcnow().isoformat() + "Z",
                 }
+                instance_state[item.secret_name] = entry
+                # Persist this entry immediately under the lock so a concurrent
+                # writer can't clobber it with a stale snapshot at batch end.
+                await _record_mirror(instance_id, item.secret_name, entry)
                 results.append({
                     "secret_name": item.secret_name,
                     "status": "ok",
@@ -309,9 +337,9 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
                 logger.exception("Credential mirror failed for %s", item.secret_name)
                 results.append({"secret_name": item.secret_name, "status": "error", "error": str(e)})
 
-    # Persist whatever succeeded.
-    mirrors[instance_id] = instance_state
-    _save_mirrors(mirrors)
+    # Per-item persistence already happened under the lock (_record_mirror), so
+    # there is no wholesale save here — that whole-file write is exactly what
+    # raced concurrent writers.
     # Trust-on-first-use: record this instance's host fingerprint so scopes that
     # predate the fingerprint file gain repoint protection after their first
     # successful mirror (no-op if already recorded / unchanged).

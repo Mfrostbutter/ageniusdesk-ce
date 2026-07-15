@@ -19,23 +19,32 @@ Design constraints that shape this module:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
 
-from backend.config import decrypt_value, get_instance_by_id, load_secrets, use_instance
+from backend.config import (
+    decrypt_value,
+    get_allowed_instances,
+    get_instance_by_id,
+    instance_scope_host_stale,
+    is_secret_allowed_on_instance,
+    load_secrets,
+    use_instance,
+)
 from backend.modules.n8n_credentials.known_types import detect_type_from_name
 from backend.modules.n8n_credentials.mappings import build_credential_payload, fetch_live_schemas
 from backend.modules.n8n_credentials.router import (
     _load_mirrors,
+    _record_mirror,
     _resolve_instance_creds,
     _resolve_secret,
-    _save_mirrors,
     _schemas_for_instance,
 )
 from backend.modules.n8n_proxy import client
 from backend.modules.n8n_proxy.client import _verify
+from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
 logger = logging.getLogger(__name__)
 
@@ -82,49 +91,71 @@ async def _probe_instance(inst: dict) -> tuple[bool, str]:
 # the Secrets UI and promote stay consistent.
 
 
+def _assert_provision_allowed(secret_name: str, instance_id: str, url: str) -> None:
+    """Guard a credential write the same way the Secrets mirror route does.
+
+    Auto-provision POSTs a secret's plaintext to the target, so it must honor the
+    same three floors as `/{id}/mirror`: an SSRF check on the target URL, the
+    per-secret instance scope, and the URL-repoint guard. Without these, a promote
+    could write a dev-scoped secret onto a prod (or attacker-repointed) instance.
+    Raises ValueError (surfaced as a per-credential resolution note) when blocked.
+    """
+    try:
+        assert_safe_probe_url(url)
+    except UnsafeProbeURL as exc:
+        raise ValueError(f"target URL not allowed: {exc}") from exc
+    sec = secret_name.lstrip("$")
+    if not is_secret_allowed_on_instance(sec, instance_id):
+        raise ValueError("secret is not scoped to this instance — update its Applies To list")
+    if get_allowed_instances(sec) and instance_scope_host_stale(instance_id, url):
+        raise ValueError("instance URL changed since the secret was scoped to it — re-affirm its Applies To list")
+
+
 async def _provision_credential(target: dict, secret_name: str, cred_type: str) -> tuple[str, str]:
-    """Create a credential of `cred_type` on `target` from AGD secret
-    `secret_name`. Returns (credential_id, credential_name). Idempotent: replaces
-    any prior mirror of the same secret on this instance. Raises on failure."""
+    """Ensure a credential of `cred_type` for AGD secret `secret_name` exists on
+    `target`, returning (credential_id, credential_name).
+
+    Idempotent by REUSE, not replace: if AgeniusDesk already mirrored this secret
+    to this instance, return the existing id. Deleting and re-creating (the old
+    behavior) minted a new id and orphaned any already-promoted workflow on the
+    target that still referenced the old one. Raises on failure.
+    """
     tid = target["id"]
     url, api_key = _resolve_instance_creds(target)
     if not url or not api_key:
         raise ValueError("target instance is missing its URL or API key")
+
+    prior = _load_mirrors().get(tid, {}).get(secret_name)
+    if prior and prior.get("credential_id"):
+        return prior["credential_id"], prior.get("credential_name") or secret_name
+
+    _assert_provision_allowed(secret_name, tid, url)
+
     schemas = await _schemas_for_instance(tid)
     secret_value = _resolve_secret(secret_name)  # decrypted str or compound dict
     payload = build_credential_payload(secret_name, secret_value, cred_type,
                                        schema=schemas.get(cred_type))
-    mirrors = _load_mirrors()
-    state = mirrors.setdefault(tid, {})
     async with httpx.AsyncClient(timeout=15.0, verify=_verify()) as c:
-        prior = state.get(secret_name)
-        if prior and prior.get("credential_id"):
-            try:
-                await c.delete(f"{url}/api/v1/credentials/{prior['credential_id']}",
-                               headers={"X-N8N-API-KEY": api_key})
-            except httpx.HTTPError:
-                pass  # already gone in n8n — create the new one anyway
         r = await c.post(f"{url}/api/v1/credentials",
                          headers={"X-N8N-API-KEY": api_key, "Content-Type": "application/json"},
                          json=payload)
     if r.status_code >= 400:
         detail = r.text[:300]
         try:
-            b = r.json(); detail = b.get("message") or b.get("detail") or detail
+            b = r.json()
+            detail = b.get("message") or b.get("detail") or detail
         except Exception:  # noqa: BLE001
             pass
         raise ValueError(f"n8n {r.status_code}: {detail}")
     body = r.json()
     cred_id = body.get("id") or ""
     cred_name = body.get("name") or payload["name"]
-    state[secret_name] = {
+    await _record_mirror(tid, secret_name, {
         "credential_id": cred_id,
         "credential_name": cred_name,
         "credential_type": cred_type,
-        "mirrored_at": datetime.utcnow().isoformat() + "Z",
-    }
-    mirrors[tid] = state
-    _save_mirrors(mirrors)
+        "mirrored_at": datetime.now(timezone.utc).isoformat(),
+    })
     return cred_id, cred_name
 
 
@@ -167,11 +198,20 @@ async def resolve_target_credentials(
                 cid, cname = await _provision_credential(target, choice, ctype)
                 res.update(method="provisioned", target_id=cid, target_name=cname,
                            secret=choice, note=f"created on target from ${choice}")
-            elif ctype in by_type and by_type[ctype]:
+            elif ctype in by_type and len(by_type[ctype]) == 1:
+                # Reuse only when there is exactly ONE mirror of this type — with
+                # more than one we cannot know which the source cred wants, so we
+                # surface it as ambiguous rather than silently binding the first
+                # (which could point a workflow at the wrong account's key).
                 m = by_type[ctype][0]
                 res.update(method="reused", target_id=m["credential_id"],
                            target_name=m["credential_name"],
                            note=f"reused existing credential (from ${m['secret_name']})")
+            elif ctype in by_type and len(by_type[ctype]) > 1:
+                names = [m["secret_name"] for m in by_type[ctype]]
+                res.update(method="ambiguous", target_id="", candidates=names,
+                           note=(f"{len(names)} existing credentials of type '{ctype}' — "
+                                 f"map one manually: {', '.join(names)}"))
             elif auto_provision:
                 cands = [n for n in stored if detect_type_from_name(n) == ctype]
                 if len(cands) == 1:
@@ -330,6 +370,12 @@ async def list_instance_workflows(instance_id: str) -> dict[str, Any]:
     inst = get_instance_by_id(instance_id)
     if not inst:
         return {"ok": False, "error": f"Instance {instance_id} not found."}
+    # Probe first: the n8n client swallows 401/timeout and returns {}, so without
+    # this an unreachable or mis-keyed instance renders as an empty picker ("No
+    # workflows on this instance") instead of a loud error.
+    ok, msg = await _probe_instance(inst)
+    if not ok:
+        return {"ok": False, "error": f"Instance '{inst.get('name', '')}' is unreachable: {msg}"}
     items: list[dict] = []
     with use_instance(inst):
         cursor = ""

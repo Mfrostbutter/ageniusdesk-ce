@@ -15,6 +15,10 @@ let _instances = [];
 let _preflight = null;   // last preflight result
 
 function esc(s) { const el = document.createElement('span'); el.textContent = s == null ? '' : s; return el.innerHTML; }
+// esc() escapes & < > but NOT ", so it is unsafe inside a double-quoted HTML
+// attribute. Credential/workflow ids flow in from n8n workflow JSON (attacker-
+// controllable on shared/imported workflows); use escAttr for any attribute value.
+function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
 
 export async function render(container) {
   container.innerHTML = `
@@ -56,21 +60,34 @@ export async function render(container) {
 
   const src = document.getElementById('promo-source');
   const tgt = document.getElementById('promo-target');
-  const opts = _instances.map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('');
+  const opts = _instances.map(i => `<option value="${escAttr(i.id)}">${esc(i.name)}</option>`).join('');
   src.innerHTML = opts;
   tgt.innerHTML = opts;
   if (_instances.length > 1) tgt.selectedIndex = 1;   // default target != source
 
   document.getElementById('promo-reload-wf').addEventListener('click', loadWorkflows);
   src.addEventListener('change', loadWorkflows);
+  // Changing the target invalidates a preflight: it validated credentials, dup
+  // names, and type support against the OLD target. Force a re-run so promote
+  // can never fire mappings provisioned for one instance against another.
+  tgt.addEventListener('change', clearPreflight);
   if (_instances.length) loadWorkflows();
+}
+
+// Drop any rendered preflight/results so the Promote button can't act on a
+// snapshot that no longer matches the current source, target, or selection.
+function clearPreflight() {
+  _preflight = null;
+  const pf = document.getElementById('promo-preflight');
+  const res = document.getElementById('promo-results');
+  if (pf) pf.innerHTML = '';
+  if (res) res.innerHTML = '';
 }
 
 async function loadWorkflows() {
   const wrap = document.getElementById('promo-wf-wrap');
   const sourceId = document.getElementById('promo-source').value;
-  document.getElementById('promo-preflight').innerHTML = '';
-  document.getElementById('promo-results').innerHTML = '';
+  clearPreflight();
   if (!sourceId) { wrap.innerHTML = '<div class="empty-state"><p>Select a source instance.</p></div>'; return; }
   wrap.innerHTML = '<div class="spinner"></div>';
   try {
@@ -89,7 +106,7 @@ async function loadWorkflows() {
       <div style="max-height:340px;overflow:auto;border:1px solid var(--border-dim);border-radius:var(--radius)">
         ${wfs.map(w => `
           <label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-dim);cursor:pointer;margin:0">
-            <input type="checkbox" class="promo-wf" value="${esc(w.id)}" style="width:auto;margin:0">
+            <input type="checkbox" class="promo-wf" value="${escAttr(w.id)}" style="width:auto;margin:0">
             <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(w.name)}</span>
             <span style="font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary)">${w.active ? 'active' : 'inactive'}</span>
             <span style="font-size:10px;color:var(--text-secondary);font-family:var(--font-mono)">${esc(w.trigger_type || '')}</span>
@@ -98,12 +115,19 @@ async function loadWorkflows() {
     document.getElementById('promo-all').addEventListener('click', () => setAll(true));
     document.getElementById('promo-none').addEventListener('click', () => setAll(false));
     document.getElementById('promo-preflight-btn').addEventListener('click', runPreflight);
+    // Editing the selection after a preflight invalidates it — the run uses the
+    // preflighted list, so drop the stale panel and make the user re-preflight.
+    wrap.querySelectorAll('.promo-wf').forEach(c => c.addEventListener('change', clearPreflight));
   } catch (e) {
     wrap.innerHTML = `<div class="empty-state"><p>Failed to load workflows: ${esc(e.message)}</p></div>`;
   }
 }
 
-function setAll(v) { document.querySelectorAll('.promo-wf').forEach(c => { c.checked = v; }); }
+function setAll(v) {
+  // Programmatic .checked changes don't fire 'change', so invalidate explicitly.
+  document.querySelectorAll('.promo-wf').forEach(c => { c.checked = v; });
+  clearPreflight();
+}
 
 function selectedWorkflowIds() {
   return Array.from(document.querySelectorAll('.promo-wf:checked')).map(c => c.value);
@@ -160,9 +184,9 @@ function renderPreflight(p) {
       <td>${esc(c.name)}</td>
       <td><code style="font-size:11px">${esc(sid)}</code></td>
       <td>${support}</td>
-      <td><input class="promo-credmap" data-sid="${esc(sid)}" placeholder="target cred id" style="margin:0;font-size:12px;padding:4px 8px" ${sid ? '' : 'disabled'}></td>
-      <td><input class="promo-credname" data-sid="${esc(sid)}" placeholder="target name (optional)" style="margin:0;font-size:12px;padding:4px 8px" ${sid ? '' : 'disabled'}></td>
-      <td class="promo-credstatus" data-sid="${esc(sid)}" style="font-size:11px;color:var(--text-secondary);white-space:nowrap">&mdash;</td>
+      <td><input class="promo-credmap" data-sid="${escAttr(sid)}" placeholder="target cred id" style="margin:0;font-size:12px;padding:4px 8px" ${sid ? '' : 'disabled'}></td>
+      <td><input class="promo-credname" data-sid="${escAttr(sid)}" placeholder="target name (optional)" style="margin:0;font-size:12px;padding:4px 8px" ${sid ? '' : 'disabled'}></td>
+      <td class="promo-credstatus" data-sid="${escAttr(sid)}" style="font-size:11px;color:var(--text-secondary);white-space:nowrap">&mdash;</td>
     </tr>`;
   }).join('');
 
@@ -219,8 +243,11 @@ async function autoProvision() {
   const allCreds = (_preflight.credentials_to_map || []).filter(c => c.source_id);
   if (!allCreds.length || !_preflight.target) return;
 
-  const idInputFor = sid => document.querySelector(`input.promo-credmap[data-sid="${sid}"]`);
-  const statusFor  = sid => document.querySelector(`td.promo-credstatus[data-sid="${sid}"]`);
+  // CSS.escape the interpolated id: a source credential id can contain a quote
+  // or backslash (n8n workflow JSON is unconstrained), which would otherwise make
+  // querySelector throw and kill the handler before the try block.
+  const idInputFor = sid => document.querySelector(`input.promo-credmap[data-sid="${CSS.escape(sid)}"]`);
+  const statusFor  = sid => document.querySelector(`td.promo-credstatus[data-sid="${CSS.escape(sid)}"]`);
 
   // Respect rows the user already filled in — mark them and DON'T re-provision
   // (avoids overwriting a manual id or creating a duplicate credential).
@@ -251,7 +278,7 @@ async function autoProvision() {
     });
     (out.resolutions || []).forEach(r => {
       const idInput = idInputFor(r.source_id);
-      const nameInput = document.querySelector(`input.promo-credname[data-sid="${r.source_id}"]`);
+      const nameInput = document.querySelector(`input.promo-credname[data-sid="${CSS.escape(r.source_id)}"]`);
       const st = statusFor(r.source_id);
       if (r.target_id && idInput) idInput.value = r.target_id;
       if (r.target_name && nameInput) nameInput.value = r.target_name;
@@ -296,7 +323,7 @@ async function runPromote() {
   const missingName = Object.keys(cred_map).filter(sid => !cred_names[sid]);
   if (missingName.length) {
     missingName.forEach(sid => {
-      const st = document.querySelector(`td.promo-credstatus[data-sid="${sid}"]`);
+      const st = document.querySelector(`td.promo-credstatus[data-sid="${CSS.escape(sid)}"]`);
       if (st) { st.textContent = '⚠ needs Target name'; st.style.color = '#ff9f43'; }
     });
     res.innerHTML = `<div class="card" style="padding:12px;color:#ff9f43">${missingName.length} credential(s) have an id but no <b>Target name</b>. n8n binds by id <i>and</i> name, so a blank name imports the workflow unbound. Enter the exact target credential name (or use Auto-provision, which fills it).</div>`;
