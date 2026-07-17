@@ -453,6 +453,12 @@ async def restart_app():
 class CreateApiKey(BaseModel):
     name: str
     scope: str = "read"  # "read" | "trigger"
+    # Optional restrictions. Every one of these is unrestricted when omitted, so
+    # an existing caller that posts {name, scope} keeps its current behavior.
+    expires_at: str = ""                    # ISO-8601; "" = never expires
+    allowed_ips: list[str] = []             # IPs or CIDRs; [] = any source
+    allowed_instances: list[str] = []       # n8n instance ids; [] = any
+    allowed_workflows: list[str] = []       # workflow ids; [] = any
 
 
 @router.post("/api-keys")
@@ -466,20 +472,34 @@ async def create_api_key_endpoint(req: CreateApiKey):
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
 
-    raw_key, record = create_api_key(name, req.scope)
+    try:
+        raw_key, record = create_api_key(
+            name,
+            req.scope,
+            expires_at=req.expires_at,
+            allowed_ips=req.allowed_ips,
+            allowed_instances=req.allowed_instances,
+            allowed_workflows=req.allowed_workflows,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {
         "key": raw_key,  # shown once — caller must copy it now
         "id": record["id"],
         "name": record["name"],
         "scope": record["scope"],
         "created_at": record["created_at"],
+        "expires_at": record["expires_at"],
+        "allowed_ips": record["allowed_ips"],
+        "allowed_instances": record["allowed_instances"],
+        "allowed_workflows": record["allowed_workflows"],
     }
 
 
 @router.get("/api-keys")
 async def list_api_keys():
     """List all public API keys (metadata only — hashes never returned)."""
-    from backend.modules.public_api.api_keys import load_api_keys
+    from backend.modules.public_api.api_keys import is_expired, load_api_keys
 
     keys = load_api_keys()
     safe = [
@@ -488,6 +508,11 @@ async def list_api_keys():
             "name": k["name"],
             "scope": k["scope"],
             "created_at": k["created_at"],
+            "expires_at": k.get("expires_at", ""),
+            "expired": is_expired(k),
+            "allowed_ips": k.get("allowed_ips", []),
+            "allowed_instances": k.get("allowed_instances", []),
+            "allowed_workflows": k.get("allowed_workflows", []),
         }
         for k in keys
     ]

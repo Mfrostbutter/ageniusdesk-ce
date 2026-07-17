@@ -440,7 +440,12 @@ document.getElementById('setup-form')?.addEventListener('submit', async (e) => {
         toast.error(`Could not save to secrets store: ${err.message}. Storing inline.`);
       }
     }
-    const addRes = await post('/api/n8n/instances', { name, url, api_key: key });
+    // Only send tls_verify when the operator actually opted out. Omitting it
+    // means "follow AGD_TLS_VERIFY", which is what every existing instance does.
+    const body = { name, url, api_key: key };
+    const tlsBox = document.getElementById('setup-tls-verify');
+    if (tlsBox && !tlsBox.checked && /^https:/i.test(url)) body.tls_verify = false;
+    const addRes = await post('/api/n8n/instances', body);
     closeSetupModal();
     toast.success(`Connected to ${name}`);
     const eh = addRes && addRes.error_handler;
@@ -512,6 +517,10 @@ window.__switchInstance = async (id) => {
 window.__addInstance = () => {
   document.getElementById('setup-name').value = '';
   document.getElementById('setup-url').value = '';
+  // Re-arm the safe default: the modal is reused, so a previous opt-out must not
+  // silently carry into the next instance.
+  const tlsBox = document.getElementById('setup-tls-verify');
+  if (tlsBox) tlsBox.checked = true;
   ensureSetupKeyField('');
   _initSetupUrlHint();
   modal.show('setup-modal');
@@ -532,10 +541,14 @@ async function _initSetupUrlHint() {
   const urlInput = document.getElementById('setup-url');
   const hint = document.getElementById('setup-url-hint');
   if (!urlInput || !hint) return;
+  const tlsRow = document.getElementById('setup-tls-row');
   function _toggleHint() {
     const val = urlInput.value;
     const isLocal = val.includes('localhost') || val.includes('127.0.0.1');
     hint.style.display = (_inDocker && isLocal) ? 'block' : 'none';
+    // TLS verification only means anything over https, so don't offer the
+    // choice (and don't imply it does something) on an http:// URL.
+    if (tlsRow) tlsRow.style.display = /^https:/i.test(val.trim()) ? 'block' : 'none';
   }
   // Remove any prior listener to avoid stacking on repeated modal opens.
   if (urlInput.__hintHandler) urlInput.removeEventListener('input', urlInput.__hintHandler);

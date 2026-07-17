@@ -6,9 +6,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from backend import audit
 from backend.auth_gate import require_role
 from backend.config import decrypt_value, load_config, save_config
-from backend.modules.assistant import providers
+from backend.modules.assistant import approvals, providers
 from backend.modules.assistant.baseline import loader as _baseline_loader
 from backend.modules.assistant.baseline.schema import PutBaselineRequest
 
@@ -219,7 +220,7 @@ async def save_assistant_config(req: ConfigRequest):
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, user: dict | None = Depends(require_role("operator"))):
     """Send a message to the AI assistant.
 
     Request body supports two override paths:
@@ -231,6 +232,10 @@ async def chat(req: ChatRequest):
       - `fallback`: optional `{provider, model}` object. Used only if primary
         fails. Response includes `served_by` and (when fallback served)
         `primary_error`.
+
+    A state-changing tool the model selects is NOT executed here (unless
+    AGD_ASSISTANT_AUTORUN=true). It comes back in `pending_actions` for the
+    operator to confirm via POST /api/assistant/tools/confirm.
     """
     # Resolve the job for this surface (Code Lab / Error Triage / General
     # Assistant). Each job owns its provider, model, instructions, and fallback.
@@ -250,18 +255,64 @@ async def chat(req: ChatRequest):
     if fallback is None and job.get("fallback_provider"):
         fallback = {"provider": job["fallback_provider"], "model": job.get("fallback_model", "")}
 
-    result = await providers.chat(
-        req.messages,
-        req.context,
-        model_override=req.model or "",
-        override=override,
-        fallback=fallback,
-        surface=req.surface,
-        instructions=job["instructions"],
-    )
+    with audit.with_actor(user):
+        result = await providers.chat(
+            req.messages,
+            req.context,
+            model_override=req.model or "",
+            override=override,
+            fallback=fallback,
+            surface=req.surface,
+            instructions=job["instructions"],
+        )
     if "error" in result:
         raise HTTPException(status_code=502, detail=result["error"])
     return result
+
+
+# ── Tool confirmation gate ────────────────────────────────────────────────────
+
+
+class ToolActionRequest(BaseModel):
+    id: str
+
+
+@router.post("/tools/confirm")
+async def confirm_tool(
+    req: ToolActionRequest,
+    user: dict | None = Depends(require_role("operator")),
+):
+    """Execute a state-changing tool call the assistant proposed.
+
+    This is the human boundary in front of the assistant's write tools: the id
+    only exists because a chat turn produced a proposal, it is single-use, it
+    expires, and reaching this route requires an operator identity plus (for a
+    cookie session) the CSRF header. A prompt injection can make the model
+    *propose* an action; it cannot make the operator click.
+    """
+    record = approvals.pop(req.id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This action is no longer pending. It may have expired, already run, or been declined.",
+        )
+    with audit.with_actor(user):
+        try:
+            result = await approvals.execute_approved(record)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Tool execution failed: {e}") from e
+    return {"success": True, "tool": record["tool"], "result": result}
+
+
+@router.post("/tools/reject")
+async def reject_tool(
+    req: ToolActionRequest,
+    user: dict | None = Depends(require_role("operator")),
+):
+    """Discard a proposed tool call the operator declined."""
+    with audit.with_actor(user):
+        found = approvals.reject(req.id)
+    return {"success": found}
 
 
 @router.get("/models")

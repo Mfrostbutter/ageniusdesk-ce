@@ -1,5 +1,6 @@
 """AgeniusDesk — FastAPI application."""
 
+import hashlib
 import hmac
 import logging
 import os
@@ -162,6 +163,16 @@ async def lifespan(app: FastAPI):
                 "ingest at /api/otel/v1/traces accepts spans from any caller that can "
                 "reach this port. Set AGD_OTEL_TOKEN unless this is a trusted LAN."
             )
+        # Same posture for the legacy webhooks: open by default so existing n8n
+        # error handlers keep working. Warn rather than force a token — forcing
+        # one silently breaks every install that upgrades into it.
+        if not _settings.agd_webhook_token:
+            logger.warning(
+                "AGD_WEBHOOK_TOKEN is unset: /api/errors/webhook and /api/messages/webhook "
+                "accept writes from any caller that can reach this port (rate-limited to "
+                "%d/min per IP). Set AGD_WEBHOOK_TOKEN unless this is a trusted LAN.",
+                _settings.agd_ingest_rate,
+            )
     except Exception:
         pass
     if _mcp_sm is not None:
@@ -198,12 +209,23 @@ app = FastAPI(title="AgeniusDesk", version=APP_VERSION, lifespan=lifespan)
 
 
 def _cors_origins() -> list[str]:
-    raw = (settings.agd_cors_origins or "*").strip()
-    if raw == "*" or not raw:
+    """Origins allowed to call this API cross-origin.
+
+    Default is empty: the bundled frontend is served from this same app, so it
+    needs no CORS grant at all, and an unused wildcard is a standing invitation
+    for a page on any origin to poke the API from a visitor's browser. Operators
+    who front the API from a separate origin opt in explicitly.
+    """
+    raw = (settings.agd_cors_origins or "").strip()
+    if not raw:
+        return []
+    if raw == "*":
         return ["*"]
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
+# allow_credentials is deliberately NOT set: cookies are same-origin here, so no
+# cross-origin caller should ever be able to ride the operator's session.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -262,6 +284,51 @@ def _dashboard_mcp_token_ok(request) -> bool:
     return bool(token and supplied) and hmac.compare_digest(supplied, token)
 
 
+def _ingest_rate_ok(request) -> bool:
+    """Per-IP budget for the unauthenticated machine-ingest endpoints.
+
+    These accept writes with no session and (by default) no token, so a caller
+    that can reach the port can fill SQLite. `limit_request_size` bounds each
+    body; this bounds the rate. Keyed per IP, and per token when one is set, so
+    one noisy n8n instance cannot starve another.
+    """
+    from backend.ratelimit import client_ip
+
+    limiter = _get_ingest_limiter()
+    if limiter is None:
+        return True
+    token = request.headers.get("x-agd-webhook-token") or _bearer_token(request)
+    key = f"{client_ip(request)}|{hashlib.sha256(token.encode()).hexdigest()[:16] if token else '-'}"
+    return limiter.allow(key)
+
+
+_ingest_limiter = None
+_ingest_limiter_rate: int | None = None
+
+
+def _get_ingest_limiter():
+    """Build the ingest limiter lazily so AGD_INGEST_RATE is read after the
+    config overlay applies at startup. Returns None when disabled (rate 0)."""
+    global _ingest_limiter, _ingest_limiter_rate
+    from backend.ratelimit import TokenBucket
+
+    rate = int(settings.agd_ingest_rate or 0)
+    if rate <= 0:
+        return None
+    if _ingest_limiter is None or _ingest_limiter_rate != rate:
+        _ingest_limiter = TokenBucket(rate)
+        _ingest_limiter_rate = rate
+    return _ingest_limiter
+
+
+def _rate_limited_response():
+    return JSONResponse(
+        {"detail": "Ingest rate limit exceeded"},
+        status_code=429,
+        headers={"Retry-After": "60"},
+    )
+
+
 def _otel_token_ok(request) -> bool:
     """Validate the OTLP ingest token. Unset token = open (trusted-LAN only),
     same posture as the legacy webhooks. n8n sends it as an Authorization bearer
@@ -287,15 +354,19 @@ async def require_internal_api_auth(request, call_next):
     if path in _PUBLIC_API_EXACT or any(path.startswith(p) for p in _PUBLIC_API_PREFIXES):
         return await call_next(request)
     if path in _LEGACY_WEBHOOK_EXACT:
-        if _legacy_webhook_ok(request):
-            return await call_next(request)
-        return JSONResponse({"detail": "Invalid or missing webhook token"}, status_code=401)
+        if not _legacy_webhook_ok(request):
+            return JSONResponse({"detail": "Invalid or missing webhook token"}, status_code=401)
+        if not _ingest_rate_ok(request):
+            return _rate_limited_response()
+        return await call_next(request)
     if path in _OTEL_INGEST_EXACT:
         if not settings.agd_otel_enabled:
             return JSONResponse({"detail": "OTel receiver disabled (set AGD_OTEL_ENABLED=true)"}, status_code=404)
-        if _otel_token_ok(request):
-            return await call_next(request)
-        return JSONResponse({"detail": "Invalid or missing OTel token"}, status_code=401)
+        if not _otel_token_ok(request):
+            return JSONResponse({"detail": "Invalid or missing OTel token"}, status_code=401)
+        if not _ingest_rate_ok(request):
+            return _rate_limited_response()
+        return await call_next(request)
     if path in _SELF_AUTHENTICATING_EXACT:
         return await call_next(request)
 
@@ -362,7 +433,12 @@ async def csrf_protect(request, call_next):
     callers and unauthenticated/edge-only requests are not cookie-CSRF exposed,
     so they are skipped. On mismatch: 403.
     """
-    from backend.modules.auth.service import CSRF_COOKIE, CSRF_HEADER, SAFE_METHODS, SESSION_COOKIE
+    from backend.modules.auth.service import (
+        CSRF_COOKIE,
+        CSRF_HEADER,
+        SAFE_METHODS,
+        session_cookie_value,
+    )
 
     path = request.url.path
     # Auth bootstrap endpoints establish (or recover) the session, so they cannot
@@ -381,7 +457,7 @@ async def csrf_protect(request, call_next):
         and path.startswith("/api/")
         and not path.startswith("/api/v1/")
         and not csrf_exempt
-        and request.cookies.get(SESSION_COOKIE)
+        and session_cookie_value(request.cookies)
     ):
         auth = request.headers.get("authorization", "")
         has_api_key = bool(request.headers.get("x-api-key"))
@@ -461,8 +537,8 @@ async def websocket_endpoint(ws: WebSocket):
     # /ws. When login is disabled (open install) the gate is skipped.
     from backend.auth_gate import edge_identity, login_enforced
     if login_enforced() or settings.agd_require_auth:
-        from backend.modules.auth.service import SESSION_COOKIE, session_user
-        raw = ws.cookies.get(SESSION_COOKIE)
+        from backend.modules.auth.service import session_cookie_value, session_user
+        raw = session_cookie_value(ws.cookies)
         authed = bool(edge_identity(ws)) or bool(await session_user(raw))
         if not authed:
             await ws.close(code=1008)

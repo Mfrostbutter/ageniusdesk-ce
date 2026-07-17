@@ -51,6 +51,40 @@ TIMEOUT = 60.0
 # final tool-less summary round so the user still gets a useful response.
 MAX_TOOL_ROUNDS = 10
 
+
+async def _dispatch_tool(
+    tool_name: str,
+    args: dict,
+    mcp_tool_map: dict,
+    pending: list[dict],
+) -> str:
+    """Run one tool call, or turn it into a proposal for the operator to confirm.
+
+    Shared by the OpenAI-compatible and Anthropic tool loops so the confirmation
+    gate cannot be present on one provider path and missing on the other. When a
+    call is gated, the model gets a "not executed" notice back as the tool result
+    and `pending` collects the proposal for the response payload.
+    """
+    from backend.modules.assistant import approvals
+    from backend.modules.assistant.mcp_client import execute_tool as mcp_execute
+    from backend.modules.assistant.tools import execute_tool
+
+    info = mcp_tool_map.get(tool_name)
+    is_mcp = info is not None
+    server_id = (info or {}).get("server_id", "")
+    real_name = (info or {}).get("tool_name") or tool_name
+
+    if approvals.needs_confirmation(tool_name, is_mcp, info):
+        proposal = approvals.create(
+            tool_name, args, is_mcp=is_mcp, server_id=server_id, real_name=real_name,
+        )
+        pending.append(proposal)
+        return approvals.pending_notice(tool_name)
+
+    if is_mcp:
+        return await mcp_execute(server_id, real_name, args)
+    return await execute_tool(tool_name, args)
+
 # In-memory cache for live model listings. Keyed by provider name. Cached for
 # 5 minutes to avoid hammering the provider API on every dropdown open, while
 # still letting newly-released models show up within a reasonable window.
@@ -759,9 +793,8 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
     field (e.g. Perplexity); the model then answers directly with no tool loop.
     """
     from backend.config import get_active_instance_id
-    from backend.modules.assistant.mcp_client import execute_tool as mcp_execute
     from backend.modules.assistant.mcp_client import get_all_mcp_tools
-    from backend.modules.assistant.tools import TOOL_DEFINITIONS, execute_tool
+    from backend.modules.assistant.tools import TOOL_DEFINITIONS
 
     if tools_enabled:
         active_instance_id = get_active_instance_id()
@@ -770,6 +803,8 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
     else:
         mcp_tool_map = {}
         all_tools = []
+
+    pending: list[dict] = []
 
     headers = {
         "Authorization": f"Bearer {cfg['api_key']}",
@@ -819,11 +854,7 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
 
                         logger.info("Tool call: %s(%s)", tool_name, json.dumps(args)[:100])
 
-                        if tool_name in mcp_tool_map:
-                            server_id, real_name = mcp_tool_map[tool_name]
-                            result = await mcp_execute(server_id, real_name, args)
-                        else:
-                            result = await execute_tool(tool_name, args)
+                        result = await _dispatch_tool(tool_name, args, mcp_tool_map, pending)
 
                         all_messages.append({
                             "role": "tool",
@@ -852,6 +883,7 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
                         "input_tokens": total_usage["prompt_tokens"],
                         "output_tokens": total_usage["completion_tokens"],
                     },
+                    "pending_actions": pending,
                 }
 
         except httpx.HTTPStatusError as e:
@@ -912,6 +944,7 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
                     "input_tokens": total_usage["prompt_tokens"],
                     "output_tokens": total_usage["completion_tokens"],
                 },
+                "pending_actions": pending,
                 "truncated": True,
             }
     except Exception as e:
@@ -1003,12 +1036,12 @@ async def _chat_openai_responses(messages: list[dict], system: str, cfg: dict,
 async def _chat_anthropic(messages: list[dict], system: str, cfg: dict) -> dict[str, Any]:
     """Chat via Anthropic Messages API with tool use support."""
     from backend.config import get_active_instance_id
-    from backend.modules.assistant.mcp_client import execute_tool as mcp_execute
     from backend.modules.assistant.mcp_client import get_all_mcp_tools
-    from backend.modules.assistant.tools import TOOL_DEFINITIONS, execute_tool
+    from backend.modules.assistant.tools import TOOL_DEFINITIONS
 
     active_instance_id = get_active_instance_id()
     mcp_tools, mcp_tool_map = await get_all_mcp_tools(instance_id=active_instance_id)
+    pending: list[dict] = []
 
     # Convert OpenAI tool format to Anthropic tool format
     anthropic_tools = []
@@ -1073,11 +1106,7 @@ async def _chat_anthropic(messages: list[dict], system: str, cfg: dict) -> dict[
 
                         logger.info("Tool call: %s(%s)", tool_name, json.dumps(args)[:100])
 
-                        if tool_name in mcp_tool_map:
-                            server_id, real_name = mcp_tool_map[tool_name]
-                            result = await mcp_execute(server_id, real_name, args)
-                        else:
-                            result = await execute_tool(tool_name, args)
+                        result = await _dispatch_tool(tool_name, args, mcp_tool_map, pending)
 
                         tool_results.append({
                             "type": "tool_result",
@@ -1094,6 +1123,7 @@ async def _chat_anthropic(messages: list[dict], system: str, cfg: dict) -> dict[
                     "model": cfg["model"],
                     "provider": "anthropic",
                     "usage": total_usage,
+                    "pending_actions": pending,
                 }
 
         except httpx.HTTPStatusError as e:
@@ -1153,6 +1183,7 @@ async def _chat_anthropic(messages: list[dict], system: str, cfg: dict) -> dict[
                 "model": cfg["model"],
                 "provider": "anthropic",
                 "usage": total_usage,
+                "pending_actions": pending,
                 "truncated": True,
             }
     except Exception as e:

@@ -9,6 +9,7 @@ from typing import Any, Optional
 import httpx
 
 from backend.config import get_n8n_api_key, get_n8n_url
+from backend.net import tls_verify_for_instance
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,24 @@ def dockerize_url(url: str) -> str:
 
 
 def _verify() -> bool:
-    """TLS cert verification flag. Default on; flip off only for self-signed
-    LAN n8n via AGD_TLS_VERIFY=false. Pro-tier testers on public HTTPS n8n must
-    keep this on.
+    """TLS cert verification flag for the instance this call targets.
+
+    Resolves per instance: an instance with an explicit `tls_verify` uses it,
+    otherwise the global AGD_TLS_VERIFY applies (default on). That way one
+    self-signed LAN box is handled by turning verification off for that box,
+    instead of setting AGD_TLS_VERIFY=false and dropping cert checks fleet-wide.
+    Honors the `use_instance()` override, so a promote targeting a specific
+    instance gets that instance's setting.
     """
-    val = os.environ.get("AGD_TLS_VERIFY", "true").strip().lower()
-    return val not in ("0", "false", "no", "off")
+    from backend.config import get_active_instance
+    from backend.net import tls_verify_for_instance
+
+    try:
+        return tls_verify_for_instance(get_active_instance())
+    except Exception:
+        # Config unreadable — fall back to the global flag rather than failing
+        # the request; this is a transport detail, not the request's purpose.
+        return os.environ.get("AGD_TLS_VERIFY", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _headers() -> dict[str, str]:
@@ -261,8 +274,13 @@ async def test_connection() -> dict[str, Any]:
     return {"connected": False, "message": "Failed to connect to n8n"}
 
 
-async def test_connection_with(url: str, api_key: str) -> dict[str, Any]:
+async def test_connection_with(url: str, api_key: str, verify: bool | None = None) -> dict[str, Any]:
     """Test a specific n8n connection (used before saving a new instance).
+
+    `verify` overrides TLS verification for this probe. The instance is not saved
+    yet, so its tls_verify setting cannot be resolved from config — the caller
+    passes it through, otherwise a self-signed box would fail its own connect
+    test and never get added. None = the global default.
 
     Returns {"connected": bool, "error_class": str, "message": str}.
     error_class is one of: "ok", "dns", "auth", "notfound", "timeout", "generic".
@@ -279,8 +297,9 @@ async def test_connection_with(url: str, api_key: str) -> dict[str, Any]:
     except UnsafeProbeURL as exc:
         return {"connected": False, "error_class": "blocked", "message": f"URL not allowed: {exc}"}
     headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
+    tls = _verify() if verify is None else bool(verify)
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls) as client:
             resp = await client.get(f"{url.rstrip('/')}/api/v1/workflows", headers=headers, params={"limit": 1})
             if resp.status_code == 200:
                 return {"connected": True, "error_class": "ok", "message": "Connected to n8n"}
@@ -606,7 +625,8 @@ async def get_execution_raw_for(inst: dict, execution_id: str) -> dict[str, Any]
         return {}
     headers = {"X-N8N-API-KEY": api_key, "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        # Targets `inst`, not the active instance, so TLS resolves against it.
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
             resp = await client.get(
                 f"{url}/api/v1/executions/{execution_id}?includeData=true", headers=headers
             )

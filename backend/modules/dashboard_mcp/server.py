@@ -7,6 +7,7 @@ overhead and so they work correctly inside the same event loop.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from typing import Any
@@ -384,7 +385,9 @@ async def ping(authorization: str | None = Header(default=None)) -> dict[str, An
         return {"ok": True, "auth": "open", "endpoint": MCP_PATH}
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Bearer token required")
-    if authorization.removeprefix("Bearer ").strip() != token:
+    # Constant-time: a plain != leaks the token's prefix through response timing,
+    # and this endpoint exists precisely for someone poking at token setup.
+    if not hmac.compare_digest(authorization.removeprefix("Bearer ").strip(), token):
         raise HTTPException(status_code=403, detail="Invalid token")
     return {"ok": True, "auth": "ok", "endpoint": MCP_PATH}
 

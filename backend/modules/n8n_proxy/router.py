@@ -46,6 +46,10 @@ class InstanceRequest(BaseModel):
     # a compose-internal hostname (e.g. http://n8n-prod:5678 is only reachable
     # from the dashboard container — testers need the mapped host port).
     login_url: str = ""
+    # Per-instance TLS certificate verification. None = follow the global
+    # AGD_TLS_VERIFY (default on). Set False for a single self-signed LAN box so
+    # the rest of the fleet keeps verifying certs.
+    tls_verify: Optional[bool] = None
 
 
 class TriggerRequest(BaseModel):
@@ -126,9 +130,13 @@ async def create_instance(req: InstanceRequest, request: Request):
         "owner_password": req.owner_password,
         "login_url": login_url,
     }
+    # Only persist tls_verify when the operator was explicit. An absent key means
+    # "follow the global flag", which is what every existing instance does.
+    if req.tls_verify is not None:
+        inst["tls_verify"] = req.tls_verify
 
     # Test connection before saving
-    result = await client.test_connection_with(inst["url"], inst["api_key"])
+    result = await client.test_connection_with(inst["url"], inst["api_key"], verify=req.tls_verify)
     if not result["connected"]:
         raise HTTPException(
             status_code=400,
@@ -169,6 +177,8 @@ async def edit_instance(instance_id: str, req: InstanceRequest):
         "owner_password": req.owner_password,
         "login_url": req.login_url.rstrip("/") or (browser_url if backend_url != browser_url else ""),
     }
+    if req.tls_verify is not None:
+        updates["tls_verify"] = req.tls_verify
     if not update_instance(instance_id, updates):
         raise HTTPException(status_code=404, detail="Instance not found")
     return {"success": True}

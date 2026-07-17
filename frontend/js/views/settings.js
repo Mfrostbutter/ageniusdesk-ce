@@ -754,6 +754,21 @@ export async function renderMCP(el) {
           <div id="mcp-instances" style="margin-top:4px"></div>
           <small>Leave unchecked for all instances</small>
         </label>
+        <label>
+          Ask before running
+          <select id="mcp-confirm">
+            <option value="writes" selected>Tools that change something (recommended)</option>
+            <option value="all">Every tool</option>
+            <option value="none">Nothing — trust this server</option>
+          </select>
+          <small>
+            The assistant reads content you didn't write (n8n errors, RAG hits, tool output), so
+            an instruction hidden in there can make it call a tool you never asked for. Anything
+            that changes something waits for your click. Read-only lookups run inline, so building
+            a workflow stays uninterrupted. Pick <strong>Nothing</strong> only for a server that
+            can't mutate anything.
+          </small>
+        </label>
         <button type="submit" class="btn btn-primary">Add &amp; Test Connection</button>
       </form>
     </div>
@@ -835,6 +850,7 @@ export async function renderMCP(el) {
         token,
         description: document.getElementById('mcp-desc').value.trim(),
         instances,
+        confirm: document.getElementById('mcp-confirm').value,
       });
       toast.success(`Connected! ${result.tools_count} tools discovered.`);
       document.getElementById('add-mcp-card').classList.add('hidden');
@@ -849,6 +865,19 @@ export async function renderMCP(el) {
   loadAllTools();
 }
 
+// How much of this server the assistant may run unattended. "writes" is the
+// default and the one that matters: read-only lookups run inline, anything that
+// changes something waits for a click.
+function confirmPill(policy) {
+  const map = {
+    writes: ['neutral', 'Writes', 'Read-only tools run inline; anything that changes something asks first'],
+    all:    ['warning', 'Every tool', 'Every tool from this server asks first'],
+    none:   ['success', 'Nothing', 'Trusted: this server runs unattended'],
+  };
+  const [cls, label, title] = map[policy] || map.writes;
+  return `<span class="pill pill-${cls}" style="font-size:10px" title="${esc(title)}">${esc(label)}</span>`;
+}
+
 async function loadMCPList() {
   const el = document.getElementById('mcp-list');
   if (!el) return;
@@ -860,13 +889,14 @@ async function loadMCPList() {
       return;
     }
     el.innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>URL</th><th>Auth</th><th>Instances</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>URL</th><th>Auth</th><th>Instances</th><th>Ask first</th><th></th></tr></thead>
       <tbody>${servers.map(s => `
         <tr>
           <td style="font-weight:500">${esc(s.name)}</td>
           <td style="font-family:var(--font-mono);font-size:11px">${esc(s.url)}</td>
           <td><span class="pill pill-${s.token_hint ? 'success' : 'neutral'}" style="font-size:10px">${esc(s.token_hint || 'none')}</span></td>
           <td style="font-size:11px">${s.instances.length ? s.instances.length + ' assigned' : '<span style="color:var(--text-dim)">all</span>'}</td>
+          <td>${confirmPill(s.confirm)}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-ghost" onclick="window.__testMCP('${jsStr(s.id)}')">Test</button>
             <button class="btn btn-sm btn-ghost" onclick="window.__mcpTools('${jsStr(s.id)}','${jsStr(s.name)}')">Tools</button>

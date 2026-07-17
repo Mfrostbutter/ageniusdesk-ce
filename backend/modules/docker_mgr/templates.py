@@ -109,6 +109,12 @@ class Template:
     # a value, persisted under template_state namespace "bundle:<template_id>",
     # and threaded into spec configs via string substitution.
     auto_secrets: list[str] = field(default_factory=list)
+    # True for templates loaded from data/templates/ rather than authored in this
+    # file. Their HostConfig is validated at load AND again at deploy time
+    # (assert_deploy_safe), since only a community template can carry an authored
+    # HostConfig the operator never reviewed. Built-in templates legitimately
+    # declare named-volume Binds and are trusted.
+    community: bool = False
 
 
 def _rand_key(n: int = 32) -> str:
@@ -668,6 +674,23 @@ def _assert_safe_community_hostconfig(config: dict, where: str) -> None:
             raise UnsafeTemplateError(f"{where}: SecurityOpt {opt!r} is not allowed")
 
 
+def assert_deploy_safe(template: "Template", configs: list[dict]) -> None:
+    """Re-check a community template's HostConfig immediately before container
+    create, on the FULLY BUILT config rather than the authored file.
+
+    The load-time check already covers the authored JSON, and leaf-only
+    substitution cannot introduce structure, so today this can only pass. That is
+    the point: it is a cheap tripwire that fails the deploy — not the review —
+    if a future change to the builder, the substituter, or the bundle merge ever
+    starts synthesizing HostConfig keys. Built-in templates are code-authored and
+    legitimately use named-volume Binds, so they are exempt.
+    """
+    if not getattr(template, "community", False):
+        return
+    for i, config in enumerate(configs):
+        _assert_safe_community_hostconfig(config, f"deploy:{template.id}[{i}]")
+
+
 def _apply_subs(obj, subs: dict[str, str]):
     """Recursively substitute `{key}` placeholders in the STRING LEAVES of an
     already-parsed JSON structure.
@@ -883,6 +906,7 @@ def load_community_templates() -> list[Template]:
                 post_deploy_hooks=hooks,
                 bundle_id=bundle_id_marker,
                 auto_secrets=auto_secrets,
+                community=True,
             ))
         except Exception as exc:
             logger.warning("Skipping community template %s: %s", path.name, exc)

@@ -11,6 +11,7 @@ import { get, post, del, onEvent } from '../api.js';
 import { openTraceModal } from '../components/trace-waterfall.js';
 import { renderErrorItem } from '../components/error-item.js';
 import { getErrorLookback, setErrorLookback, lookbackOptionsHtml } from '../error-prefs.js';
+import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
 
 let unsub = null;
 
@@ -282,7 +283,12 @@ window.__askErrorAI = async function (btn) {
         </div>
       </div>
       <div style="color:var(--text-secondary)">${md}</div>
+      ${renderPendingActions(resp.pending_actions)}
     `;
+    // This is the sharpest injection surface in the app: the prompt embeds an
+    // n8n error message, which anyone who can make a workflow fail controls. A
+    // tool the model picked here did not run; it waits for a click.
+    attachApprovals(resultEl);
   } catch (e) {
     resultEl.innerHTML = `<span style="color:var(--error)">${esc(e.message)}</span>`;
   }
