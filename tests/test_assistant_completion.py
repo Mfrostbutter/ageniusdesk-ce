@@ -59,6 +59,51 @@ async def test_key_resolved_from_convention_secret(set_cfg, monkeypatch):
 
 
 @respx.mock
+async def test_key_resolved_from_job_api_key_ref(set_cfg, monkeypatch):
+    # Post-jobs config: no legacy global key, no convention secret. The key is a
+    # $REF chosen in Models and stored on the "assistant" job. The bridge must
+    # resolve it the same way chat does.
+    monkeypatch.setenv("OPEN_ROUTER_API_KEY", "sk-from-ref")
+    set_cfg(provider="openrouter", model="x/y", api_key="")
+    monkeypatch.setattr(completion, "get_job_config", lambda s: {
+        "provider": "openrouter", "model": "deepseek/deepseek-v4-flash",
+        "api_key_ref": "$OPEN_ROUTER_API_KEY",
+    })
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}))
+    text = await completion.complete("s", "u", max_tokens=500)
+    assert text == "ok"
+    assert route.calls.last.request.headers["authorization"] == "Bearer sk-from-ref"
+    # The job's model is the default when the caller names none.
+    assert json.loads(route.calls.last.request.content)["model"] == "deepseek/deepseek-v4-flash"
+
+
+@respx.mock
+async def test_provider_model_spec_switches_provider(set_cfg, monkeypatch):
+    # Module UIs send "provider::model" to switch provider for one run. The
+    # bridge must decode it and resolve THAT provider's key, not send the spec
+    # verbatim as a model id.
+    monkeypatch.setenv("ANTHROPIC_KEY", "sk-ant-test")
+    set_cfg(provider="openrouter", model="x/y", api_key="sk-or")
+    route = respx.post("https://api.anthropic.com/v1/messages").mock(
+        return_value=httpx.Response(200, json={"content": [{"type": "text", "text": "hi"}]}))
+    text = await completion.complete("s", "u", model="anthropic::claude-sonnet-4-20250514", max_tokens=500)
+    assert text == "hi"
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["model"] == "claude-sonnet-4-20250514"
+    assert route.calls.last.request.headers["x-api-key"] == "sk-ant-test"
+
+
+async def test_provider_model_spec_unconfigured_provider_errors(set_cfg):
+    # "openai::" with no OpenAI key anywhere -> a clear config error, not a
+    # provider call with an empty key.
+    set_cfg(provider="openrouter", model="x/y", api_key="sk-or")
+    with pytest.raises(completion.CompletionError) as exc:
+        await completion.complete("s", "u", model="openai::gpt-4o", max_tokens=500)
+    assert "not configured" in str(exc.value)
+
+
+@respx.mock
 async def test_retries_when_max_tokens_too_large(set_cfg):
     set_cfg(provider="openrouter", model="m", api_key="sk")
     respx.post("https://openrouter.ai/api/v1/chat/completions").mock(side_effect=[

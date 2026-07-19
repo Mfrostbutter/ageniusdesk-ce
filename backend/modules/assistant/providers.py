@@ -430,9 +430,11 @@ def _resolve_override(cfg: dict, override: dict | None) -> dict | str:
             name = PROVIDER_KEY_MAP.get(ov_provider)
             if not name:
                 return f"Unknown provider: {ov_provider}"
-            resolved = decrypt_value(f"${name}")
-            if not resolved or resolved == name:
-                # Fall back to the legacy global key when the provider matches.
+            # Convention secret, then any Models-area binding for this provider
+            # (operators name their secrets freely; the binding is the source of
+            # truth), then the legacy global key when the provider matches.
+            resolved = _resolve_provider_key(ov_provider)
+            if not resolved:
                 if ov_provider == prev_provider and cfg.get("api_key"):
                     resolved = cfg["api_key"]
                 else:
@@ -1251,17 +1253,39 @@ async def list_ollama_models(ollama_url: str = "") -> list[dict]:
 # ── Live model listing per provider ────────────────────────────────────────
 
 def _resolve_provider_key(provider: str) -> str:
-    """Resolve the conventional API key for a provider via secrets store.
+    """Resolve an API key for a provider when no explicit ref was given.
 
+    Operators name their secrets whatever they like, so the conventional name
+    ($OPEN_ROUTER_KEY etc.) is only the first stop, not a requirement:
+      1. the conventional secret for the provider,
+      2. any job (Models area) bound to this provider via api_key_ref — the
+         operator already told us which secret goes with this provider there,
+      3. the legacy global key when the saved global provider matches.
     Returns the plaintext key, or "" if unavailable.
     """
     name = PROVIDER_KEY_MAP.get(provider)
-    if not name:
-        return ""
-    resolved = decrypt_value(f"${name}")
-    if not resolved or resolved == name:
-        return ""
-    return resolved
+    if name:
+        resolved = decrypt_value(f"${name}")
+        if resolved and resolved != name:
+            return resolved
+    ai = load_config().get("assistant", {})
+    jobs = ai.get("jobs") if isinstance(ai.get("jobs"), dict) else {}
+    for j in jobs.values():
+        j = j or {}
+        if j.get("provider") != provider:
+            continue
+        ref = (j.get("api_key_ref") or "").strip()
+        if not ref:
+            continue
+        ref = ref if ref.startswith("$") else f"${ref}"
+        resolved = decrypt_value(ref)
+        if resolved and resolved != ref[1:]:
+            return resolved
+    if ai.get("provider") == provider:
+        legacy = decrypt_value(ai.get("api_key", ""))
+        if legacy:
+            return legacy
+    return ""
 
 
 def _key_fingerprint(key: str) -> str:

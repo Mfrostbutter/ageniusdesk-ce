@@ -36,9 +36,16 @@ def _safe_resolve(module_id: str, path: str) -> Path:
 # GET + HEAD: the frontend community-module loader probes the script URL with a
 # HEAD request before injecting it (see frontend community-modules.js), so a
 # GET-only route would 404 the probe and the module's JS would never load.
+#
+# CORS: community views run in a sandboxed iframe WITHOUT allow-same-origin, so
+# the frame's origin is opaque ("null") and its <script type="module"> fetch is
+# a CORS request. Without an Access-Control-Allow-Origin header the browser
+# blocks module.js and the view renders with dead JS. `*` is safe here: these
+# are the module's own shipped static assets, and opaque-origin subresource
+# requests never carry the session cookie.
 @router.api_route("/modules/{module_id}/static/{file_path:path}", methods=["GET", "HEAD"])
 async def serve_module_static(module_id: str, file_path: str):
     target = _safe_resolve(module_id, file_path)
     if not target.is_file():
         raise HTTPException(status_code=404, detail="not_found")
-    return FileResponse(target)
+    return FileResponse(target, headers={"Access-Control-Allow-Origin": "*"})
