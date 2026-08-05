@@ -269,6 +269,9 @@ async def deploy_bundle(
         result = template.build(field_values)
         specs = bundle_mod.normalise_build_result(result, fallback_name=raw_instance)
         bundle_mod.validate_bundle(specs)
+        # Belt-and-suspenders: re-assert the host-escape rules on the built
+        # configs, not just the authored template file. No-op for built-ins.
+        tmpl.assert_deploy_safe(template, [s.config for s in specs])
         ordered = bundle_mod.topological_sort(specs)
         total = len(ordered)
 
@@ -611,6 +614,9 @@ async def deploy(
             )
 
         container_config, volume_names = template.build(field_values)
+        # Belt-and-suspenders: re-assert the host-escape rules on the built
+        # config, not just the authored template file. No-op for built-ins.
+        tmpl.assert_deploy_safe(template, [container_config])
 
         if template_id == "n8n" and had_persisted_key:
             await step(

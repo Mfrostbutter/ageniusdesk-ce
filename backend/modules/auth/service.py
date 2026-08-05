@@ -35,9 +35,21 @@ ALGO = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 600_000
 LEGACY_ITERATIONS = 100_000  # pre-this-spec users default
 
+# The session cookie has two names. `__Host-agd_session` is issued over HTTPS:
+# the prefix is a browser-enforced promise that the cookie is Secure, Path=/, and
+# host-locked (no Domain), so a sibling subdomain cannot plant one. Browsers
+# reject the prefix over plain HTTP, so a localhost/HTTP install keeps the legacy
+# name. Readers must accept either — use session_cookie_value(), never index
+# cookies by one name.
 SESSION_COOKIE = "agd_session"
+HOST_SESSION_COOKIE = "__Host-agd_session"
 CSRF_COOKIE = "agd_csrf"
 CSRF_HEADER = "x-agd-csrf"
+
+
+def session_cookie_value(cookies) -> str | None:
+    """Read the session cookie under either name, preferring the __Host- one."""
+    return cookies.get(HOST_SESSION_COOKIE) or cookies.get(SESSION_COOKIE)
 
 ROLE_ORDER = {"viewer": 1, "operator": 2, "admin": 3}
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -353,18 +365,32 @@ def issue_csrf_cookie(response: Response, request: Request) -> str:
 
 
 def set_session_cookies(response: Response, request: Request, raw: str) -> str:
-    """Set the HttpOnly session cookie + a readable CSRF cookie. Returns csrf."""
+    """Set the HttpOnly session cookie + a readable CSRF cookie. Returns csrf.
+
+    Over HTTPS the session cookie is issued under the `__Host-` prefix, which
+    browsers only accept when it is Secure, Path=/, and carries no Domain. That
+    makes it un-settable by a sibling subdomain, closing the session-fixation
+    path where evil.example.com plants a cookie for app.example.com. Over plain
+    HTTP the prefix is not permitted at all, so the legacy name is used and the
+    reader accepts both — an existing session survives the upgrade, and a
+    localhost install keeps working.
+    """
     secure = _is_https(request)
     max_age = settings.agd_session_ttl_days * 86400
     response.set_cookie(
-        SESSION_COOKIE, raw, max_age=max_age, httponly=True,
+        HOST_SESSION_COOKIE if secure else SESSION_COOKIE,
+        raw, max_age=max_age, httponly=True,
         samesite="strict", secure=secure, path="/",
     )
+    if secure:
+        # Retire any legacy-named cookie so the two cannot drift apart.
+        response.delete_cookie(SESSION_COOKIE, path="/")
     return issue_csrf_cookie(response, request)
 
 
 def clear_session_cookies(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(HOST_SESSION_COOKIE, path="/")
     response.delete_cookie(CSRF_COOKIE, path="/")
 
 
@@ -374,22 +400,32 @@ _failures: dict[str, list[float]] = {}
 _lockouts: dict[str, float] = {}
 
 
-def _keys(username: str, ip: str) -> list[str]:
-    return [f"u:{username}", f"ip:{ip}"]
+def _keys(username: str, ip: str, stage: str = "password") -> list[str]:
+    """Throttle keys for one auth stage.
+
+    Password and TOTP get separate counters. Each stage still has its own hard
+    attempt ceiling — which is the property S3 required, and it is preserved:
+    a wrong-code loop trips the TOTP lockout rather than running unbounded. What
+    separation buys is that the two stages stop bleeding into each other. An
+    attacker who holds the password can no longer burn down the victim's
+    password-login budget by failing at the TOTP prompt, and a user fumbling
+    their authenticator does not get locked out of the password step too.
+    """
+    return [f"{stage}:u:{username}", f"{stage}:ip:{ip}"]
 
 
-def throttle_blocked(username: str, ip: str) -> bool:
+def throttle_blocked(username: str, ip: str, stage: str = "password") -> bool:
     now = time.time()
-    for k in _keys(username, ip):
+    for k in _keys(username, ip, stage):
         until = _lockouts.get(k, 0)
         if until and now < until:
             return True
     return False
 
 
-def throttle_record_failure(username: str, ip: str) -> None:
+def throttle_record_failure(username: str, ip: str, stage: str = "password") -> None:
     now = time.time()
-    for k in _keys(username, ip):
+    for k in _keys(username, ip, stage):
         window = [t for t in _failures.get(k, []) if now - t < settings.agd_login_lockout_minutes * 60]
         window.append(now)
         _failures[k] = window
@@ -397,8 +433,8 @@ def throttle_record_failure(username: str, ip: str) -> None:
             _lockouts[k] = now + settings.agd_login_lockout_minutes * 60
 
 
-def throttle_reset(username: str, ip: str) -> None:
-    for k in _keys(username, ip):
+def throttle_reset(username: str, ip: str, stage: str = "password") -> None:
+    for k in _keys(username, ip, stage):
         _failures.pop(k, None)
         _lockouts.pop(k, None)
 
@@ -414,6 +450,26 @@ def forgot_blocked(ip: str) -> bool:
 def forgot_record(ip: str) -> None:
     now = time.time()
     k = f"forgot-ip:{ip}"
+    window = [t for t in _failures.get(k, []) if now - t < settings.agd_login_lockout_minutes * 60]
+    window.append(now)
+    _failures[k] = window
+    if len(window) >= settings.agd_login_max_attempts:
+        _lockouts[k] = now + settings.agd_login_lockout_minutes * 60
+
+
+# Reset-token consumption (/reset) throttle. Same shape as /forgot and keyed
+# only on a namespaced IP for the same reasons. The tokens are 32+ bytes of
+# urandom, so this is not what stops a guessing attack — it stops an unbounded
+# grind against the endpoint (and the argon2 hash behind a valid one) from being
+# free. Only FAILED consumes are recorded, so a legitimate reset never counts.
+def reset_blocked(ip: str) -> bool:
+    until = _lockouts.get(f"reset-ip:{ip}", 0)
+    return bool(until and time.time() < until)
+
+
+def reset_record_failure(ip: str) -> None:
+    now = time.time()
+    k = f"reset-ip:{ip}"
     window = [t for t in _failures.get(k, []) if now - t < settings.agd_login_lockout_minutes * 60]
     window.append(now)
     _failures[k] = window

@@ -32,8 +32,15 @@ async def insert_spans(rows: list[dict]) -> int:
     return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else len(rows)
 
 
-async def prune(retention_hours: int, max_spans: int) -> None:
-    """Enforce both retention bounds: age first, then the hard row cap."""
+async def prune(retention_hours: int, max_spans: int, incoming: int = 0) -> None:
+    """Enforce both retention bounds: age first, then the hard row cap.
+
+    ``incoming`` reserves headroom for rows about to be inserted, so the caller
+    can prune BEFORE writing. Pruning only afterwards means the table transiently
+    holds max_spans + batch rows, which an unauthenticated flood can drive
+    arbitrarily high between prunes; reserving headroom keeps the cap a real
+    ceiling rather than a target the table oscillates around.
+    """
     db = await get_db()
     if retention_hours and retention_hours > 0:
         await db.execute(
@@ -41,10 +48,13 @@ async def prune(retention_hours: int, max_spans: int) -> None:
             (f"-{int(retention_hours)} hours",),
         )
     if max_spans and max_spans > 0:
+        # Never prune the table to nothing to fit one oversized batch: keep at
+        # least half the cap of existing history and let the insert overshoot.
+        keep = max(int(max_spans) - int(incoming), int(max_spans) // 2)
         await db.execute(
             "DELETE FROM otel_spans WHERE id NOT IN "
             "(SELECT id FROM otel_spans ORDER BY id DESC LIMIT ?)",
-            (int(max_spans),),
+            (keep,),
         )
     await db.commit()
 

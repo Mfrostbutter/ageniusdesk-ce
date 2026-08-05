@@ -5,6 +5,7 @@
 
 import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
+import { attachApprovals, hasPendingActions, renderPendingActions } from '../components/tool-approval.js';
 
 let editor = null;
 let monacoLoaded = false;
@@ -1337,6 +1338,17 @@ async function askAI(question) {
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
     }
+
+    // Tools that would change something did NOT run — they are proposed here for
+    // approval. Read-only MCP lookups (search_nodes, validate_workflow, ...) run
+    // inline and never reach this, so authoring stays friction-free; only the
+    // live-instance calls stop for a click.
+    const approvals = renderPendingActions(result.pending_actions);
+    if (approvals) {
+      messagesEl.innerHTML += approvals;
+      attachApprovals(messagesEl);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
   } catch (e) {
     document.getElementById(typingId)?.remove();
     const msg = e.message || 'Request failed';
@@ -1406,6 +1418,16 @@ async function pbDraftWithAI(desc, statusEl, draftBtn) {
       surface: 'codelab',
     });
     const response = result.response || '';
+    // This drafter has no chat pane to host an approval card, and it should
+    // never need one: it asks for JSON, not for actions. If the model proposed a
+    // state-changing tool anyway, say so rather than dropping it on the floor —
+    // silence here would hide exactly the prompt-injection case the gate exists
+    // for. The proposal expires unconfirmed, so nothing runs either way.
+    if (hasPendingActions(result)) {
+      const names = result.pending_actions.map(p => p.tool).join(', ');
+      statusEl.innerHTML = `<span style="color:var(--warning, #fbbf24)">The model tried to run ${esc(names)} while drafting. It was blocked and not run. Use the chat panel if you meant to do that.</span>`;
+      return;
+    }
     const match = response.match(/\{[\s\S]*\}/);
     if (!match) {
       statusEl.innerHTML = `<span style="color:var(--warning, #fbbf24)">Model did not return JSON. Try a more specific description.</span>`;

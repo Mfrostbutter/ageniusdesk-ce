@@ -16,6 +16,7 @@
 
 import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
+import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
 
 const PROVIDER_KEY_CONVENTIONS = {
   anthropic: 'ANTHROPIC_KEY',
@@ -193,6 +194,7 @@ function renderMessage(m) {
     <div style="margin-bottom:10px">
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);margin-bottom:2px">${esc(label)}</div>
       <div style="background:${bg};padding:8px 10px;border-radius:6px">${fmtMarkdown(m.content)}</div>
+      ${renderPendingActions(m.pending)}
     </div>
   `;
 }
@@ -223,6 +225,9 @@ function wire(container) {
     saveState();
     document.getElementById('dock-messages').innerHTML = renderMessages();
   });
+
+  // Approval cards manage themselves; the dock only has to delegate to them.
+  attachApprovals(container.querySelector('#dock-messages'));
 
   openFull.addEventListener('click', () => {
     if (window.__goSettings) window.__goSettings('assistant');
@@ -440,6 +445,7 @@ async function sendMessage(text) {
       role: 'assistant',
       content: response,
       served_by: result.served_by || '',
+      pending: result.pending_actions || [],
     });
     saveState();
     messagesEl.innerHTML = renderMessages();

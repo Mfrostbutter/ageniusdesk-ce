@@ -17,6 +17,7 @@
 
 import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
+import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
 
 let chatHistory = [];
 let isConfigured = false;
@@ -836,6 +837,11 @@ async function sendMessage(text) {
     }
 
     messagesEl.innerHTML += renderMessage('assistant', response, result.model);
+    // Any state-changing tool the model picked did NOT run — it is proposed here
+    // for the operator to approve. Rendering these is not optional: a surface
+    // that drops them leaves the assistant claiming actions that never happened.
+    messagesEl.innerHTML += renderPendingActions(result.pending_actions);
+    attachApprovals(messagesEl);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   } catch (e) {
     document.getElementById(typingId)?.remove();

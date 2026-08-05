@@ -21,10 +21,13 @@ import httpx
 
 from backend.config import decrypt_value
 from backend.modules.assistant.providers import (
+    DEFAULT_JOB,
     OPENAI_COMPAT_PROVIDERS,
     PROVIDER_KEY_MAP,
     _custom_base_url,
+    _resolve_override,
     get_assistant_config,
+    get_job_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,18 +45,32 @@ class CompletionError(RuntimeError):
 def _resolved_config() -> dict:
     """Saved assistant config with the provider key resolved host-side.
 
-    When the global assistant has no stored key (operators often set it per-area
-    as a $REF), fall back to the conventional provider secret, the same way the
-    assistant's own resolution does. The key stays on the host.
+    Since the per-job migration the key normally lives on the "assistant" job as
+    an api_key_ref chosen in Models, not on the legacy global api_key field, so
+    resolve through the job the same way the chat path does. When that fails
+    (pre-jobs config, deleted ref), fall back to the legacy global key or the
+    conventional provider secret. The key stays on the host either way.
     """
     cfg = dict(get_assistant_config())
+    try:
+        job = get_job_config(DEFAULT_JOB)
+        resolved = _resolve_override(cfg, {
+            "provider": job.get("provider"),
+            "model": job.get("model"),
+            "api_key_ref": job.get("api_key_ref"),
+        })
+        if isinstance(resolved, dict):
+            return resolved
+        logger.warning("assistant job key resolution failed (%s); trying legacy config", resolved)
+    except Exception:
+        logger.exception("assistant job resolution failed; trying legacy config")
     provider = cfg.get("provider", "")
     if provider != "ollama" and not cfg.get("api_key"):
         name = PROVIDER_KEY_MAP.get(provider)
         if name:
-            resolved = decrypt_value(f"${name}")
-            if resolved and resolved != name:
-                cfg["api_key"] = resolved
+            fallback = decrypt_value(f"${name}")
+            if fallback and fallback != name:
+                cfg["api_key"] = fallback
     return cfg
 
 
@@ -68,11 +85,23 @@ def _parse_supported_max(body: str) -> int | None:
 async def complete(system: str, user: str, *, model: str = "", max_tokens: int = MAX_TOKENS) -> str:
     """Run one tool-free completion against the operator-configured provider.
 
-    `model` overrides the saved default for this call. Retries with a lower
-    max_tokens if the provider rejects it as too large. Raises CompletionError on
-    misconfiguration or an unrecoverable provider failure.
+    `model` overrides the saved default for this call. It accepts either a bare
+    model id, or the "provider::model" spec module UIs send to switch provider
+    for one run (model part optional: "openrouter::" means that provider's
+    default). The provider's key is resolved host-side either way. Retries with
+    a lower max_tokens if the provider rejects it as too large. Raises
+    CompletionError on misconfiguration or an unrecoverable provider failure.
     """
     cfg = _resolved_config()
+    model = (model or "").strip()
+    if "::" in model:
+        ov_provider, _, ov_model = model.partition("::")
+        resolved = _resolve_override(
+            cfg, {"provider": ov_provider.strip(), "model": ov_model.strip() or None})
+        if isinstance(resolved, str):
+            raise CompletionError(resolved)
+        cfg = resolved
+        model = (cfg.get("model") or "").strip()
     provider = cfg.get("provider", "")
     model = (model or cfg.get("model") or "").strip()
     api_key = cfg.get("api_key") or ""

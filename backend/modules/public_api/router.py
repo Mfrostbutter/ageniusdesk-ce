@@ -16,10 +16,24 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from .auth import require_scope, verify_api_key
+from .auth import assert_resource_allowed, require_scope, verify_api_key
 
 # No prefix — the sub-app is mounted at /api/v1 which provides it.
 router = APIRouter(tags=["public-api-v1"])
+
+
+def _assert_instance(key: dict) -> str:
+    """Enforce the key's allowed_instances against the instance it would hit.
+
+    Every n8n route here resolves to the currently active instance, so a key
+    scoped to one instance must not act when a different one happens to be
+    active. Returns the resolved instance id.
+    """
+    from backend.config import get_active_instance_id
+
+    active = get_active_instance_id() or ""
+    assert_resource_allowed(key, "allowed_instances", active)
+    return active
 
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
@@ -43,11 +57,12 @@ async def v1_status(_key: dict = Depends(require_scope("read"))):
 
 
 @router.get("/n8n/instances")
-async def v1_list_instances(_key: dict = Depends(require_scope("read"))):
+async def v1_list_instances(key: dict = Depends(require_scope("read"))):
     """List configured n8n instances (no API keys exposed)."""
     from backend.config import get_active_instance_id, get_instances
     instances = get_instances()
     active_id = get_active_instance_id()
+    allowed = key.get("allowed_instances") or []
     return {
         "instances": [
             {
@@ -56,6 +71,7 @@ async def v1_list_instances(_key: dict = Depends(require_scope("read"))):
                 "active": i["id"] == active_id,
             }
             for i in instances
+            if not allowed or i["id"] in allowed
         ]
     }
 
@@ -66,7 +82,7 @@ async def v1_list_workflows(
     name_contains: str = "",
     limit: int = 50,
     cursor: str = "",
-    _key: dict = Depends(require_scope("read")),
+    key: dict = Depends(require_scope("read")),
 ):
     """List workflows from the active n8n instance."""
     from backend.config import is_configured
@@ -74,13 +90,21 @@ async def v1_list_workflows(
 
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instances configured")
-    return await client.list_workflows(active_only, name_contains, limit, cursor)
+    _assert_instance(key)
+    result = await client.list_workflows(active_only, name_contains, limit, cursor)
+    # A workflow-scoped key must not enumerate the rest of the fleet's workflows.
+    allowed = key.get("allowed_workflows") or []
+    if allowed:
+        result["workflows"] = [
+            w for w in result.get("workflows", []) if str(w.get("id", "")) in allowed
+        ]
+    return result
 
 
 @router.get("/n8n/workflows/{workflow_id}")
 async def v1_get_workflow(
     workflow_id: str,
-    _key: dict = Depends(require_scope("read")),
+    key: dict = Depends(require_scope("read")),
 ):
     """Get a single workflow by ID."""
     from backend.config import is_configured
@@ -88,6 +112,8 @@ async def v1_get_workflow(
 
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instances configured")
+    _assert_instance(key)
+    assert_resource_allowed(key, "allowed_workflows", workflow_id)
     result = await client.get_workflow(workflow_id)
     if not result:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -100,7 +126,7 @@ async def v1_list_executions(
     status: str = "",
     limit: int = 20,
     cursor: str = "",
-    _key: dict = Depends(require_scope("read")),
+    key: dict = Depends(require_scope("read")),
 ):
     """List recent workflow executions."""
     from backend.config import is_configured
@@ -108,13 +134,24 @@ async def v1_list_executions(
 
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instances configured")
+    _assert_instance(key)
+    allowed = key.get("allowed_workflows") or []
+    if allowed:
+        # An unfiltered listing would return every workflow's executions, so a
+        # workflow-scoped key must name one of its own.
+        if not workflow_id:
+            raise HTTPException(
+                status_code=400,
+                detail="This API key is workflow-scoped; pass workflow_id",
+            )
+        assert_resource_allowed(key, "allowed_workflows", workflow_id)
     return await client.list_executions(workflow_id, status, limit, cursor)
 
 
 @router.get("/n8n/executions/{execution_id}")
 async def v1_get_execution(
     execution_id: str,
-    _key: dict = Depends(require_scope("read")),
+    key: dict = Depends(require_scope("read")),
 ):
     """Get a single execution by ID."""
     from backend.config import is_configured
@@ -122,8 +159,15 @@ async def v1_get_execution(
 
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instances configured")
+    _assert_instance(key)
     result = await client.get_execution(execution_id)
     if not result:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    # Execution ids are opaque, so the workflow check can only happen after the
+    # fetch. A 404 rather than a 403: a workflow-scoped key should not learn that
+    # an execution it may not read exists.
+    allowed = key.get("allowed_workflows") or []
+    if allowed and str(result.get("workflow_id", "")) not in allowed:
         raise HTTPException(status_code=404, detail="Execution not found")
     return result
 
@@ -134,13 +178,20 @@ async def v1_list_errors(
     offset: int = 0,
     workflow_id: str = "",
     range: str = "",
-    _key: dict = Depends(require_scope("read")),
+    key: dict = Depends(require_scope("read")),
 ):
     """List recent workflow errors (paginated)."""
-    from backend.config import get_active_instance_id
     from backend.modules.errors import collector
 
-    scope = get_active_instance_id() or ""
+    scope = _assert_instance(key)
+    allowed = key.get("allowed_workflows") or []
+    if allowed:
+        if not workflow_id:
+            raise HTTPException(
+                status_code=400,
+                detail="This API key is workflow-scoped; pass workflow_id",
+            )
+        assert_resource_allowed(key, "allowed_workflows", workflow_id)
     errors = await collector.get_errors(limit, offset, workflow_id, range, scope)
     count_24h = await collector.get_error_count_24h(scope)
     return {"errors": errors, "count_24h": count_24h}
@@ -157,7 +208,7 @@ class _TriggerRequest(BaseModel):
 async def v1_trigger_workflow(
     workflow_id: str,
     req: _TriggerRequest = _TriggerRequest(),
-    _key: dict = Depends(require_scope("trigger")),
+    key: dict = Depends(require_scope("trigger")),
 ):
     """Trigger a workflow by ID. Requires trigger-scoped API key."""
     from backend.config import is_configured
@@ -165,6 +216,8 @@ async def v1_trigger_workflow(
 
     if not is_configured():
         raise HTTPException(status_code=503, detail="No n8n instances configured")
+    _assert_instance(key)
+    assert_resource_allowed(key, "allowed_workflows", workflow_id)
     return await client.trigger_workflow(workflow_id, req.payload)
 
 

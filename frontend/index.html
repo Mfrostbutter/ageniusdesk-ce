@@ -207,6 +207,16 @@
           <div id="setup-key-field"></div>
           <small style="display:block;margin-top:4px;color:var(--text-dim)"><a href="https://docs.n8n.io/api/authentication/" target="_blank">How to create an API key</a>. n8n Settings &rarr; API &rarr; Create API Key</small>
         </div>
+        <!-- Shown only for an https:// URL: a self-signed cert is the only reason
+             to turn this off, and it scopes to THIS instance so the rest of the
+             fleet keeps verifying. -->
+        <div id="setup-tls-row" style="display:none;margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+            <input type="checkbox" id="setup-tls-verify" checked style="width:auto;margin:0">
+            Verify the TLS certificate
+          </label>
+          <small style="display:block;margin-top:4px;color:var(--text-dim)">Uncheck only for a self-signed cert on a trusted LAN. Applies to this instance alone.</small>
+        </div>
         <div style="display:flex;gap:8px;margin-top:14px">
           <button type="button" class="btn" id="setup-cancel" style="flex:1;justify-content:center" onclick="window.__closeSetupModal()">Cancel</button>
           <button type="submit" class="btn btn-primary" id="setup-submit" style="flex:1;justify-content:center">Connect</button>

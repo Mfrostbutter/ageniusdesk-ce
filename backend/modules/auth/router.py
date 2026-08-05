@@ -176,6 +176,7 @@ async def login(body: LoginBody, request: Request, response: Response):
         # second factor passes. Resetting here would let an attacker who holds
         # the password loop password->pending->guess with the failure counter
         # cleared every round, giving the TOTP code no attempt ceiling (S3).
+        # The ceiling now lives on the TOTP stage's own counter (see _keys).
         return {"totp_required": True, "pending_token": service.make_pending(username)}
 
     service.throttle_reset(username, ip)
@@ -190,15 +191,17 @@ async def login_totp(body: TotpLoginBody, request: Request, response: Response):
     username = service.consume_pending(body.pending_token)
     if not username:
         raise HTTPException(status_code=401, detail="Expired or invalid 2FA challenge")
-    # Rate-limit the second factor on the same username+IP counter as the password
-    # step, so a wrong-code loop trips the lockout instead of running unbounded (S3).
-    if service.throttle_blocked(username, ip):
+    # The second factor gets its own username+IP counter: a wrong-code loop still
+    # trips a lockout instead of running unbounded (S3), but it no longer shares
+    # a budget with the password step in either direction.
+    if service.throttle_blocked(username, ip, stage="totp"):
         raise HTTPException(status_code=429, detail="Too many attempts; try again later")
     ok, remaining = service.verify_second_factor(username, body.code)
     if not ok:
-        service.throttle_record_failure(username, ip)
+        service.throttle_record_failure(username, ip, stage="totp")
         raise HTTPException(status_code=401, detail="Invalid code")
-    service.throttle_reset(username, ip)
+    service.throttle_reset(username, ip, stage="totp")
+    service.throttle_reset(username, ip)  # login complete — clear the password stage too
     user = service.find_user(username)
     raw = await service.create_session(username, request)
     service.set_session_cookies(response, request, raw)
@@ -239,10 +242,14 @@ async def forgot_password(body: ForgotBody, request: Request):
 
 
 @router.post("/reset")
-async def reset_password(body: ResetBody):
+async def reset_password(body: ResetBody, request: Request):
     """Complete password recovery with a single-use token."""
+    ip = service._client_ip(request)
+    if service.reset_blocked(ip):
+        raise HTTPException(status_code=429, detail="Too many attempts; try again later")
     username = await service.consume_reset_token(body.token)
     if not username:
+        service.reset_record_failure(ip)
         raise HTTPException(status_code=400, detail="This reset link is invalid or has expired")
     _validate_password(body.new_password)
     service.set_password(username, body.new_password)
@@ -257,7 +264,7 @@ async def reset_password(body: ResetBody):
 
 @router.post("/logout")
 async def logout(request: Request, response: Response, _u: dict = Depends(require_session)):
-    raw = request.cookies.get(service.SESSION_COOKIE)
+    raw = service.session_cookie_value(request.cookies)
     await service.revoke_session(raw)
     service.clear_session_cookies(response)
     return {"success": True}
@@ -282,7 +289,7 @@ async def change_password(body: PasswordBody, request: Request, user: dict = Dep
     _validate_password(body.new_password)
     service.set_password(user["username"], body.new_password)
     # Invalidate every other session for this account.
-    raw = request.cookies.get(service.SESSION_COOKIE)
+    raw = service.session_cookie_value(request.cookies)
     await service.revoke_all_for_user(user["username"], keep_raw=raw)
     return {"success": True}
 
@@ -316,7 +323,7 @@ async def totp_disable(body: DisableTotpBody, user: dict = Depends(require_sessi
 
 @router.get("/sessions")
 async def sessions(request: Request, user: dict = Depends(require_session)):
-    raw = request.cookies.get(service.SESSION_COOKIE)
+    raw = service.session_cookie_value(request.cookies)
     return {"sessions": await service.list_sessions(user["username"], raw)}
 
 

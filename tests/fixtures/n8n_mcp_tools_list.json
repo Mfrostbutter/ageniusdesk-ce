@@ -1,0 +1,223 @@
+{
+  "_source": "live tools/list from n8n-documentation-mcp 2.59.2 (docs mode), captured 2026-07-17",
+  "_why": "Pins what the real server actually declares, so the gate's classification is tested against the server it will meet in production rather than a guess.",
+  "server": "n8n-documentation-mcp",
+  "version": "2.59.2",
+  "mode": "docs",
+  "tools": [
+    {
+      "name": "get_node",
+      "annotations": {
+        "title": "Get Node Info",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "get_template",
+      "annotations": {
+        "title": "Get Template",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "n8n_audit_instance",
+      "annotations": {
+        "title": "Audit Instance Security",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_autofix_workflow",
+      "annotations": {
+        "title": "Autofix Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_create_workflow",
+      "annotations": {
+        "title": "Create Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_delete_workflow",
+      "annotations": {
+        "title": "Delete Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_deploy_template",
+      "annotations": {
+        "title": "Deploy Template",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_executions",
+      "annotations": {
+        "title": "Manage Executions",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_generate_workflow",
+      "annotations": {
+        "title": "Generate Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_get_workflow",
+      "annotations": {
+        "title": "Get Workflow",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_health_check",
+      "annotations": {
+        "title": "Health Check",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_list_workflows",
+      "annotations": {
+        "title": "List Workflows",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_manage_credentials",
+      "annotations": {
+        "title": "Manage Credentials",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_manage_datatable",
+      "annotations": {
+        "title": "Manage Data Tables",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_test_workflow",
+      "annotations": {
+        "title": "Test Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_update_full_workflow",
+      "annotations": {
+        "title": "Update Full Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_update_partial_workflow",
+      "annotations": {
+        "title": "Update Partial Workflow",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_validate_workflow",
+      "annotations": {
+        "title": "Validate Workflow",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "n8n_workflow_versions",
+      "annotations": {
+        "title": "Workflow Versions",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "search_nodes",
+      "annotations": {
+        "title": "Search Nodes",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "search_templates",
+      "annotations": {
+        "title": "Search Templates",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "tools_documentation",
+      "annotations": {
+        "title": "Tools Documentation",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "validate_node",
+      "annotations": {
+        "title": "Validate Node Config",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "validate_workflow",
+      "annotations": {
+        "title": "Validate Workflow",
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    }
+  ]
+}

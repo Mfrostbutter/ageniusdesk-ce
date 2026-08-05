@@ -89,6 +89,18 @@ def _register(url: str, token: str, mode: str) -> None:
         "instances": [],
         "managed": "n8n-mcp",  # marks this as dashboard-managed (not operator-added)
         "mode": mode,
+        # Assistant confirmation policy. Always "writes", including in docs mode.
+        # Docs mode has no N8N_API_URL/KEY, but it still ADVERTISES the whole
+        # live-instance tool set (n8n_create_workflow, n8n_delete_workflow,
+        # n8n_manage_credentials, ...) on tools/list — verified against
+        # n8n-documentation-mcp 2.59.2. So "docs mode cannot mutate anything" is
+        # not a safe inference from the mode alone, and trusting the server
+        # wholesale would hand an injected model those tools.
+        # This costs nothing: the server annotates every tool with readOnlyHint,
+        # so under "writes" the node-knowledge tools (search_nodes, get_node,
+        # validate_workflow, ...) still run inline with no prompt. Only the tools
+        # the server itself declares as writes stop for a click.
+        "confirm": mcp_client.CONFIRM_WRITES,
     })
     mcp_client.save_mcp_servers(servers)
 

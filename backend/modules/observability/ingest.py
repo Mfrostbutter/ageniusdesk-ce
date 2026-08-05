@@ -26,6 +26,35 @@ _STATUS = {0: "UNSET", 1: "OK", 2: "ERROR"}
 # ingest so names render correctly.
 _MOJIBAKE_MARKERS = ("Ã", "â€", "Â", "ð\x9f")
 
+# Cap on the serialized attribute blob stored per span. The full set is kept
+# verbatim so nothing is lost while the n8n schema settles, but "verbatim" from a
+# machine-ingest endpoint that is unauthenticated by default needs a ceiling:
+# without one, a single accepted request can write megabytes per span. Real n8n
+# spans are a few hundred bytes; 16 KiB is far past any legitimate one.
+_MAX_ATTRS_CHARS = 16384
+
+
+def _encode_attrs(merged: dict) -> str:
+    """Serialize a span's attributes, truncating an implausibly large set.
+
+    On overflow we keep the small scalar attributes (the ones the UI and the
+    health/cost enrichers actually read by key) and drop the bulk, rather than
+    truncating the JSON text into something that will not parse.
+    """
+    blob = json.dumps(merged, default=str)
+    if len(blob) <= _MAX_ATTRS_CHARS:
+        return blob
+    kept: dict = {}
+    for k, v in merged.items():
+        if isinstance(v, (int, float, bool)) or (isinstance(v, str) and len(v) <= 512):
+            kept[k] = v
+        if len(json.dumps(kept, default=str)) > _MAX_ATTRS_CHARS:
+            del kept[k]
+            break
+    kept["_agd_truncated"] = True
+    logger.warning("otel span attributes truncated: %d chars exceeded cap", len(blob))
+    return json.dumps(kept, default=str)
+
 
 def _fix_mojibake(s: str) -> str:
     """Best-effort repair of double-encoded UTF-8 (cp1252 round-trip).
@@ -128,7 +157,7 @@ def parse_request(req, pins: dict[str, str] | None = None, name_to_id: dict[str,
                     "start_ns": int(sp.start_time_unix_nano),
                     "end_ns": int(sp.end_time_unix_nano),
                     "status": _STATUS.get(int(sp.status.code), "UNSET"),
-                    "attributes_json": json.dumps(merged, default=str),
+                    "attributes_json": _encode_attrs(merged),
                 })
     return rows
 
@@ -142,6 +171,14 @@ async def ingest_trace_request(req) -> int:
     rows = parse_request(req, pins, name_to_id)
     if not rows:
         return 0
+    # Prune first, reserving room for this batch, so the row cap bounds the table
+    # even under a sustained flood on the (by default unauthenticated) ingest.
+    try:
+        await storage.prune(
+            settings.agd_otel_retention_hours, settings.agd_otel_max_spans, incoming=len(rows)
+        )
+    except Exception as e:
+        logger.warning("otel prune failed: %s", e)
     inserted = await storage.insert_spans(rows)
     # Learn any still-unknown exporter hashes: probe the fleet for the execution,
     # pin hash->instance, and re-attribute this batch's unknown rows. One probe
@@ -156,10 +193,6 @@ async def ingest_trace_request(req) -> int:
     if unknowns:
         asyncio.create_task(instance_map.learn_unknowns(unknowns))
     try:
-        await storage.prune(settings.agd_otel_retention_hours, settings.agd_otel_max_spans)
-    except Exception as e:
-        logger.warning("otel prune failed: %s", e)
-    try:
         trace_ids = sorted({r["trace_id"] for r in rows})
         await manager.broadcast("otel:trace", {"trace_ids": trace_ids, "spans": len(rows)})
     except Exception:
@@ -169,8 +202,8 @@ async def ingest_trace_request(req) -> int:
     # anyone opening the trace). Fire-and-forget: the run-data fetch is bounded
     # inside enrich_trace_health and must never block the ingest response.
     try:
-        from . import health
         from . import cost as cost_mod
+        from . import health
         completed = {r["trace_id"] for r in rows if r["name"] == "workflow.execute"}
         for tid in completed:
             asyncio.create_task(health.enrich_trace_health(tid))

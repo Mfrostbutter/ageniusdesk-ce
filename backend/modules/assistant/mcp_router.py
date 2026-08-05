@@ -21,12 +21,23 @@ router = APIRouter(
 )
 
 
+# When the assistant must stop and ask before running one of this server's tools:
+#   "writes" (default) — only tools classified as writing. Classification comes
+#                        from the server's MCP annotations, else a known naming
+#                        convention; anything unclassifiable counts as a write.
+#   "all"              — every tool. For a server you do not trust.
+#   "none"             — nothing. For a server that cannot mutate anything, e.g.
+#                        an n8n-mcp running in docs mode with no instance creds.
+_CONFIRM_HELP = "One of: writes (default), all, none"
+
+
 class AddServer(BaseModel):
     name: str
     url: str
     token: str = ""
     description: str = ""
     instances: list[str] = []  # Instance IDs this server is available to (empty = all)
+    confirm: str = mcp_client.DEFAULT_CONFIRM
 
 
 class UpdateServer(BaseModel):
@@ -36,6 +47,14 @@ class UpdateServer(BaseModel):
     description: str = ""
     enabled: bool = True
     instances: list[str] = []
+    confirm: str = ""  # "" = leave unchanged
+
+
+def _validate_confirm(value: str) -> str:
+    policy = (value or "").strip().lower()
+    if policy not in mcp_client.CONFIRM_POLICIES:
+        raise HTTPException(status_code=400, detail=f"confirm must be one of {sorted(mcp_client.CONFIRM_POLICIES)}")
+    return policy
 
 
 @router.get("/servers")
@@ -60,8 +79,9 @@ async def list_servers():
             "token_hint": token_hint,
             "enabled": s.get("enabled", True),
             "instances": s.get("instances", []),
+            "confirm": mcp_client.server_confirm_policy(s),
         })
-    return {"servers": safe}
+    return {"servers": safe, "confirm_help": _CONFIRM_HELP}
 
 
 @router.post("/servers")
@@ -75,6 +95,7 @@ async def add_server(req: AddServer):
         "description": req.description,
         "enabled": True,
         "instances": req.instances,
+        "confirm": _validate_confirm(req.confirm),
     }
 
     result = await mcp_client.add_server(server)
@@ -102,6 +123,8 @@ async def update_server(server_id: str, req: UpdateServer):
                 )
             if req.description:
                 s["description"] = req.description
+            if req.confirm:
+                s["confirm"] = _validate_confirm(req.confirm)
             s["enabled"] = req.enabled
             s["instances"] = req.instances
             mcp_client.save_mcp_servers(servers)

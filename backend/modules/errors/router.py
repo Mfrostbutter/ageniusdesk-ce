@@ -389,8 +389,8 @@ async def install_handler_into(inst: dict, dashboard_url: str = "", activate: bo
     instance (used on connect; the active-instance client can't target it). Never
     raises. Returns {installed, already, activated, error}."""
     from backend.config import decrypt_value
-    from backend.modules.n8n_proxy.client import TIMEOUT, _verify, dockerize_url
-    from backend.net import UnsafeProbeURL, assert_safe_probe_url
+    from backend.modules.n8n_proxy.client import TIMEOUT, dockerize_url
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify_for_instance
 
     out = {"installed": False, "already": False, "activated": False, "error": ""}
     base = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
@@ -403,7 +403,9 @@ async def install_handler_into(inst: dict, dashboard_url: str = "", activate: bo
     key = decrypt_value(inst.get("api_key", ""))
     headers = {"X-N8N-API-KEY": key, "Content-Type": "application/json", "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as c:
+        # This targets `inst` explicitly, not the active instance, so resolve TLS
+        # verification against `inst` rather than through the client's helper.
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls_verify_for_instance(inst)) as c:
             lw = await c.get(f"{base}/api/v1/workflows", headers=headers, params={"limit": 250})
             if lw.status_code != 200:
                 out["error"] = "auth" if lw.status_code in (401, 403) else f"HTTP {lw.status_code}"

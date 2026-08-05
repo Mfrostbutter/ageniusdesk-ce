@@ -118,9 +118,11 @@ class Settings(BaseSettings):
     agd_public_url: str = ""
 
     # Security hardening knobs (all default to prior behavior).
-    # CORS allowed origins: "*" (default, any origin) or a comma-separated list
-    # of exact origins, e.g. "https://app.example.com,https://admin.example.com".
-    agd_cors_origins: str = "*"
+    # CORS allowed origins. Empty (default) = same-origin only: the bundled
+    # frontend is served by this app, so it needs no cross-origin grant. Set "*"
+    # to allow any origin, or a comma-separated list of exact origins, e.g.
+    # "https://app.example.com,https://admin.example.com".
+    agd_cors_origins: str = ""
     # Max request body size in bytes (Content-Length based). Default 25 MiB.
     agd_max_request_bytes: int = 26214400
     # Optional Content-Security-Policy header value. Empty = no CSP header.
@@ -175,6 +177,33 @@ class Settings(BaseSettings):
     # n8n control plane. AGD_AGENTS_ENABLED=false forces the n8n-only experience
     # even with the extra present; true forces the surface on.
     agd_agents_enabled: Optional[bool] = None
+
+    # Assistant tool-execution gate. The assistant reads attacker-influenceable
+    # content (n8n error/execution payloads, RAG hits, MCP output), so a prompt
+    # injection can steer it to call a state-changing tool the operator never
+    # asked for. With autorun off (default) those calls become a proposal the
+    # operator confirms in the UI; nothing state-changing runs on the model's say-so.
+    # Set AGD_ASSISTANT_AUTORUN=true to restore unattended execution.
+    agd_assistant_autorun: bool = False
+    # Whether MCP tool calls also require confirmation. MCP servers can make
+    # arbitrary outbound calls, which is the exfiltration half of the problem, so
+    # this defaults on. Turn it off to auto-run MCP tools (e.g. a read-only
+    # n8n-mcp docs server) while keeping the gate on the built-in write tools.
+    agd_assistant_confirm_mcp: bool = True
+
+    # Public API (/api/v1) per-key request budget, requests per minute. In-memory
+    # and per-process. 0 disables the limiter.
+    agd_public_api_rate: int = 120
+    # Unauthenticated machine-ingest budget (errors/messages webhooks, OTLP
+    # traces), requests per minute per client IP. 0 disables the limiter.
+    agd_ingest_rate: int = 600
+
+    # Optional outbound egress allowlist, comma-separated CIDRs, e.g.
+    # "10.0.0.0/8,192.168.1.0/24". When set, a server-side fetch of an
+    # operator-supplied URL must resolve inside one of these ranges. Empty
+    # (default) preserves current behavior: private ranges are allowed, because
+    # self-hosted n8n/Ollama/Qdrant live there.
+    agd_egress_allow_cidrs: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
@@ -386,6 +415,17 @@ def _is_compound(entry: Any) -> bool:
     return isinstance(entry, dict) and "type" in entry and isinstance(entry.get("fields"), dict)
 
 
+def _audit_compound_resolve(name: str, field_names: list[str]) -> None:
+    """Audit a bare-$NAME resolve of a compound secret. Imported lazily: config
+    is imported by nearly everything, and backend.audit imports back into it."""
+    try:
+        from backend import audit
+
+        audit.record("secret.compound_resolved", secret=name, fields=field_names)
+    except Exception:  # noqa: BLE001 - never let auditing break secret resolution
+        pass
+
+
 def _resolve_secret_ref(name: str) -> str:
     """Resolve a $NAME or $NAME.field reference.
 
@@ -419,6 +459,10 @@ def _resolve_secret_ref(name: str) -> str:
                     return ""
                 return decrypt_value(fields[field])
             # Bare $NAME on a compound — decrypt all fields and return JSON.
+            # This hands out a compound's entire field set at once, which is
+            # almost always a caller that meant the dotted form. Audit it so a
+            # broad resolve is visible; the field NAMES are logged, never values.
+            _audit_compound_resolve(name, sorted(fields.keys()))
             decrypted = {k: decrypt_value(v) for k, v in fields.items()}
             return json.dumps(decrypted)
         # Legacy string entry.
@@ -603,8 +647,14 @@ def promote_to_secret(value: str, prefix: str, context: str = "") -> str:
     store owns the plaintext.
 
     Generates name "<PREFIX>[_<CONTEXT>]" (both slugified). If that collides,
-    appends _2, _3, ... until unique. Encrypts for storage and also sets the
-    value on os.environ so it resolves in the current process.
+    appends _2, _3, ... until unique. Encrypts for storage; resolution happens on
+    demand through _resolve_secret_ref, which reads the store.
+
+    Note: this deliberately does NOT set the value on os.environ. It used to, so
+    a promoted secret would resolve in the running process, but that put every
+    promoted plaintext into the process environment where any /proc/self/environ
+    read, crash dump, or subprocess inherits it — for no benefit, since the
+    secrets store is already consulted on every resolve.
 
     Returns the "$NAME" reference string.
     """
@@ -636,7 +686,6 @@ def promote_to_secret(value: str, prefix: str, context: str = "") -> str:
         if not _is_compound(current):
             try:
                 if decrypt_value(current) == value:
-                    os.environ[name] = value
                     return f"${name}"
             except Exception:
                 pass
@@ -645,7 +694,6 @@ def promote_to_secret(value: str, prefix: str, context: str = "") -> str:
 
     existing[name] = encrypt_value(value)
     save_secrets(existing)
-    os.environ[name] = value
     logger.info("Promoted value to secret store as $%s", name)
     return f"${name}"
 

@@ -7,6 +7,7 @@ import * as toast from '../components/toast.js';
 import * as modal from '../components/modal.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
 import { openTraceModal } from '../components/trace-waterfall.js';
+import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
 
 let selectedWorkflow = null;
 let selectedWorkflowMeta = { id: '', name: '' };
@@ -275,7 +276,11 @@ window.__analyzeExec = async function(execId, workflowName, workflowId) {
         </div>
       </div>
       <div style="color:var(--text-secondary)">${md}</div>
+      ${renderPendingActions(resp.pending_actions)}
     `;
+    // Same posture as the Errors triage panel: the prompt carries n8n error text
+    // the operator did not write, so a tool the model picked waits for a click.
+    attachApprovals(resultEl);
   } catch (e) {
     resultEl.innerHTML = `<span style="color:var(--error)">${esc(e.message)}</span>`;
   }

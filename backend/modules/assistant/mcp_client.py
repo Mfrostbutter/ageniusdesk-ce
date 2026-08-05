@@ -321,7 +321,13 @@ async def discover_tools(server: dict) -> list[dict]:
 
 
 def _normalize_tool(tool: dict, server: dict) -> dict:
-    """Normalize a tool definition to OpenAI function calling format."""
+    """Normalize a tool definition to OpenAI function calling format.
+
+    `annotations` is carried through as `_mcp_annotations`. The MCP spec lets a
+    server declare `readOnlyHint` / `destructiveHint` per tool, which is exactly
+    what the confirmation gate needs to tell a docs lookup from a live mutation.
+    It is stripped before the definition reaches the LLM (see get_all_mcp_tools).
+    """
     # MCP format
     if "inputSchema" in tool:
         return {
@@ -333,6 +339,7 @@ def _normalize_tool(tool: dict, server: dict) -> dict:
             },
             "_mcp_server_id": server["id"],
             "_mcp_tool_name": tool["name"],
+            "_mcp_annotations": tool.get("annotations") or {},
         }
 
     # Already in OpenAI format
@@ -346,7 +353,69 @@ def _normalize_tool(tool: dict, server: dict) -> dict:
         },
         "_mcp_server_id": server["id"],
         "_mcp_tool_name": name,
+        "_mcp_annotations": tool.get("annotations") or {},
     }
+
+
+# ── Write/read classification for the confirmation gate ──────────────────────
+#
+# The assistant reads attacker-influenceable content, so an MCP tool call may be
+# the model acting on an injected instruction rather than the operator's request.
+# Gating every MCP tool would make Code Lab unusable (a confirmation card per
+# search_nodes), and an unusable control gets switched off. So we classify.
+
+# Per-server operator policy.
+CONFIRM_ALL = "all"        # every tool needs a click
+CONFIRM_WRITES = "writes"  # only tools classified as writes need a click
+CONFIRM_NONE = "none"      # trusted server; nothing needs a click
+CONFIRM_POLICIES = frozenset({CONFIRM_ALL, CONFIRM_WRITES, CONFIRM_NONE})
+DEFAULT_CONFIRM = CONFIRM_WRITES
+
+# Convention profile: czlonkowski's n8n-mcp exposes a docs brain (search_nodes,
+# get_node, validate_workflow, ...) and, when configured with instance creds, a
+# set of live-instance tools that are ALL prefixed `n8n_` (n8n_create_workflow,
+# n8n_delete_workflow, n8n_update_partial_workflow, ...). That prefix is a
+# reliable read/write boundary for this server, and it is the fallback when the
+# server sends no annotations. Detected from the tool inventory rather than the
+# server name, which the operator is free to type as anything.
+_N8N_MCP_MARKERS = frozenset({"search_nodes", "tools_documentation", "get_node", "validate_workflow"})
+_N8N_MCP_WRITE_PREFIX = "n8n_"
+
+
+def detect_profile(tool_names: set[str]) -> str:
+    """Identify a known server by its tool inventory. "" when unrecognized."""
+    if len(_N8N_MCP_MARKERS & tool_names) >= 2:
+        return "n8n-mcp"
+    return ""
+
+
+def server_confirm_policy(server: dict) -> str:
+    """The operator's confirmation policy for a server. Defaults to writes-only."""
+    policy = str(server.get("confirm", "") or "").strip().lower()
+    return policy if policy in CONFIRM_POLICIES else DEFAULT_CONFIRM
+
+
+def classify_read_only(tool: dict, profile: str) -> bool | None:
+    """Is this tool read-only? True / False / None when we genuinely cannot tell.
+
+    Precedence: the server's own annotations win, because they are the server
+    author declaring intent. Only if they are absent do we fall back to a known
+    server's naming convention. An unrecognized server with no annotations
+    returns None, and the caller fails closed.
+    """
+    ann = tool.get("_mcp_annotations") or {}
+    # destructiveHint first: a tool that declares BOTH readOnlyHint and
+    # destructiveHint is contradicting itself, and the only safe reading of a
+    # contradiction is the more dangerous one.
+    if ann.get("destructiveHint") is True:
+        return False
+    read_only = ann.get("readOnlyHint")
+    if isinstance(read_only, bool):
+        return read_only
+    if profile == "n8n-mcp":
+        # Only the `n8n_` tools reach a live instance; the rest are the docs brain.
+        return not str(tool.get("_mcp_tool_name", "")).startswith(_N8N_MCP_WRITE_PREFIX)
+    return None
 
 
 # ── Tool Execution ───────────────────────────────────────────────────────────
@@ -440,8 +509,16 @@ def _server_visible_to_instance(server: dict, instance_id: str | None) -> bool:
 
 async def get_all_mcp_tools(instance_id: str | None = None) -> tuple[list[dict], dict]:
     """Discover tools from configured MCP servers visible to instance_id.
-    Returns (tool_definitions, tool_map) where tool_map maps function name to (server_id, tool_name).
-    If instance_id is None, returns tools from all enabled servers."""
+
+    Returns (tool_definitions, tool_map). tool_map maps the LLM-facing function
+    name to a descriptor:
+
+        {"server_id", "tool_name", "read_only": bool|None, "confirm": policy}
+
+    `read_only` is None when neither the server's annotations nor a known
+    convention profile can classify the tool; the confirmation gate treats that
+    as a write. If instance_id is None, returns tools from all enabled servers.
+    """
     servers = get_mcp_servers()
     all_tools = []
     tool_map = {}
@@ -453,9 +530,18 @@ async def get_all_mcp_tools(instance_id: str | None = None) -> tuple[list[dict],
             continue
         try:
             tools = await discover_tools(server)
+            # Profile is a property of the server's whole inventory, so resolve
+            # it once per server before classifying its tools.
+            profile = detect_profile({str(t.get("_mcp_tool_name", "")) for t in tools})
+            policy = server_confirm_policy(server)
             for t in tools:
                 fname = t["function"]["name"]
-                tool_map[fname] = (t.get("_mcp_server_id", server["id"]), t.get("_mcp_tool_name", ""))
+                tool_map[fname] = {
+                    "server_id": t.get("_mcp_server_id", server["id"]),
+                    "tool_name": t.get("_mcp_tool_name", ""),
+                    "read_only": classify_read_only(t, profile),
+                    "confirm": policy,
+                }
                 # Remove internal keys before passing to LLM
                 clean = {"type": t["type"], "function": t["function"]}
                 all_tools.append(clean)

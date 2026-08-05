@@ -75,7 +75,7 @@ async def current_user(request: Request) -> dict | None:
     """
     # 1) Local login session.
     from backend.modules.auth import service as auth_service
-    raw = request.cookies.get(auth_service.SESSION_COOKIE)
+    raw = auth_service.session_cookie_value(request.cookies)
     if raw:
         user = await auth_service.session_user(raw)
         if user:

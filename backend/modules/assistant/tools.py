@@ -3,6 +3,7 @@
 import json
 import logging
 
+from backend import audit
 from backend.modules.assistant.workspace_tools import (
     WORKSPACE_TOOL_DEFINITIONS,
     execute_workspace_tool,
@@ -14,22 +15,41 @@ logger = logging.getLogger(__name__)
 # State-changing tools the chat LLM can call. The assistant ingests
 # attacker-influenceable content (RAG results, MCP output, n8n error/execution
 # payloads), so a prompt injection could steer the model to invoke one of these
-# without the operator asking. We can't fully prevent that from the backend, but
-# every invocation is logged to an audit trail so a rogue action is visible
-# after the fact. The system prompt (see providers._ASSISTANT_INJECTION_GUARD)
-# instructs the model to treat tool/RAG/MCP content as data, never instructions.
-_STATE_CHANGING_TOOLS = frozenset({
+# without the operator asking. Two defenses stack:
+#   - approvals.needs_confirmation() turns these into a proposal the operator
+#     must confirm; nothing here runs on the model's say-so unless the operator
+#     set AGD_ASSISTANT_AUTORUN=true. That is the real boundary.
+#   - every invocation is audited, so an action taken under autorun (or via a
+#     confirmation the operator clicked through) is visible after the fact.
+# The system prompt (providers._ASSISTANT_INJECTION_GUARD) additionally tells the
+# model to treat tool/RAG/MCP content as data, never instructions. That is cheap
+# defense-in-depth, not a boundary — a model cannot be relied on to obey it.
+STATE_CHANGING_TOOLS = frozenset({
     "trigger_workflow", "set_workflow_active", "import_workflow",
     "workspace_write", "workspace_append", "workspace_archive",
 })
-_audit = logging.getLogger("agd.assistant.audit")
+
+# Argument names worth surfacing in the audit line per tool call. The full
+# argument set is scrubbed and recorded too; this is the at-a-glance summary.
+_AUDIT_SUMMARY_KEYS = ("workflow_id", "active", "name", "path")
 
 
 def _audit_state_change(name: str, arguments: dict) -> None:
     """Emit an audit line for a state-changing assistant tool call."""
-    keys = ("workflow_id", "active", "name", "path")
-    summary = {k: arguments[k] for k in keys if k in arguments}
-    _audit.warning("assistant tool %s invoked args=%s", name, summary)
+    summary = {k: arguments[k] for k in _AUDIT_SUMMARY_KEYS if k in arguments}
+    audit.record(
+        "assistant.tool.invoked",
+        tool=name,
+        autorun=_autorun(),
+        summary=summary,
+        arguments=arguments,
+    )
+
+
+def _autorun() -> bool:
+    from backend.modules.assistant import approvals
+
+    return approvals.autorun_enabled()
 
 
 # Tool definitions in OpenAI function calling format (works with OpenRouter)
@@ -205,7 +225,7 @@ TOOL_DEFINITIONS += WORKSPACE_TOOL_DEFINITIONS
 async def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool call and return the result as a string for the LLM."""
     try:
-        if name in _STATE_CHANGING_TOOLS:
+        if name in STATE_CHANGING_TOOLS:
             _audit_state_change(name, arguments)
 
         if name.startswith("workspace_"):
@@ -274,7 +294,9 @@ async def execute_tool(name: str, arguments: dict) -> str:
             action = "activated" if arguments["active"] else "deactivated"
             if result.get("success"):
                 return f"Workflow {action} successfully."
-            return f"Failed to {action[:-1]}e workflow: {result.get('error', 'Unknown error')}"
+            # action[:-1] already gives the infinitive ("activated" -> "activate");
+            # the old trailing "e" produced "Failed to deactivatee workflow".
+            return f"Failed to {action[:-1]} workflow: {result.get('error', 'Unknown error')}"
 
         elif name == "import_workflow":
             workflow_data = {
