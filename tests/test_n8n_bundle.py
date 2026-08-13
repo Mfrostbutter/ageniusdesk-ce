@@ -133,10 +133,10 @@ def test_otel_export_wired_when_enabled(monkeypatch):
 
 
 def test_otel_export_lan_ip_passthrough(monkeypatch):
-    _otel_on(monkeypatch, url="http://10.10.0.15:3066")
+    _otel_on(monkeypatch, url="http://192.168.1.50:3066")
     env = _by_name(templates.get("n8n").build(_fields()))["n8n"].config["Env"]
     # A LAN-IP dashboard URL is already container-reachable; used verbatim.
-    assert "N8N_OTEL_EXPORTER_OTLP_ENDPOINT=http://10.10.0.15:3066/api/otel" in env
+    assert "N8N_OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.50:3066/api/otel" in env
 
 
 def test_otel_export_token_optional(monkeypatch):
