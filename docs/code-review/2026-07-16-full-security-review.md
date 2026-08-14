@@ -8,7 +8,7 @@
 > credentialed wildcard CORS, SQL injection, backup zip-slip, and stored XSS in
 > the primary message/error renderers. The verified findings, rejected claims,
 > and implementation-ready remediation plan are in
-> [`2026-07-16-security-fix-plan-for-opus.md`](2026-07-16-security-fix-plan-for-opus.md).
+> [`2026-07-16-security-fix-plan.md`](2026-07-16-security-fix-plan.md).
 > That document is the implementation authority.
 
 **Reviewer:** Hostile Senior Security Auditor  
@@ -57,7 +57,7 @@ The self-container protection (`is_self_container`) only blocks the dashboard's 
 **Location:** `backend/modules/n8n_proxy/client.py:60-80`, `backend/net.py:1-50`  
 **Verdict:** CONFIRMED
 
-**Exploit Path:** Operator adds n8n instance with URL `http://10.10.0.41:6333` (Qdrant), `http://10.10.0.62:7474` (Neo4j), `http://10.10.0.80:5678` (other n8n), etc. `assert_safe_probe_url` **allows all RFC1918 private ranges** (by design for self-hosted n8n). Fleet health (`fleet_health`) fans out to **all configured instances** in parallel, returning `reachable: true/false` and error strings that distinguish auth failure vs connection refused vs timeout — a **blind SSRF oracle**. `AGD_TLS_VERIFY=false` (documented for self-signed LAN n8n) disables TLS verification for **all** outbound calls globally.
+**Exploit Path:** Operator adds n8n instance with URL `http://192.168.1.41:6333` (Qdrant), `http://192.168.1.62:7474` (Neo4j), `http://192.168.1.80:5678` (other n8n), etc. `assert_safe_probe_url` **allows all RFC1918 private ranges** (by design for self-hosted n8n). Fleet health (`fleet_health`) fans out to **all configured instances** in parallel, returning `reachable: true/false` and error strings that distinguish auth failure vs connection refused vs timeout — a **blind SSRF oracle**. `AGD_TLS_VERIFY=false` (documented for self-signed LAN n8n) disables TLS verification for **all** outbound calls globally.
 
 **Fix:**
 1. Add egress allowlist (`AGD_EGRESS_ALLOW_CIDRS`) defaulting to only operator-declared n8n instance CIDRs.

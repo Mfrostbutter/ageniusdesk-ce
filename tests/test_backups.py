@@ -301,7 +301,7 @@ def test_endpoint_guard_and_scheme():
     from backend.modules.backups import remote
 
     assert remote._parse_endpoint("") == ("s3.amazonaws.com", True)
-    assert remote._parse_endpoint("http://10.10.0.5:9000") == ("10.10.0.5:9000", False)  # LAN MinIO allowed
+    assert remote._parse_endpoint("http://192.168.1.50:9000") == ("192.168.1.50:9000", False)  # LAN MinIO allowed
     assert remote._parse_endpoint("https://x.r2.cloudflarestorage.com") == ("x.r2.cloudflarestorage.com", True)
     with pytest.raises(ValueError):
         remote._parse_endpoint("http://169.254.169.254")  # cloud metadata blocked

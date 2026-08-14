@@ -104,7 +104,7 @@ async def test_resolve_hash_ambiguous_refuses(monkeypatch):
 
 def test_otel_env_stamps_instance_name(monkeypatch):
     monkeypatch.setattr(templates.settings, "agd_otel_enabled", True)
-    monkeypatch.setattr(templates.settings, "agd_public_url", "http://10.10.0.15:3066")
+    monkeypatch.setattr(templates.settings, "agd_public_url", "http://192.168.1.50:3066")
     monkeypatch.setattr(templates.settings, "agd_otel_token", "")
     env = templates._otel_export_env("n8n Template Lab")
     stamp = [e for e in env if e.startswith("OTEL_RESOURCE_ATTRIBUTES=")]
@@ -113,7 +113,7 @@ def test_otel_env_stamps_instance_name(monkeypatch):
 
 def test_otel_env_no_stamp_without_name(monkeypatch):
     monkeypatch.setattr(templates.settings, "agd_otel_enabled", True)
-    monkeypatch.setattr(templates.settings, "agd_public_url", "http://10.10.0.15:3066")
+    monkeypatch.setattr(templates.settings, "agd_public_url", "http://192.168.1.50:3066")
     monkeypatch.setattr(templates.settings, "agd_otel_token", "")
     env = templates._otel_export_env("")
     assert not any(e.startswith("OTEL_RESOURCE_ATTRIBUTES=") for e in env)

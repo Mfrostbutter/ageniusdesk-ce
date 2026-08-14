@@ -23,6 +23,7 @@ Start with [Getting Started](guide/getting-started.md) if you just deployed, or
 | [n8n Instances](guide/instances.md) | Adding, switching, and managing multiple n8n deployments |
 | [Workflows](guide/workflows.md) | Listing, searching, activating, and triggering workflows |
 | [Executions & Errors](guide/errors.md) | The error feed, grouping, AI triage, and installing the global error handler |
+| [Workflow Promotion](guide/promote.md) | Moving workflows dev to staging to prod: the credential preflight, auto-provision, and activation guarding |
 | [Insights](guide/insights.md) | Execution analytics, success rates, busiest/slowest workflows |
 | [Containers](guide/containers.md) | One-click Docker deployment, templates, lifecycle management |
 | [Code Lab](guide/code-lab.md) | The Monaco editor, AI code generation, the Prompt Builder, Agent Builder, and Send to n8n |

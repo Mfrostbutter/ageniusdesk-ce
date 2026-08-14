@@ -36,6 +36,12 @@ A quick tour of the dashboard ([full-quality video](https://github.com/Mfrostbut
 - Full node-level details and last-seen timestamps
 - Silent failures land in the same feed as their own `Silent failure` class: runs n8n reported as success but where a node errored under Continue-On-Fail or quietly stopped producing data, so "green but broken" runs show up where you already triage. See [Silent-failure detection](docs/architecture/silent-failure-detection.md)
 
+**Workflow Promotion** (dev to staging to prod)
+- Move a workflow from one registered instance to another, the open-source answer to n8n Enterprise environments
+- A **preflight** runs first and reports every credential the workflow binds, whether the target already ships that credential type, and any duplicate-name collision, so you see what will break before anything is written
+- **Credential auto-provision** reuses a credential already mirrored onto the target, or creates one from a matching entry in the Secrets store. Ambiguity is never guessed: a type with more than one mirror is surfaced for you to resolve, and provisioning is idempotent by reuse, so an already-promoted workflow never has its credential id pulled out from under it
+- Activation is guarded. n8n binds a node credential by both id and name, so a workflow whose mapped credential has no name on the target is refused rather than imported to fail silently at run time, and a rejection surfaces n8n's own node-by-node explanation. See [Workflow Promotion](docs/guide/promote.md)
+
 **Code Lab**
 - Monaco-based editor for writing n8n Code-node logic
 - Syntax highlighting, autocomplete, and n8n node introspection
@@ -53,6 +59,7 @@ A quick tour of the dashboard ([full-quality video](https://github.com/Mfrostbut
 - Chat with context from your workflows and error history
 - Works with OpenRouter (one key, hundreds of models), OpenAI, Anthropic, Perplexity, Groq, DeepSeek, Mistral, xAI (Grok), Together AI, local Ollama, or any OpenAI-compatible endpoint via a Custom base URL (Azure OpenAI, LiteLLM, vLLM, LocalAI, ...). Each area (Code Lab / Error Triage / Assistant) picks its own provider and model.
 - Function calling to query workflows, run executions, view errors
+- **It asks before it acts.** The assistant reads content you do not control (n8n error and execution payloads, RAG hits, MCP server output), so a prompt injection buried in any of it could otherwise steer a state-changing tool call. Those calls do not run inside the chat turn: they come back as a proposal on an approval card and nothing happens until you confirm it. MCP tools are classified per server from the server's own `readOnlyHint` annotations, and a tool that cannot be classified fails closed. Set `AGD_ASSISTANT_AUTORUN` to restore unattended execution on a headless install
 - Attach MCP servers to extend the assistant with external tools
 - **n8n intelligence, installed for you.** On first boot AgeniusDesk auto-installs [n8n-mcp](https://github.com/czlonkowski/n8n-mcp) by czlonkowski (deep n8n node knowledge plus workflow search, validation, and create/update tools) as a running MCP server, and seeds a curated **n8n skill library** into your workspace, so Code Lab and the assistant build workflows correctly the first time. Both are best-effort and opt-out (`AGD_N8N_MCP_AUTO=false`, `AGD_SEED_SKILLS=false`); the n8n-mcp card lives under Settings, MCP Servers
 - Optional RAG over your knowledge sources via Qdrant

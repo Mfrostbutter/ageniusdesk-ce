@@ -4,7 +4,19 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
-## Current Release: v0.4.4 (2026-07-06)
+## Current Release: v0.5.0 (2026-08-13)
+
+v0.5 is about failures you cannot see and environments you could not previously move between. Highlights:
+
+- **Silent-failure detection**: catch the runs n8n reports as success while a node errored under Continue-On-Fail or quietly stopped producing data. The failure class with no failed execution to alert on.
+- **Dead-man's switch (layer 1)**: catch the node that never ran at all inside a run that did fire, by diffing the workflow's declared nodes against the spans that landed.
+- **Workflow promotion**: move a workflow dev to staging to prod with a credential preflight, auto-provision from the Secrets store, and activation guarding. The open-source answer to n8n Enterprise environments.
+- **The assistant asks before it acts**: a state-changing tool call now returns as an approval card rather than running inside the chat turn, so a prompt injection in an error payload, a RAG hit, or MCP output cannot drive it unattended.
+- **Correct multi-instance observability**: traces are attributed to the instance that produced them, and cost and health enrichment fetch run-data from that instance, so a non-active instance's spend is no longer silently `$0`.
+
+Full detail under "What shipped in v0.5.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
+
+## Previous Release: v0.4.4 (2026-07-06)
 
 The v0.4.2 to v0.4.4 line hardens and extends the platform on top of the v0.4.0 agent layer. See the [CHANGELOG](CHANGELOG.md) for full detail.
 
@@ -13,9 +25,7 @@ The v0.4.2 to v0.4.4 line hardens and extends the platform on top of the v0.4.0 
 - **v0.4.2** is a **security release**: four high-severity findings from the full security review plus the medium/low batch, with setup-wizard name/port fields and a configurable Overview error window.
 - **v0.4.1** made the **n8n-only-by-default** agent gate a tagged release: a default install reads as a pure n8n control plane, and the Agent Fleet view + Code Lab's Agent Builder appear only when the optional agent extra is installed (or `AGD_AGENTS_ENABLED=true`).
 
-**In development (see CHANGELOG [Unreleased]):** silent-failure detection (green but broken runs), tracked in Near-Term below, plus the 2026-07-16 security pass: an assistant confirmation gate so a prompt injection in untrusted content cannot drive a state-changing tool call unattended, scoped and rate-limited public API keys, per-instance TLS verification, and rate limits on the unauthenticated ingest paths.
-
-## Previous Release: v0.4.0 (2026-06-28)
+## Earlier Release: v0.4.0 (2026-06-28)
 
 v0.4 keeps AgeniusDesk **n8n-first** and adds an **optional** agent layer on top (off by default): build real LangGraph and PydanticAI agents and run + monitor them the way you run workflows, plus batteries-included n8n intelligence. Highlights:
 
@@ -71,6 +81,45 @@ Full detail and checkboxes are under "What shipped in v0.2.0" below; see the [CH
 - Comprehensive documentation and contributing guidelines
 
 ---
+
+## What shipped in v0.5.0
+
+The headline: the failures n8n's own status cannot report, and moving work between environments.
+
+### 1. Silent-failure detection ([architecture](docs/architecture/silent-failure-detection.md), [spec](docs/specs/2026-07-07-silent-failure-detection.md))
+
+- [x] Detect "green but broken" runs on OpenTelemetry ingest by reading **output shape rather than status**: a normalized union of the three places n8n records a demoted error, plus a per-node output-volume-versus-history classifier.
+- [x] **Drop cascades suppressed to the origin**, so one root cause is one alert instead of fifteen.
+- [x] Surfaced as its own `Silent failure` class everywhere at once: a dedicated Overview card, tiles on Insights and the Observe metrics strip, a `SILENT` badge with jump-to-trace in the Errors feed, and a distinct amber block on the Overview Execution Timeline.
+- [x] Prefers the **sound** typed `taskData.continuation` signal where the instance runs a patched n8n; the unsound content-scan is gated behind `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR` (on by default so stock n8n keeps full recall).
+- [x] **Dead-man's switch, layer 1**: flag a declared node that had input available but produced no span at all, graph-aware and gated on run-history for precision.
+- [ ] Dead-man's switch, layer 2 (the workflow never fired at all) needs an external heartbeat. Specced, not built: [spec](docs/specs/2026-07-11-heartbeat-dead-mans-switch-layer-2.md).
+
+### 2. Workflow promotion ([guide](docs/guide/promote.md))
+
+- [x] A **Promote** view and `n8n_promote` module moving workflows dev to staging to prod, the open-source answer to n8n Enterprise environments.
+- [x] **Preflight** reports every credential a workflow binds, whether the target ships that type, and duplicate-name collisions, before anything is written. Changing the target or selection invalidates it.
+- [x] **Credential auto-provision** reuses an already-mirrored target credential or creates one from the Secrets store, through the same SSRF, instance-scope, and URL-repoint guardrails as the manual mirror route. Ambiguity is surfaced, never guessed; provisioning is idempotent by reuse, not delete-and-recreate.
+- [x] **Activation guarding**: a workflow whose mapped credential has no name on the target is refused rather than imported to fail at run time, and n8n's node-by-node rejection detail is surfaced.
+
+### 3. The assistant asks before it acts
+
+- [x] State-changing tool calls return as a **proposal on an approval card** (operator-gated, CSRF-checked, single-use, expiring) instead of running mid-turn. The gate lives in a shared `_dispatch_tool`, so it covers both the OpenAI-compatible and Anthropic tool loops, and the card renders on all six chat surfaces.
+- [x] **MCP tools classified per server** (`writes` / `all` / `none`) from the server's own `readOnlyHint` annotations with a naming-convention fallback; an unclassifiable tool fails closed. Verified against a live n8n-mcp tool list, pinned as a test fixture.
+- [x] `AGD_ASSISTANT_AUTORUN` restores unattended execution for a headless install.
+
+### 4. Multi-instance observability correctness ([architecture](docs/architecture/instance-attribution.md))
+
+- [x] Traces are **attributed to the instance that produced them**, via a deterministic `agd.instance.name` resource attribute on provisioned instances plus a one-time learn step for external or legacy ones. An unplaceable exporter parks in a stable bucket rather than landing on the active instance.
+- [x] Cost and silent-failure enrichment **fetch run-data from the trace's owning instance**, so a non-active instance's spend and health are no longer silently empty.
+- [x] Cost enrichment runs **eagerly on ingest**, so aggregate Spend counts every run rather than only traces someone opened.
+
+### 5. Hardening
+
+- [x] Public API keys gain optional **expiry, IP/instance/workflow scoping, and a per-key rate limit**, with per-request audit. An absent field means unrestricted, so existing keys are unaffected.
+- [x] **Per-instance `tls_verify`** replaces the fleet-wide switch, so trusting one self-signed box no longer downgrades egress everywhere. Optional `AGD_EGRESS_ALLOW_CIDRS` narrows server-side fetches.
+- [x] **Unauthenticated ingest bounded**: per-IP rate limits on the webhooks and OTLP, prune-before-insert so the span row cap is a real ceiling, span-attribute size bounds, and a startup warning when the webhooks are left open.
+- [x] Defense-in-depth batch: central audit sink, promoted secrets no longer copied into `os.environ`, same-origin CORS default, constant-time MCP ping compare, deploy-time Docker `HostConfig` re-check, split password/TOTP lockout counters, reset-token rate limit, `__Host-` session cookie over HTTPS.
 
 ## What shipped in v0.4.0
 
@@ -154,17 +203,17 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 - [ ] **More container templates**: MySQL and more services (PostgreSQL, MongoDB, Redis, MinIO, Qdrant, Ollama, Flowise already ship as built-in templates)
 - [ ] **Richer Code Lab**: a curated code-snippets library and an in-app n8n node-documentation sidebar (template expansion and `$`-autocomplete already ship; deep node knowledge is available now via the built-in n8n-mcp)
 - [ ] **Additional knowledge connectors**: HTTP fetch, GitHub, API connectors beyond Qdrant
-- [x] **Harness skills section**: a library of skills in the Harness (`skills/`) that agent instructions point at, so an agent loads focused, domain-specific guidance on demand. Seeded into the vault on first run; router note at `skills/README.md` (shipped — see CHANGELOG [Unreleased])
+- [x] **Harness skills section**: a library of skills in the Harness (`skills/`) that agent instructions point at, so an agent loads focused, domain-specific guidance on demand. Seeded into the vault on first run; router note at `skills/README.md` (shipped — see CHANGELOG v0.4.0)
 - [x] **Curate high-quality n8n skills**: the full czlonkowski/n8n-skills set (MIT) — workflow patterns, node config, expressions, Code nodes, error handling, validation, agents, and more — vendored as the starting content for the Harness skills section
 - [ ] **Workflow version history**: snapshot on import, diff viewer, restore from snapshot
-- [x] **Scheduled backups**: automated per-instance backup with configurable retention. A dependency-free internal interval scheduler snapshots every connected instance's workflows to `data/backups/<instance>/` on a schedule (enable / interval / retention / active-only on the Export / Backup view; `/api/backups` endpoints), fanning out across the fleet and isolating a failing instance. Off by default. Shipped — see CHANGELOG [Unreleased]. The scheduler is the shared prerequisite the scheduled-health-report item below now builds on.
+- [x] **Scheduled backups**: automated per-instance backup with configurable retention. A dependency-free internal interval scheduler snapshots every connected instance's workflows to `data/backups/<instance>/` on a schedule (enable / interval / retention / active-only on the Export / Backup view; `/api/backups` endpoints), fanning out across the fleet and isolating a failing instance. Off by default. Shipped — see CHANGELOG v0.4.4. The scheduler is the shared prerequisite the scheduled-health-report item below now builds on.
   - [x] **Offsite backup destination (S3-compatible)**: push each snapshot to S3 / R2 / B2 / Wasabi / self-hosted MinIO behind an opt-in `s3` extra, with a test-connection probe, optional offsite retention mirroring, and optional Fernet encryption before upload. Credentials via secret-store refs only. Push-only in v1. [Spec](docs/specs/2026-07-06-offsite-backup-s3-sink.md). Deferred: Google Drive / OAuth destinations and an rclone shell-out (broader backend coverage), plus restore-from-remote UI.
 - [ ] **Scheduled health reports**: an automated, recurring (e.g. monthly) per-instance workflow health report, generated and delivered without anyone opening the dashboard. Rolls the period's success/error rates, error trends, busiest and slowest workflows, and notable incidents (from Insights + Fleet Health) into a client-ready summary, delivered over the notification sinks or email. Builds on the on-demand health-reporter agent (its parallel fan-out becomes a scheduled job) and feeds the agency client-reporting loop.
 - [ ] **Health monitoring**: surface uptime via an **Uptime Kuma connector** (read the operator's existing monitors over Kuma's API and fold up/down + uptime % into Fleet Health) rather than rebuilding generic endpoint polling. Native HTTP/TCP checks remain a later fallback for operators not already on Kuma. See [community-module candidates](docs/specs/2026-06-28-community-module-candidates.md).
-- [x] **Local-model cost clarity** ([spec](docs/specs/2026-07-02-local-model-cost-clarity.md)): the price book already tracks token usage for every provider (n8n run-data is provider-agnostic), but Ollama and self-hosted Custom-endpoint models fell through to `price_source: "unknown"` since they're absent from OpenRouter and the bundled table. Ollama node types are now tagged `local` (via `n8n.node.type`) so the waterfall surfaces token usage with a plain "local" tag instead of the ambiguous "price unknown" or a meaningless dollar figure. Custom-endpoint base-URL sniffing is deferred (see spec Non-goals). Shipped — see CHANGELOG [Unreleased].
+- [x] **Local-model cost clarity** ([spec](docs/specs/2026-07-02-local-model-cost-clarity.md)): the price book already tracks token usage for every provider (n8n run-data is provider-agnostic), but Ollama and self-hosted Custom-endpoint models fell through to `price_source: "unknown"` since they're absent from OpenRouter and the bundled table. Ollama node types are now tagged `local` (via `n8n.node.type`) so the waterfall surfaces token usage with a plain "local" tag instead of the ambiguous "price unknown" or a meaningless dollar figure. Custom-endpoint base-URL sniffing is deferred (see spec Non-goals). Shipped — see CHANGELOG v0.4.4.
 - [ ] **Expanded notification sinks**: email, PagerDuty, webhook routing per instance
-- [x] **Silent-failure detection (green but broken runs)**: catch runs n8n marks success while a node errored under Continue-On-Fail or quietly stopped producing data, the failure class with no failed execution to alert on. On OpenTelemetry ingest it reads output shape rather than status (a normalized demoted-error union plus per-node output-volume-vs-history), suppresses drop cascades to the origin node so one root cause is one alert, and surfaces a distinct `Silent failure` class across the Overview card, Insights, the Observe metrics strip, and the Errors feed. Tunable per instance via `AGD_HEALTH_*`. Shipped (see CHANGELOG [Unreleased]). [Architecture note](docs/architecture/silent-failure-detection.md), [spec](docs/specs/2026-07-07-silent-failure-detection.md). Follow-ups:
-  - [x] **Dead-man's-switch, layer 1 (a node went missing inside a run that did fire)**: on a completed green run the detector diffs the workflow's declared `workflowData` nodes against the spans that landed, flags a node that had input available but never ran and that historically runs, graph-aware so a legitimate cascade skip is not flagged, gated on run-history for precision (`AGD_HEALTH_DEADMAN_*`). Surfaces in the `Silent failure` class. Shipped (see CHANGELOG [Unreleased]).
+- [x] **Silent-failure detection (green but broken runs)**: catch runs n8n marks success while a node errored under Continue-On-Fail or quietly stopped producing data, the failure class with no failed execution to alert on. On OpenTelemetry ingest it reads output shape rather than status (a normalized demoted-error union plus per-node output-volume-vs-history), suppresses drop cascades to the origin node so one root cause is one alert, and surfaces a distinct `Silent failure` class across the Overview card, Insights, the Observe metrics strip, and the Errors feed. Tunable per instance via `AGD_HEALTH_*`. Shipped (see CHANGELOG v0.5.0). [Architecture note](docs/architecture/silent-failure-detection.md), [spec](docs/specs/2026-07-07-silent-failure-detection.md). Follow-ups:
+  - [x] **Dead-man's-switch, layer 1 (a node went missing inside a run that did fire)**: on a completed green run the detector diffs the workflow's declared `workflowData` nodes against the spans that landed, flags a node that had input available but never ran and that historically runs, graph-aware so a legitimate cascade skip is not flagged, gated on run-history for precision (`AGD_HEALTH_DEADMAN_*`). Surfaces in the `Silent failure` class. Shipped (see CHANGELOG v0.5.0).
   - [ ] **Dead-man's-switch, layer 2 (the workflow never fired at all)**: an external heartbeat, since nothing inside n8n can observe its own absence (schedule missed, instance down). Specced, not yet built: [spec](docs/specs/2026-07-11-heartbeat-dead-mans-switch-layer-2.md).
   - [ ] **Configurable expected-output thresholds**: a per-node declared output floor/range so "returned 10, always returns 100" fires explicitly rather than only via the learned drop heuristic. Config on the node, policy defaults roll down from the workspace, and values are suggested from history (one-click accept, only prompting the steady producers that matter) so per-node config scales. Doubles as the per-node override for cases history infers wrong.
   - [ ] **Upstream n8n OTel error semantics** (feature request): get the continued error onto the OpenTelemetry span (standard exception attributes plus span status) so any backend can read it, since n8n currently holds the typed error and then exports the Continue-On-Fail span as OK. Would make detection easier for the whole ecosystem, not just AgeniusDesk. AGD's consumer side is ready: detection prefers the typed `taskData.continuation` rollup a patched n8n records and gates the unsound content-scan behind `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR`, so a patched instance drops the loose-`json.error` false positives. The upstream PR (engine-level continued-error signal) is in review.
@@ -227,7 +276,7 @@ Not every valuable module folds into the existing chrome; some **add their own s
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
 - [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
 - [ ] **Cost tracking** — folded into Observability ([cost-observability spec](docs/specs/2026-06-27-cost-observability.md)); LLM spend is the cost dimension of the trace store, not a standalone feature
-- [x] **Workflow promotion**: promote workflows across dev, staging, production instances (shipped 2026-07-13, `n8n_promote` module: preflight, credential mapping with auto-provision from Secrets, activation guarding; dogfooded on the beta instance 2026-07-15)
+- [x] **Workflow promotion**: promote workflows across dev, staging, production instances. Shipped in v0.5.0 (`n8n_promote` module: preflight, credential mapping with auto-provision from Secrets, activation guarding; dogfooded end to end on a live instance). [Guide](docs/guide/promote.md)
 - [ ] **Public API hardening**: expand and stabilize the existing versioned `/api/v1` (X-API-Key) surface
 
 ---

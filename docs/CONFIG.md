@@ -9,7 +9,7 @@ AgeniusDesk CE configuration is managed via environment variables. Create a `.en
 | `PORT` | `3000` | Port the dashboard listens on |
 | `SECRET_KEY` | Auto-generated | Master key for encrypting secrets. If not set, generated and persisted to `data/.secret_key` (mode 600) on first run. Losing this file makes all encrypted values unrecoverable. Back it up. |
 | `AGD_REQUIRE_AUTH` | `false` | Extra hard gate for token/edge-auth deployments. Local account login is enforced by default unless `AGD_DISABLE_LOGIN=true`; set this to keep auth required even when browser login is disabled. |
-| `AGD_TLS_VERIFY` | `true` | Verify TLS certificates on outbound HTTP calls to n8n instances. Set to `false` only for self-signed certificates on private LANs. |
+| `AGD_TLS_VERIFY` | `true` | Fleet-wide **default** for verifying TLS certificates on outbound calls to n8n instances. Prefer the per-instance `tls_verify` field: setting this to `false` to trust one self-signed box downgrades certificate checking for every other instance too. |
 
 ## Database
 
@@ -67,6 +67,9 @@ Tracing and per-run cost are self-contained: no external account or SaaS is requ
 | `AGD_HEALTH_DORMANT_ZERO_RATE` | `0.95` | Zero-rate at or over which a node is treated as normally-empty (a poller/filter); its zeros never flag. |
 | `AGD_HEALTH_DROP_FACTOR` | `0.1` | An output below `median * this` for a reliable producer is a magnitude-drop anomaly (e.g. 200 → 3). |
 | `AGD_HEALTH_WINDOW` | `200` | Rolling history size (runs) per node for the classifier. |
+| `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR` | `true` | Scan item-level `json.error` content to catch a Continue-On-Fail error stock n8n demotes into normal output. On by default so a stock instance keeps full recall. Turn it off against an n8n patched with the typed `taskData.continuation` rollup, which is the sound signal, to drop the false positives a node that legitimately outputs a field named `error` would cause. |
+| `AGD_HEALTH_DEADMAN_ENABLED` | `true` | Dead-man's switch: on a completed green run, flag a declared node that had input available but produced no span at all. Graph-aware, so a legitimate cascade skip downstream of an empty node is not flagged. |
+| `AGD_HEALTH_DEADMAN_MIN_RUN_RATE` | `0.9` | Share of recent executions of that workflow a node must historically run in before its absence can flag. Keeps a conditional branch or an intermittently-run node quiet. |
 | `AGD_PRICEBOOK_REFRESH_HOURS` | `24` | How often to refresh the LLM price book from OpenRouter's public models API. Cached to `data/price_book.json` with a last-good fallback. Per-run cost is computed locally from token counts against this book. |
 | `LANGSMITH_TRACING` | `false` | **Optional.** Set to `true` (with `LANGSMITH_API_KEY`) to also send Agent Fleet runs to LangSmith. For teams already on LangSmith; not required for tracing or cost. When on, it overrides the local price-book cost estimate with LangSmith's exact figures and adds a per-call breakdown plus an external trace link. Self-disables if the key is missing. |
 | `LANGSMITH_API_KEY` | (none) | LangSmith API key. Only used when `LANGSMITH_TRACING=true`. A LangSmith account is needed only for this optional integration. |
@@ -136,9 +139,14 @@ are ordinary session-authed routes; the price-book refresh (`POST
 | `AGD_TRUST_FORWARDED_FOR` | `false` | Use `X-Forwarded-For` for login throttling. Enable only behind a trusted proxy. |
 | `AGD_WEBHOOK_TOKEN` | (none) | Optional bearer or `X-AGD-Webhook-Token` token for legacy `/api/errors/webhook` and `/api/messages/webhook` ingestion. When unset, those legacy endpoints remain open for backward compatibility; new integrations should use the X-API-Key protected `/api/v1/...` webhooks. |
 | `DASHBOARD_MCP_TOKEN` | (none) | Optional bearer token for external clients calling `/api/mcp-dashboard`. Without it, browser sessions can still use the endpoint; unauthenticated external access is blocked by the internal API gate. |
-| `AGD_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins. Restrict to your dashboard origin(s) for a browser-facing deployment. |
+| `AGD_CORS_ORIGINS` | (empty) | Comma-separated allowed CORS origins. Empty (default) is **same-origin only**: the bundled frontend is served by this app, so it needs no cross-origin grant. Set `*` to allow any origin, or list exact origins. |
 | `AGD_MAX_REQUEST_BYTES` | `26214400` | Max request body size in bytes (25 MiB). Larger requests get `413`. |
 | `AGD_CSP` | (none) | Optional `Content-Security-Policy` header. Opt-in: the editors load from CDNs and the music tab embeds arbitrary origins, so a strict policy can break features. A recommended starting policy is in `.env.example`. |
+| `AGD_ASSISTANT_AUTORUN` | `false` | When `false` (default), an assistant tool call that changes state returns as a proposal on an approval card and runs only after the operator confirms it. The assistant reads untrusted content (n8n error and execution payloads, RAG hits, MCP output), so a prompt injection could otherwise drive a state-changing call unattended. Set `true` to restore unattended execution on a headless install. |
+| `AGD_ASSISTANT_CONFIRM_MCP` | `true` | Whether MCP tool calls also require confirmation. MCP servers can make arbitrary outbound calls, which is the exfiltration half of the problem, so this defaults on. Turn it off to auto-run MCP tools (e.g. a read-only docs server) while keeping the gate on the built-in write tools. |
+| `AGD_PUBLIC_API_RATE` | `120` | Per-key request budget for `/api/v1`, requests per minute. In-memory and per-process. `0` disables the limiter. |
+| `AGD_INGEST_RATE` | `600` | Per-client-IP budget for the unauthenticated machine-ingest paths (the errors and messages webhooks, OTLP traces), requests per minute. `0` disables the limiter. Raise it if a proxy in front of AgeniusDesk collapses client IPs. |
+| `AGD_EGRESS_ALLOW_CIDRS` | (empty) | Optional outbound egress allowlist, comma-separated CIDRs (e.g. `10.0.0.0/8,192.168.1.0/24`). When set, a server-side fetch of an operator-supplied URL must resolve inside one of these ranges. Empty (default) allows private ranges, because self-hosted n8n / Ollama / Qdrant live there. |
 
 Baseline response headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Strict-Transport-Security` over HTTPS) are sent automatically. Sensitive data files (`.secret_key`, `secrets.json`, `config.json`, `secret_scope.json`, `users.json`, `dashboard.db`) are `chmod 600` at startup.
 
