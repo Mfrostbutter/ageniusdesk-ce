@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend import module_registry
 from backend.config import (
     agents_enabled,
     get_active_instance,
@@ -555,6 +556,20 @@ async def websocket_endpoint(ws: WebSocket):
 
 modules = register_modules(app)
 logger.info("Registered %d modules: %s", len(modules), ", ".join(modules))
+
+# A built-in that failed to load is a shipped feature silently missing from this
+# install. Restate it after the roster so it is not a lone line scrolled past
+# hundreds of startup messages earlier.
+_failed_builtins = [
+    e for e in module_registry.get_registry().values()
+    if e.source == "builtin" and e.status == "failed"
+]
+if _failed_builtins:
+    logger.error(
+        "%d built-in module(s) did not load and their features are unavailable: %s",
+        len(_failed_builtins),
+        "; ".join(f"{e.manifest.id} ({e.error})" for e in _failed_builtins),
+    )
 
 # ── Public API v1 sub-app — clean docs at /api/v1/docs ───────────────────────
 # Mounted as a separate ASGI sub-app so /api/v1/docs is isolated from internal

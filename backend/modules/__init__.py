@@ -109,7 +109,14 @@ def _register_builtin(app: FastAPI, child: Path) -> None:
             error=str(e),
             path=entry_path,
         ))
-        logger.warning("Failed to load module %s: %s", child.name, e)
+        # ERROR, not WARNING: a built-in is a shipped feature, so this is a
+        # degraded install, not an optional add-on declining to load. The
+        # traceback matters because the usual cause is a dependency that
+        # resolved to an incompatible version at build time.
+        logger.error(
+            "Built-in module %s FAILED to load, its features are unavailable: %s",
+            child.name, e, exc_info=True,
+        )
 
 
 def _register_community(app: FastAPI, child: Path) -> None:

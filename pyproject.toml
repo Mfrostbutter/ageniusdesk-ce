@@ -25,7 +25,11 @@ dependencies = [
     "websockets>=13.0",
     "python-multipart>=0.0.9",
     "cryptography>=42.0.0",
-    "mcp>=1.2.0",
+    # Ceiling is deliberate: mcp 2.0 removed mcp.server.fastmcp (the built-in
+    # dashboard MCP server's entry point), so an unbounded floor silently
+    # unmounts /api/mcp-dashboard on any fresh build. Lift once the server is
+    # ported to the 2.x mcp.server.mcpserver API.
+    "mcp>=1.2.0,<2.0.0",
     "aiodocker>=0.21.0",
     # OTLP receiver: generated OpenTelemetry protobuf schema (pulls in protobuf).
     # n8n's native OTel exporter speaks HTTP/Protobuf only, so the embedded
