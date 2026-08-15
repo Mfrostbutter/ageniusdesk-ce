@@ -140,16 +140,19 @@ async function loadInstances() {
   const addArea = document.getElementById('inst-add-area');
   if (!el) return;
   try {
-    // Fetch instances, containers, and host-aliases in parallel. Container and
-    // alias fetches are best-effort (Docker may be unavailable).
-    const [data, containersData, aliasData] = await Promise.all([
+    // Fetch instances, containers, host-aliases, and coverage in parallel.
+    // Container/alias/coverage fetches are best-effort (Docker or a given n8n
+    // instance may be unavailable).
+    const [data, containersData, aliasData, healthData] = await Promise.all([
       get('/api/n8n/instances'),
       get('/api/containers?all=true').catch(() => ({ containers: [] })),
       get('/api/containers/host-aliases').catch(() => ({ aliases: [] })),
+      get('/api/n8n/fleet/health').catch(() => ({ instances: [] })),
     ]);
     const instances = data.instances || [];
     const containers = containersData.containers || [];
     const hostAliases = new Set((aliasData.aliases || []).map(a => a.toLowerCase()));
+    const coverageMap = Object.fromEntries((healthData.instances || []).map(h => [h.id, h]));
     // Render add button / instance count
     if (addArea) {
       addArea.innerHTML = `
@@ -171,6 +174,7 @@ async function loadInstances() {
         const updateCell = containerId
           ? `<button class="btn btn-sm btn-ghost" onclick="window.__instUpdate('${jsStr(inst.id)}','${jsStr(inst.name)}','${jsStr(containerId)}')">Update</button>`
           : `<span class="pill pill-neutral" style="font-size:9px" title="No managed n8n container matched this instance's URL. If this n8n runs on the same host as the dashboard, set AGD_HOST_ALIASES to this host's LAN IP or hostname (the host shown in the URL above), then recreate the dashboard to enable one-click updates.">Not auto-updateable</span>`;
+        const coveragePill = _coveragePill(coverageMap[inst.id]);
         return `
         <tr id="inst-row-${esc(inst.id)}">
           <td>
@@ -179,6 +183,7 @@ async function loadInstances() {
           <td style="font-weight:500">
             ${esc(inst.name)}
             ${inst.active ? '<span class="pill pill-success" style="font-size:9px;margin-left:4px">ACTIVE</span>' : ''}
+            ${coveragePill}
           </td>
           <td style="font-family:var(--font-mono);font-size:12px">${esc(inst.url)}</td>
           <td style="font-size:12px;color:var(--text-dim)">${esc(inst.key_hint || 'configured')}</td>
@@ -1575,6 +1580,18 @@ function renderErrorHandler(el) {
       btn.textContent = orig;
     }
   });
+}
+
+// Warning pill for an instance whose successful-run data isn't fully saved.
+// A run n8n never saved data for can't be trace-backfilled, so this must be
+// visible before a recovery attempt, not discovered during one.
+function _coveragePill(health) {
+  if (!health || health.data_save_coverage !== 'degraded') return '';
+  const affected = health.data_save_affected || [];
+  const tip = affected.length
+    ? `Discards successful run data: ${affected.map(w => w.name).join(', ')}`
+    : (health.data_save_reason || 'Instance default discards successful run data');
+  return `<span class="pill pill-warning" style="font-size:9px;margin-left:4px" title="${attr(tip)}">Coverage gap</span>`;
 }
 
 function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }

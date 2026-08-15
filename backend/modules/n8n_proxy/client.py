@@ -362,6 +362,9 @@ async def _instance_health(inst: dict, exec_limit: int = 50) -> dict[str, Any]:
         "exec_error": 0,
         "error_rate": 0,
         "unhealthy": [],
+        "data_save_coverage": "unknown",
+        "data_save_affected": [],
+        "data_save_reason": "",
     }
     url = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
     api_key = decrypt_value(inst.get("api_key", ""))
@@ -392,6 +395,15 @@ async def _instance_health(inst: dict, exec_limit: int = 50) -> dict[str, Any]:
                 ({"id": wid, "name": names.get(wid, wid), "errors": n} for wid, n in err_by_wf.items()),
                 key=lambda x: -x["errors"],
             )[:10]
+
+            # Coverage warning: an instance/workflow saving no successful-run data
+            # can never be trace-backfilled for those runs. Surface it here rather
+            # than at recovery time.
+            from backend.modules.n8n_proxy import coverage
+            cov = await coverage.check_data_save_coverage(inst)
+            out["data_save_coverage"] = cov["status"]
+            out["data_save_affected"] = cov["affected_workflows"]
+            out["data_save_reason"] = cov["reason"]
     except httpx.ConnectError:
         out["error"] = "unreachable"
     except httpx.TimeoutException:

@@ -15,18 +15,24 @@ logger = logging.getLogger(__name__)
 _INSERT = """
     INSERT OR IGNORE INTO otel_spans
         (trace_id, span_id, parent_id, instance_id, workflow_id, workflow_name,
-         execution_id, name, kind, start_ns, end_ns, status, attributes_json)
+         execution_id, name, kind, start_ns, end_ns, status, attributes_json,
+         origin, received_at)
     VALUES (:trace_id, :span_id, :parent_id, :instance_id, :workflow_id, :workflow_name,
-            :execution_id, :name, :kind, :start_ns, :end_ns, :status, :attributes_json)
+            :execution_id, :name, :kind, :start_ns, :end_ns, :status, :attributes_json,
+            :origin, COALESCE(:received_at, datetime('now')))
 """
 
 
 async def insert_spans(rows: list[dict]) -> int:
-    """Insert span rows, ignoring duplicates. Returns rows actually inserted."""
+    """Insert span rows, ignoring duplicates. Returns rows actually inserted.
+
+    Rows may carry ``origin`` and ``received_at``; absent means OTLP-received now.
+    """
     if not rows:
         return 0
     db = await get_db()
-    cur = await db.executemany(_INSERT, rows)
+    payload = [{**r, "origin": r.get("origin"), "received_at": r.get("received_at")} for r in rows]
+    cur = await db.executemany(_INSERT, payload)
     await db.commit()
     # rowcount on executemany is driver-dependent; report best-effort.
     return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else len(rows)
@@ -59,9 +65,15 @@ async def prune(retention_hours: int, max_spans: int, incoming: int = 0) -> None
     await db.commit()
 
 
-async def count_spans() -> int:
+async def count_spans(instance_id: str = "") -> int:
+    """Stored span count. instance_id == '' counts every instance."""
     db = await get_db()
-    cur = await db.execute("SELECT COUNT(*) AS n FROM otel_spans")
+    if instance_id:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n FROM otel_spans WHERE instance_id = ?", (instance_id,)
+        )
+    else:
+        cur = await db.execute("SELECT COUNT(*) AS n FROM otel_spans")
     row = await cur.fetchone()
     return int(row["n"]) if row else 0
 
@@ -206,6 +218,41 @@ async def trace_id_for_execution(execution_id: str) -> str:
     )
     row = await cur.fetchone()
     return row["trace_id"] if row else ""
+
+
+async def trace_has_real_spans(trace_id: str) -> bool:
+    """True when any span of the trace was actually received (origin != 'backfill').
+
+    Real telemetry outranks a reconstruction; a trace that is entirely
+    origin='backfill' may be re-synthesized or replaced.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT 1 FROM otel_spans WHERE trace_id = ? "
+        "AND (origin IS NULL OR origin != 'backfill') LIMIT 1",
+        (trace_id,),
+    )
+    return (await cur.fetchone()) is not None
+
+
+async def delete_backfill_spans(instance_id: str, execution_id: str) -> int:
+    """Delete the backfilled trace (root + children) for one execution.
+
+    Child rows carry no execution_id, so resolve the synthetic trace_id via the
+    root row first, then delete every origin='backfill' row of that trace.
+    No-op (0) in the common case where nothing was backfilled.
+    """
+    if not execution_id:
+        return 0
+    db = await get_db()
+    cur = await db.execute(
+        "DELETE FROM otel_spans WHERE origin = 'backfill' AND trace_id IN ("
+        "SELECT DISTINCT trace_id FROM otel_spans "
+        "WHERE origin = 'backfill' AND execution_id = ? AND instance_id = ?)",
+        (execution_id, instance_id),
+    )
+    await db.commit()
+    return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
 async def get_trace(trace_id: str) -> list[dict]:

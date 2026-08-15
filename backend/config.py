@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     # legitimate cascade skip downstream of an empty node is not flagged.
     agd_health_deadman_enabled: bool = True
     agd_health_deadman_min_run_rate: float = 0.9  # node must have run in >= this share of recent workflow executions
+    # Trace backfill (on-demand rebuild from n8n execution history). Bounds the
+    # fan-out against a production instance: parallel run-data fetches and a hard
+    # per-run execution cap.
+    agd_backfill_concurrency: int = 4
+    agd_backfill_max_executions: int = 500
     # Cost observability: how often to refresh the LLM price book from OpenRouter's
     # public models API. The fetched table is cached to data/price_book.json with a
     # last-good fallback; operator overrides and a bundled default layer over it.

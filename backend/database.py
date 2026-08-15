@@ -170,6 +170,14 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    # origin on otel_spans (trace backfill). NULL/'otlp' = received over OTLP,
+    # 'backfill' = synthesized from n8n execution history.
+    cursor = await db.execute("PRAGMA table_info(otel_spans)")
+    ocols = {row["name"] for row in await cursor.fetchall()}
+    if "origin" not in ocols:
+        await db.execute("ALTER TABLE otel_spans ADD COLUMN origin TEXT")
+    await db.commit()
+
     # otel_instance_map — resolves an n8n exporter's identity (the opaque
     # resource `n8n.instance.id` hash n8n emits over OTLP) to a configured AGD
     # instance. n8n's resource attributes carry no name/url AGD can match, so

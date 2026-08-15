@@ -1,0 +1,293 @@
+{
+ "id": "25173",
+ "finished": true,
+ "mode": "webhook",
+ "retryOf": null,
+ "retrySuccessId": null,
+ "status": "success",
+ "createdAt": "2026-08-14T22:31:36.238Z",
+ "startedAt": "2026-08-14T22:31:36.256Z",
+ "stoppedAt": "2026-08-14T22:31:36.671Z",
+ "deletedAt": null,
+ "workflowId": "yypq0kHoZ8pGt93r",
+ "waitTill": null,
+ "storedAt": "db",
+ "tracingContext": {
+  "traceparent": "00-e837a9cd9b9d669ad57ed94d9a44b9a9-3054e0a73ed89517-01"
+ },
+ "deduplicationKey": null,
+ "jsonSizeBytes": 7324,
+ "binaryDataSizeBytes": 0,
+ "workflowVersionId": "3aeb8e55-fc40-4d0b-bd59-dec38f8f31ae",
+ "usedPrivateCredentials": false,
+ "data": {
+  "version": 1,
+  "startData": {},
+  "resultData": {
+   "runData": {
+    "Manual Trigger": [
+     {
+      "startTime": 1786746696286,
+      "executionIndex": 0,
+      "source": [],
+      "hints": [],
+      "executionTime": 3,
+      "executionStatus": "success",
+      "data": {
+       "main": [
+        [
+         {
+          "json": {
+           "headers": {
+            "host": "localhost:5679",
+            "user-agent": "curl/8.5.0",
+            "accept": "*/*"
+           },
+           "params": {},
+           "query": {},
+           "body": {},
+           "webhookUrl": "https://n8n.example.com/webhook/order-sync",
+           "executionMode": "production"
+          },
+          "pairedItem": {
+           "item": 0
+          }
+         }
+        ]
+       ]
+      }
+     }
+    ],
+    "Get Orders": [
+     {
+      "startTime": 1786746696301,
+      "executionIndex": 1,
+      "source": [
+       {
+        "previousNode": "Manual Trigger",
+        "previousNodeOutput": 0,
+        "previousNodeRun": 0
+       }
+      ],
+      "hints": [],
+      "executionTime": 282,
+      "executionStatus": "success",
+      "data": {
+       "main": [
+        [
+         {
+          "json": {
+           "error": {
+            "message": "500 - \"\"",
+            "name": "AxiosError",
+            "stack": "AxiosError: Request failed with status code 500\n    at settle (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/axios@1.18.0/node_modules/axios/dist/node/axios.cjs:2199:12)\n    at RedirectableRequest.handleResponse (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/axios@1.18.0/node_modules/axios/dist/node/axios.cjs:3965:9)\n    at RedirectableRequest.emit (node:events:521:24)\n    at RedirectableRequest._processResponse (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/follow-redirects@1.16.0/node_modules/follow-redirects/index.js:424:10)\n    at ClientRequest.RedirectableRequest._onNativeResponse (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/follow-redirects@1.16.0/node_modules/follow-redirects/index.js:109:12)\n    at Object.onceWrapper (node:events:631:26)\n    at ClientRequest.emit (node:events:509:28)\n    at HTTPParser.parserOnIncomingClient (node:_http_client:798:27)\n    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)\n    at TLSSocket.socketOnData (node:_http_client:633:22)\n    at Axios.request (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/axios@1.18.0/node_modules/axios/dist/node/axios.cjs:5427:41)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at invokeAxios (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/@n8n+backend-network@file+packages+@n8n+backend-network_@opentelemetry+exporter-trace-o_c320f1148da0f696fbea4370e7dd6b77/node_modules/@n8n/backend-network/src/http/axios/invoke.ts:15:10)\n    at executeLegacyRequest (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/@n8n+backend-network@file+packages+@n8n+backend-network_@opentelemetry+exporter-trace-o_c320f1148da0f696fbea4370e7dd6b77/node_modules/@n8n/backend-network/src/http/legacy-request.ts:77:6)\n    at Object.requestLegacy (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/@n8n+backend-network@file+packages+@n8n+backend-network_@opentelemetry+exporter-trace-o_c320f1148da0f696fbea4370e7dd6b77/node_modules/@n8n/backend-network/src/http/outbound-http.ts:199:13)\n    at proxyRequestToAxios (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file+packages+core_@opentelemetry+api@1.9.0_@opentelemetry+exporter-trace-otlp_56f5a5be5f9a76dfbcdc404d6ec4dea5/node_modules/n8n-core/src/execution-engine/node-execution-context/utils/request-helpers/legacy-request-adapter.ts:31:9)\n    at Object.request (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file+packages+core_@opentelemetry+api@1.9.0_@opentelemetry+exporter-trace-otlp_56f5a5be5f9a76dfbcdc404d6ec4dea5/node_modules/n8n-core/src/execution-engine/node-execution-context/utils/request-helpers/factory.ts:166:11)",
+            "code": "ERR_BAD_RESPONSE",
+            "status": 500
+           }
+          },
+          "pairedItem": {
+           "item": 0
+          }
+         }
+        ]
+       ]
+      }
+     }
+    ],
+    "Parse & Validate": [
+     {
+      "startTime": 1786746696597,
+      "executionIndex": 2,
+      "source": [
+       {
+        "previousNode": "Get Orders",
+        "previousNodeOutput": 0,
+        "previousNodeRun": 0
+       }
+      ],
+      "hints": [],
+      "executionTime": 60,
+      "executionStatus": "success",
+      "data": {
+       "main": [
+        []
+       ]
+      }
+     }
+    ]
+   },
+   "lastNodeExecuted": "Parse & Validate"
+  },
+  "executionData": {
+   "contextData": {},
+   "nodeExecutionStack": [],
+   "metadata": {},
+   "waitingExecution": {},
+   "waitingExecutionSource": {},
+   "runtimeData": {
+    "version": 1,
+    "establishedAt": 1786746696234,
+    "source": "webhook",
+    "triggerNode": {
+     "name": "Manual Trigger",
+     "type": "n8n-nodes-base.webhook"
+    },
+    "redaction": {
+     "version": 2,
+     "production": false,
+     "manual": false,
+     "source": "workflow"
+    }
+   }
+  },
+  "resumeToken": "0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ "workflowData": {
+  "id": "yypq0kHoZ8pGt93r",
+  "name": "[silent-test] order-sync",
+  "nodes": [
+   {
+    "id": "d1000000-0000-4000-8000-000000000001",
+    "name": "Manual Trigger",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "multipleMethods": false,
+     "httpMethod": "GET",
+     "path": "order-sync",
+     "authentication": "none",
+     "responseMode": "onReceived",
+     "contentTypeNotice": "",
+     "options": {}
+    },
+    "webhookId": "order-sync-hook"
+   },
+   {
+    "id": "d1000000-0000-4000-8000-000000000002",
+    "name": "Get Orders",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     220,
+     0
+    ],
+    "onError": "continueRegularOutput",
+    "parameters": {
+     "curlImport": "",
+     "method": "GET",
+     "url": "https://httpbin.org/status/500",
+     "authentication": "none",
+     "provideSslCertificates": false,
+     "sendQuery": false,
+     "sendHeaders": false,
+     "sendBody": false,
+     "options": {},
+     "infoMessage": ""
+    }
+   },
+   {
+    "id": "d1000000-0000-4000-8000-000000000003",
+    "name": "Parse & Validate",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "language": "javaScript",
+     "jsCode": "// Flatten whatever the HTTP node returned into order records, then keep only\n// well-formed ones. On an upstream failure (error item, empty object) nothing\n// validates and we emit zero - the silent failure emerges here, not injected.\nconst input = $input.all();\nconst rows = [];\nfor (const it of input) {\n  const b = it.json;\n  if (Array.isArray(b)) { for (const r of b) rows.push(r); }\n  else if (b && Array.isArray(b.data)) { for (const r of b.data) rows.push(r); }\n  else if (b && b.id != null && b.title) { rows.push(b); }\n}\nconst valid = rows.filter(r => r && r.id != null && typeof r.title === 'string' && r.title.length > 0);\nreturn valid.map(r => ({ json: { orderId: r.id, customerId: r.userId, ref: r.title } }));",
+     "notice": ""
+    }
+   },
+   {
+    "id": "d1000000-0000-4000-8000-000000000004",
+    "name": "Unshipped Only",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "language": "javaScript",
+     "jsCode": "// Business filter: only orders from priority customers (id <= 5) go to fulfillment.\nreturn $input.all().filter(it => Number(it.json.customerId) <= 5);",
+     "notice": ""
+    }
+   },
+   {
+    "id": "d1000000-0000-4000-8000-000000000005",
+    "name": "Queue Fulfillment",
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1,
+    "position": [
+     880,
+     0
+    ],
+    "parameters": {}
+   }
+  ],
+  "connections": {
+   "Manual Trigger": {
+    "main": [
+     [
+      {
+       "node": "Get Orders",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Orders": {
+    "main": [
+     [
+      {
+       "node": "Parse & Validate",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Parse & Validate": {
+    "main": [
+     [
+      {
+       "node": "Unshipped Only",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Unshipped Only": {
+    "main": [
+     [
+      {
+       "node": "Queue Fulfillment",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "saveDataErrorExecution": "all",
+   "saveDataSuccessExecution": "all",
+   "saveManualExecutions": true,
+   "saveExecutionProgress": true,
+   "binaryMode": "separate"
+  },
+  "nodeGroups": []
+ },
+ "customData": {}
+}

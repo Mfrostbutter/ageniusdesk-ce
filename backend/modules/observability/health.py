@@ -418,6 +418,14 @@ async def enrich_trace_health(trace_id: str) -> int:
 
         wf_id = (root or {}).get("workflow_id", "") or "unknown"
         wf_name = (root or {}).get("workflow_name", "") or "Unknown Workflow"
+        # Stamp incidents with the EXECUTION's time (root span start), not ingest
+        # time, so one raised from a backfilled trace sorts into history in the
+        # Errors feed instead of surfacing as breaking news.
+        root_start_ns = int((root or {}).get("start_ns") or 0)
+        occurred_at = (
+            datetime.fromtimestamp(root_start_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            if root_start_ns > 0 else ""
+        )
         for hit in all_hits:
             try:
                 await errors_collector.store_error({
@@ -425,6 +433,7 @@ async def enrich_trace_health(trace_id: str) -> int:
                     "workflow_id": wf_id,
                     "workflow_name": wf_name,
                     "execution_id": exec_id,
+                    "occurred_at": occurred_at,
                     "node_name": hit["node"],
                     "error_message": hit.get("error_summary")
                     or "Node produced no/low output on a run n8n reported as success.",
