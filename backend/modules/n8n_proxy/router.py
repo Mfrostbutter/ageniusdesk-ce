@@ -184,6 +184,53 @@ async def edit_instance(instance_id: str, req: InstanceRequest):
     return {"success": True}
 
 
+class RenameRequest(BaseModel):
+    name: str
+
+
+@router.patch("/instances/{instance_id}")
+async def rename_instance(instance_id: str, req: RenameRequest):
+    """Rename an instance. Name only; every other field is untouched."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    if not update_instance(instance_id, {"name": name}):
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return {"success": True, "name": name}
+
+
+class RotateKeyRequest(BaseModel):
+    api_key: str
+
+
+@router.post("/instances/{instance_id}/rotate-key")
+async def rotate_instance_key(instance_id: str, req: RotateKeyRequest):
+    """Swap the stored n8n API key, verifying the new key connects before saving.
+
+    The old key is never returned or logged. n8n keeps the old key valid until
+    it is revoked there; this only changes what the dashboard uses.
+    """
+    inst = next((i for i in get_instances() if i["id"] == instance_id), None)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    api_key = req.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key cannot be empty")
+    url = decrypt_value(inst.get("url", ""))
+    result = await client.test_connection_with(url, api_key, verify=inst.get("tls_verify"))
+    if not result["connected"]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": result.get("message") or "The new key could not connect. The stored key was not changed.",
+                "error_class": result.get("error_class", "generic"),
+            },
+        )
+    update_instance(instance_id, {"api_key": api_key})
+    key_hint = "..." + api_key[-4:] if len(api_key) > 8 else "configured"
+    return {"success": True, "key_hint": key_hint}
+
+
 @router.get("/instances/{instance_id}/login")
 async def get_instance_login(instance_id: str):
     """Return the stored n8n owner login (URL / email / password) for the given

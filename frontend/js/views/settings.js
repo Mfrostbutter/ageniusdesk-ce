@@ -2,7 +2,7 @@
  * Settings view — instance management, secrets store, themes, error handler.
  */
 
-import { get, post, del } from '../api.js';
+import { get, post, patch, del } from '../api.js';
 import * as toast from '../components/toast.js';
 import { setActiveTheme, getCurrentTheme } from '../themes.js';
 import { secretField, invalidateRefsCache } from '../components/secretfield.js';
@@ -182,11 +182,17 @@ async function loadInstances() {
           </td>
           <td style="font-weight:500">
             ${esc(inst.name)}
+            <button class="btn btn-sm btn-ghost" style="padding:0 4px;font-size:11px" title="Rename instance"
+              onclick="window.__instRename('${jsStr(inst.id)}','${jsStr(inst.name)}')">&#9998;</button>
             ${inst.active ? '<span class="pill pill-success" style="font-size:9px;margin-left:4px">ACTIVE</span>' : ''}
             ${coveragePill}
           </td>
           <td style="font-family:var(--font-mono);font-size:12px">${esc(inst.url)}</td>
-          <td style="font-size:12px;color:var(--text-dim)">${esc(inst.key_hint || 'configured')}</td>
+          <td style="font-size:12px;color:var(--text-dim)">
+            ${esc(inst.key_hint || 'configured')}
+            <button class="btn btn-sm btn-ghost" style="padding:0 4px;font-size:11px" title="Rotate API key"
+              onclick="window.__instRotateKey('${jsStr(inst.id)}','${jsStr(inst.name)}')">Rotate</button>
+          </td>
           <td style="white-space:nowrap">
             ${updateCell}
             ${inst.has_login ? `<button class="btn btn-sm btn-ghost" onclick="window.__instLogin('${jsStr(inst.id)}','${jsStr(inst.name)}','${inst.color || ''}')" title="Show n8n sign-in details">Sign in to n8n</button>` : ''}
@@ -393,6 +399,61 @@ window.__activateInst = async (id) => {
     loadInstances();
     if (window.__refreshInstances) window.__refreshInstances();
   } catch (e) { toast.error(e.message); }
+};
+
+window.__instRename = async (id, currentName) => {
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">Instance name</label>
+    <input type="text" id="inst-rename-input" class="input" style="width:100%" maxlength="120">
+  `;
+  body.querySelector('#inst-rename-input').value = currentName;
+  setTimeout(() => body.querySelector('#inst-rename-input')?.select(), 0);
+  const confirmed = await openModal({
+    title: 'Rename instance',
+    body,
+    confirmLabel: 'Rename',
+    cancelLabel: 'Cancel',
+  });
+  if (!confirmed) return;
+  const name = body.querySelector('#inst-rename-input').value.trim();
+  if (!name || name === currentName) return;
+  try {
+    await patch(`/api/n8n/instances/${id}`, { name });
+    toast.success(`Renamed to "${name}"`);
+    loadInstances();
+    if (window.__refreshInstances) window.__refreshInstances();
+  } catch (e) { toast.error(e.message); }
+};
+
+window.__instRotateKey = async (id, name) => {
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
+      Create a new API key in n8n (<strong>Settings &gt; n8n API</strong>) and paste it below.
+      The new key is tested against the instance before anything is saved; the old key
+      stays valid in n8n until you revoke it there.
+    </p>
+    <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">New API key</label>
+    <input type="password" id="inst-rotate-input" class="input" style="width:100%" autocomplete="off" spellcheck="false">
+  `;
+  setTimeout(() => body.querySelector('#inst-rotate-input')?.focus(), 0);
+  const confirmed = await openModal({
+    title: `Rotate API key: ${name}`,
+    body,
+    confirmLabel: 'Test & Save',
+    cancelLabel: 'Cancel',
+  });
+  if (!confirmed) return;
+  const apiKey = body.querySelector('#inst-rotate-input').value.trim();
+  if (!apiKey) { toast.error('No key entered; nothing changed.'); return; }
+  try {
+    await post(`/api/n8n/instances/${id}/rotate-key`, { api_key: apiKey });
+    toast.success(`API key rotated for "${name}"`);
+    loadInstances();
+  } catch (e) {
+    toast.error(e.message || 'Rotation failed; the stored key was not changed.');
+  }
 };
 
 window.__removeInst = async (id, name) => {
