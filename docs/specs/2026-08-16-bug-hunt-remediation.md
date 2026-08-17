@@ -103,6 +103,10 @@ Then add a lint-style guard: module docstring note in `client.py` that `_verify(
 
 **Verification.** Pytest with two seeded instances, active `tls_verify=False`, target `tls_verify=True` (and inverted): monkeypatched `httpx.AsyncClient` captures the `verify` kwarg per call for health, backup fan-out, promote probe, provision, mirror, schema fetch. The plaintext-POST-with-verify-off direction is the must-pass case.
 
+### Phase 3 outcome (2026-08-17, verified)
+
+All eight sites landed as specified, credential-plaintext direction first, plus BUG-025 (probe had no `verify=` at all) and BUG-033 (`test_connection_with` `verify=None` now resolves to the global `tls_verify()`, not the active instance's override). `fetch_live_schemas` gained an optional `inst` kwarg; both callers pass the instance through, and the `None` default falls back to the global flag for any caller with no instance context. The implementation arrived clean; the only fixes needed in review were two dead `_verify` imports left behind in `promote.py` and `n8n_credentials/router.py` (ruff F401) and import-order autofixes. Suite: 549 -> 559, all green. Lint guard in `tests/test_phase3_tls.py` greps each fixed site for `tls_verify_for_instance` so a silent revert fails the suite. Note for auditors: LLM-provider, GitHub-installer, player, and `_runtime` localhost clients intentionally remain on the global flag or no `verify=`; they never contact an n8n instance and were out of S2 scope.
+
 ---
 
 ## Phase 4: Backend correctness

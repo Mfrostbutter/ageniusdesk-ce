@@ -43,8 +43,7 @@ from backend.modules.n8n_credentials.router import (
     _schemas_for_instance,
 )
 from backend.modules.n8n_proxy import client
-from backend.modules.n8n_proxy.client import _verify
-from backend.net import UnsafeProbeURL, assert_safe_probe_url
+from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify_for_instance
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ async def _probe_instance(inst: dict) -> tuple[bool, str]:
     if not url:
         return False, "no URL configured"
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, verify=_verify()) as c:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, verify=tls_verify_for_instance(inst)) as c:
             r = await c.get(f"{url}/api/v1/workflows",
                             headers={"X-N8N-API-KEY": key}, params={"limit": 1})
         if r.status_code == 200:
@@ -135,7 +134,9 @@ async def _provision_credential(target: dict, secret_name: str, cred_type: str) 
     secret_value = _resolve_secret(secret_name)  # decrypted str or compound dict
     payload = build_credential_payload(secret_name, secret_value, cred_type,
                                        schema=schemas.get(cred_type))
-    async with httpx.AsyncClient(timeout=15.0, verify=_verify()) as c:
+    # Plaintext secret values are POSTed here, so TLS must resolve against the
+    # TARGET instance, not the active one.
+    async with httpx.AsyncClient(timeout=15.0, verify=tls_verify_for_instance(target)) as c:
         r = await c.post(f"{url}/api/v1/credentials",
                          headers={"X-N8N-API-KEY": api_key, "Content-Type": "application/json"},
                          json=payload)
@@ -340,7 +341,7 @@ async def _target_supported_cred_types(target: dict) -> set[str]:
     """The credential types the target instance actually ships (schema 200)."""
     url = decrypt_value(target.get("url", ""))
     key = decrypt_value(target.get("api_key", ""))
-    schemas = await fetch_live_schemas(url, key)
+    schemas = await fetch_live_schemas(url, key, inst=target)
     return set(schemas.keys())
 
 

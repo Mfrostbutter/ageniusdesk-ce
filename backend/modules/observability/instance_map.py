@@ -146,7 +146,9 @@ async def _probe_instance(inst: dict, execution_id: str, workflow_id: str) -> bo
         return False
     headers = {"X-N8N-API-KEY": api_key, "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+        # Targets `inst`, not the active instance, so TLS resolves against it.
+        from backend.net import tls_verify_for_instance
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
             resp = await client.get(f"{url}/api/v1/executions/{execution_id}", headers=headers)
         if resp.status_code != 200:
             return False

@@ -37,8 +37,7 @@ from backend.config import (
     load_secrets,
     record_scope_hosts,
 )
-from backend.modules.n8n_proxy.client import _verify as _tls_verify
-from backend.net import UnsafeProbeURL, assert_safe_probe_url
+from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify_for_instance
 
 from .mappings import build_credential_payload, build_types_list_for_ui, fetch_live_schemas
 
@@ -160,7 +159,7 @@ async def _schemas_for_instance(instance_id: str) -> dict[str, dict]:
 
     inst = _instance_by_id(instance_id)
     url, api_key = _resolve_instance_creds(inst)
-    schemas = await fetch_live_schemas(url, api_key)
+    schemas = await fetch_live_schemas(url, api_key, inst=inst)
     _SCHEMA_CACHE[instance_id] = {"fetched_at": now, "schemas": schemas}
     return schemas
 
@@ -226,7 +225,9 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
     schemas = await _schemas_for_instance(instance_id)
 
     results = []
-    async with httpx.AsyncClient(timeout=15.0, verify=_tls_verify()) as client:
+    # Plaintext secret values are POSTed inside this loop, so TLS resolves
+    # against the target instance, not the active one.
+    async with httpx.AsyncClient(timeout=15.0, verify=tls_verify_for_instance(inst)) as client:
         for item in req.items:
             if item.skip:
                 results.append({"secret_name": item.secret_name, "status": "skipped"})
@@ -378,7 +379,7 @@ async def unlink_mirror(instance_id: str, secret_name: str):
     n8n_error = ""
     if cred_id and url and api_key:
         try:
-            async with httpx.AsyncClient(timeout=10.0, verify=_tls_verify()) as client:
+            async with httpx.AsyncClient(timeout=10.0, verify=tls_verify_for_instance(inst)) as client:
                 r = await client.delete(
                     f"{url}/api/v1/credentials/{cred_id}",
                     headers={"X-N8N-API-KEY": api_key},

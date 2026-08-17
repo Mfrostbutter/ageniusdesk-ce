@@ -1,4 +1,13 @@
-"""Async n8n REST API client with retry logic and webhook fallback."""
+"""Async n8n REST API client with retry logic and webhook fallback.
+
+TLS verification rule for this module: ``_verify()`` resolves against the
+ACTIVE instance (honoring ``use_instance()``), so it is legal only for calls
+that genuinely target the active instance. Any call that targets a specific
+instance dict — fleet health, backup fan-out, promote probe/provision, schema
+fetch, observability probe — must pass ``tls_verify_for_instance(inst)``
+instead. ``tests/test_phase3_tls.py`` greps the known per-instance sites so a
+regression fails loudly.
+"""
 
 import asyncio
 import logging
@@ -280,13 +289,16 @@ async def test_connection_with(url: str, api_key: str, verify: bool | None = Non
     `verify` overrides TLS verification for this probe. The instance is not saved
     yet, so its tls_verify setting cannot be resolved from config — the caller
     passes it through, otherwise a self-signed box would fail its own connect
-    test and never get added. None = the global default.
+    test and never get added. None = the global default (AGD_TLS_VERIFY), NOT
+    the active instance's per-instance override: a probe of an unsaved URL has
+    no instance to resolve against, and borrowing the active instance's setting
+    can wrongly reject a rotate-key probe.
 
     Returns {"connected": bool, "error_class": str, "message": str}.
     error_class is one of: "ok", "dns", "auth", "notfound", "timeout", "generic".
     """
     from backend.config import decrypt_value
-    from backend.net import UnsafeProbeURL, assert_safe_probe_url
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify
     url = decrypt_value(url)
     api_key = decrypt_value(api_key)
     # SSRF floor for every connect path (create instance, setup wizard, test-creds):
@@ -297,7 +309,7 @@ async def test_connection_with(url: str, api_key: str, verify: bool | None = Non
     except UnsafeProbeURL as exc:
         return {"connected": False, "error_class": "blocked", "message": f"URL not allowed: {exc}"}
     headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
-    tls = _verify() if verify is None else bool(verify)
+    tls = tls_verify() if verify is None else bool(verify)
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls) as client:
             resp = await client.get(f"{url.rstrip('/')}/api/v1/workflows", headers=headers, params={"limit": 1})
@@ -370,7 +382,8 @@ async def _instance_health(inst: dict, exec_limit: int = 50) -> dict[str, Any]:
     api_key = decrypt_value(inst.get("api_key", ""))
     headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        # Targets `inst`, not the active instance, so TLS resolves against it.
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
             wf = await client.get(f"{url}/api/v1/workflows", headers=headers, params={"limit": 250})
             if wf.status_code != 200:
                 out["error"] = "auth" if wf.status_code in (401, 403) else f"HTTP {wf.status_code}"
@@ -1100,7 +1113,8 @@ async def export_all_workflows_for(inst: dict, active_only: bool = False) -> lis
 
     workflows: list[dict] = []
     cursor = ""
-    async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+    # Targets `inst`, not the active instance, so TLS resolves against it.
+    async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
         while True:
             q = dict(params)
             if cursor:
