@@ -64,7 +64,11 @@ export function buildWaterfall(spans) {
   const costHtml = totalCost > 0
     ? ` · <span style="color:var(--accent)">${fmtUsd(totalCost)}${anyEstimate ? ' est' : ''}</span>`
     : '';
-  head.innerHTML = `<span>${spans.length} spans</span><span>total ${((t1 - t0) / 1e6).toFixed(1)} ms${costHtml}</span>`;
+  // A trace synthesized from execution history is not live telemetry; say so.
+  const reconstructed = spans.every(s => s.origin === 'backfill')
+    ? ' <span class="pill pill-neutral" title="Synthesized from n8n execution history, not live telemetry">reconstructed</span>'
+    : '';
+  head.innerHTML = `<span>${spans.length} spans${reconstructed}</span><span>total ${((t1 - t0) / 1e6).toFixed(1)} ms${costHtml}</span>`;
   wrap.appendChild(head);
 
   ordered.forEach(s => {

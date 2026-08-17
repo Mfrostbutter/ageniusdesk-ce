@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -151,7 +152,13 @@ async def search(query: str, tag: str | None = None, limit: int = 30) -> list[di
                 params.append(f"%{json.dumps(tag.lower())[1:-1]}%")
             sql += "ORDER BY bm25(notes_fts) LIMIT ?"
             params.append(limit)
-            cur = await db.execute(sql, params)
+            try:
+                cur = await db.execute(sql, params)
+            except sqlite3.OperationalError:
+                # Sanitizer passed through FTS5 syntax that still won't parse
+                # (unbalanced quote, stray operator): retry as a quoted literal.
+                params[0] = '"' + query.replace('"', '""') + '"'
+                cur = await db.execute(sql, params)
         else:
             sql = "SELECT path, title, '' AS snippet, tags FROM notes_meta "
             params = []

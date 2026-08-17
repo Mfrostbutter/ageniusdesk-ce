@@ -209,12 +209,17 @@ async def silent_execution_ids(execution_ids: list[str], instance_id: str = "") 
     return {r["execution_id"] for r in rows if r["execution_id"]}
 
 
-async def trace_id_for_execution(execution_id: str) -> str:
-    """Most recent trace id for an n8n execution id, or '' if none captured."""
+async def trace_id_for_execution(execution_id: str, instance_id: str) -> str:
+    """Most recent trace id for an n8n execution id ON ONE INSTANCE, or ''.
+
+    Execution ids are sequential ints per instance, so two instances routinely
+    share an id; an unscoped lookup returns whichever instance wrote last.
+    """
     db = await get_db()
     cur = await db.execute(
-        "SELECT trace_id FROM otel_spans WHERE execution_id = ? ORDER BY start_ns DESC LIMIT 1",
-        (execution_id,),
+        "SELECT trace_id FROM otel_spans WHERE execution_id = ? AND instance_id = ? "
+        "ORDER BY start_ns DESC LIMIT 1",
+        (execution_id, instance_id),
     )
     row = await cur.fetchone()
     return row["trace_id"] if row else ""
@@ -294,6 +299,7 @@ async def get_trace(trace_id: str) -> list[dict]:
             "error_summary": r["error_summary"] or "",
             "http_status": int(r["http_status"]) if r["http_status"] is not None else None,
             "output_items": int(r["output_items"]) if r["output_items"] is not None else None,
+            "origin": r["origin"] or "",
             "attributes": attrs,
         })
     return spans

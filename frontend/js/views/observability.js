@@ -87,7 +87,12 @@ async function load(container) {
 
   const body = container.querySelector('#obs-body');
   if (!status.enabled) {
-    body.innerHTML = setupHtml();
+    // Receiver off is exactly the outage state Rebuild exists for; the backend
+    // backfill works without the receiver, so keep the recovery action reachable.
+    body.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px">${backfillPanelHtml(false)}</div>
+      ${setupHtml()}`;
+    bindBackfill();
     return;
   }
   // Receiver on, but this instance has never exported a span. The list would

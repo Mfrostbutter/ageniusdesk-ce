@@ -244,9 +244,16 @@ def list_backups() -> list[dict[str, Any]]:
     return out
 
 
+_INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
 def resolve_backup_path(instance_id: str, filename: str) -> Path | None:
     """Return the on-disk path for a snapshot, or None if the name is malformed
     or would escape the instance's backup directory (traversal guard)."""
+    # The instance segment is caller-supplied too; slug-validate it before it
+    # ever becomes a path component.
+    if not _INSTANCE_ID_RE.match(instance_id or ""):
+        return None
     if not _FILE_RE.match(filename or ""):
         return None
     base = _instance_dir(instance_id).resolve()

@@ -112,10 +112,10 @@ async def test_backfill_execution_idempotent(client, monkeypatch, no_enrich):
         n1 = await backfill.backfill_execution("25173", INSTANCE)
         assert n1 == 4
         assert await _trace_count(trace_id) == 4
-        # Second run over an existing backfill re-synthesizes; deterministic ids
-        # make it a no-op, never a duplicate.
+        # Second run over an existing backfill re-synthesizes: stale rows are
+        # replaced (delete + reinsert), never accreted.
         n2 = await backfill.backfill_execution("25173", INSTANCE)
-        assert n2 == 0
+        assert n2 == 4
         assert await _trace_count(trace_id) == 4
         assert len(calls) == 2  # fetched both times: a backfill never blocks a re-backfill
     finally:
@@ -153,12 +153,12 @@ async def test_backfill_empty_payload_returns_zero(client, monkeypatch, no_enric
 async def test_detect_health_false_skips_health_but_not_cost(client, monkeypatch):
     cost_calls, health_calls = [], []
 
-    async def fake_cost(trace_id):
-        cost_calls.append(trace_id)
+    async def fake_cost(trace_id, raw=None):
+        cost_calls.append((trace_id, raw is not None))
         return 0
 
-    async def fake_health(trace_id):
-        health_calls.append(trace_id)
+    async def fake_health(trace_id, raw=None):
+        health_calls.append((trace_id, raw is not None))
         return 0
 
     monkeypatch.setattr(cost, "enrich_trace", fake_cost)
@@ -169,10 +169,11 @@ async def test_detect_health_false_skips_health_but_not_cost(client, monkeypatch
     await _purge(trace_id)
     try:
         assert await backfill.backfill_execution("91004", INSTANCE, detect_health=False) == 3
-        assert cost_calls == [trace_id]
+        # (trace, True): backfill hands its fetched payload to the enricher (BUG-029).
+        assert cost_calls == [(trace_id, True)]
         assert health_calls == []
-        assert await backfill.backfill_execution("91004", INSTANCE, detect_health=True) == 0
-        assert health_calls == [trace_id]
+        assert await backfill.backfill_execution("91004", INSTANCE, detect_health=True) == 3
+        assert health_calls == [(trace_id, True)]
     finally:
         await _purge(trace_id)
 
@@ -284,8 +285,10 @@ async def test_backfill_instance_summary_counts(client, monkeypatch, no_enrich):
     }])
     try:
         summary = await backfill.backfill_instance(INSTANCE)
+        # scanned counts only in-window rows: outside-retention is reported
+        # separately and no longer eats the per-run cap (BUG-026).
         assert summary == {
-            "scanned": 4, "backfilled": 1, "spans": 3, "skipped_traced": 1,
+            "scanned": 3, "backfilled": 1, "spans": 3, "skipped_traced": 1,
             "outside_retention": 1, "no_data": 1, "errors": 0,
         }
         assert await _trace_count(bf_trace) == 3
@@ -435,7 +438,7 @@ async def test_late_real_trace_replaces_backfill(client, monkeypatch, no_enrich)
         # Backfilled spans gone, root and children both (children carry no execution_id).
         assert await _trace_count(bf_trace) == 0
         assert await _trace_count(real_trace) == 2
-        assert await storage.trace_id_for_execution(exec_id) == real_trace
+        assert await storage.trace_id_for_execution(exec_id, INSTANCE) == real_trace
         assert await storage.trace_has_real_spans(real_trace) is True
     finally:
         await _purge(bf_trace, real_trace)

@@ -514,7 +514,10 @@ async def delete_n8n_user(user_id: str, transfer_to: str = ""):
 async def export_workflow(workflow_id: str):
     """Export a single workflow as JSON."""
     _check_configured()
-    result = await client.export_workflow(workflow_id)
+    try:
+        result = await client.export_workflow(workflow_id)
+    except Exception as e:  # noqa: BLE001 - a 5xx/network failure is not a 404
+        raise HTTPException(status_code=502, detail=f"n8n export failed: {e}") from e
     if not result:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return result

@@ -121,9 +121,13 @@ async def trace_detail(trace_id: str):
 
 
 @router.get("/by-execution/{execution_id}")
-async def trace_by_execution(execution_id: str):
-    """Resolve an n8n execution id to its trace + spans (for the per-execution popup)."""
-    trace_id = await storage.trace_id_for_execution(execution_id)
+async def trace_by_execution(execution_id: str, instance_id: str = ""):
+    """Resolve an n8n execution id to its trace + spans (for the per-execution popup).
+
+    Execution ids collide across instances; scope to the given one (default active).
+    """
+    iid = instance_id if instance_id else get_active_instance_id()
+    trace_id = await storage.trace_id_for_execution(execution_id, iid)
     if not trace_id:
         return {"execution_id": execution_id, "trace_id": "", "spans": []}
     await _enrich(trace_id)
@@ -187,7 +191,7 @@ async def backfill_preview(instance_id: str = "", since: str = "", until: str = 
             if retention_floor and started and started < retention_floor:
                 outside_retention += 1
                 continue
-            existing = await storage.trace_id_for_execution(str(e.get("id") or ""))
+            existing = await storage.trace_id_for_execution(str(e.get("id") or ""), iid)
             if existing:
                 if await storage.trace_has_real_spans(existing):
                     already_traced += 1

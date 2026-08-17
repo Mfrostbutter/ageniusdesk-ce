@@ -11,7 +11,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const err = $input.first().json;\n\nconst execution = err.execution || {};\nconst workflow = execution.workflow || {};\nconst lastNode = execution.lastNodeExecuted || 'unknown';\nconst errMsg = err.execution?.error?.message || err.message || 'Unknown error';\nconst errType = err.execution?.error?.name || 'Error';\n\nreturn [{\n  json: {\n    workflow_id: workflow.id || 'unknown',\n    workflow_name: workflow.name || 'Unknown Workflow',\n    execution_id: String(execution.id || ''),\n    node_name: lastNode,\n    error_message: errMsg,\n    error_type: errType\n  }\n}];"
+        "jsCode": "// agd-handler-version: 2\nconst err = $input.first().json;\n\nconst execution = err.execution || {};\n// Error Trigger emits `workflow` as a top-level sibling of `execution`;\n// tolerate the nested shape too.\nconst workflow = err.workflow || execution.workflow || {};\nconst lastNode = execution.lastNodeExecuted || 'unknown';\nconst errMsg = execution.error?.message || err.message || 'Unknown error';\nconst errType = execution.error?.name || 'Error';\n\nreturn [{\n  json: {\n    workflow_id: workflow.id || 'unknown',\n    workflow_name: workflow.name || 'Unknown Workflow',\n    execution_id: String(execution.id || ''),\n    node_name: lastNode,\n    error_message: errMsg,\n    error_type: errType\n  }\n}];"
       },
       "id": "err-extract",
       "name": "Extract Error Details",

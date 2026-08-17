@@ -230,7 +230,8 @@ class TestProvisionGuards:
                             lambda: {"t1": {"DEV_KEY": {"credential_id": "existing",
                                                         "credential_name": "Dev Key",
                                                         "credential_type": "httpHeaderAuth"}}})
-        monkeypatch.setattr(svc, "_resolve_instance_creds", lambda inst: ("http://t", "k"))
+        # Resolvable host: the scope/SSRF check now gates reuse too (BUG-013).
+        monkeypatch.setattr(svc, "_resolve_instance_creds", lambda inst: ("http://localhost:5678", "k"))
 
         def _no_http(*a, **k):
             raise AssertionError("reuse path must not touch n8n")

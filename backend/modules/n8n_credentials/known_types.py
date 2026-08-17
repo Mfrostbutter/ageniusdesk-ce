@@ -21,7 +21,7 @@ from __future__ import annotations
 KNOWN_TYPES: list[tuple[str, str, list[str]]] = [
     # LLM providers
     ("anthropicApi",      "Anthropic API",             ["ANTHROPIC", "CLAUDE"]),
-    ("openAiApi",         "OpenAI API",                ["OPENAI"]),
+    ("openAiApi",         "OpenAI API",                ["OPENAI", "OPEN_AI"]),
     ("openRouterApi",     "OpenRouter API",            ["OPENROUTER", "OPEN_ROUTER"]),
     ("mistralCloudApi",   "Mistral Cloud API",         ["MISTRAL"]),
     ("cohereApi",         "Cohere API",                ["COHERE"]),
@@ -59,7 +59,9 @@ KNOWN_TYPES: list[tuple[str, str, list[str]]] = [
 
     # Storage / cloud
     ("dropboxApi",        "Dropbox API",               ["DROPBOX"]),
-    ("awsApi",            "AWS",                       ["AWS_ACCESS", "AWS_SECRET"]),
+    # n8n's type name is lowercase "aws" (like "s3"); matches the compound
+    # override in mappings.CRED_TYPES and admin/secret_templates.
+    ("aws",               "AWS",                       ["AWS_ACCESS", "AWS_SECRET"]),
     ("s3",                "S3 (generic)",              ["S3_"]),
 
     # Payments / commerce

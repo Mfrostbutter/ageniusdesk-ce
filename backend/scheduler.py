@@ -128,16 +128,21 @@ class Scheduler:
         while not self._stop.is_set():
             now = time.monotonic()
             for job in list(self._jobs.values()):
-                if job.running or not job.enabled_fn():
-                    continue
-                if job.next_run is None:
-                    # First scheduling for this job: wait one full interval before
-                    # the first run so a restart loop never hammers backups on boot.
-                    job.next_run = now + max(TICK_SECONDS, job.interval_fn())
-                    continue
-                if now >= job.next_run:
-                    job.next_run = now + max(TICK_SECONDS, job.interval_fn())
-                    asyncio.create_task(self._fire(job))
+                # A raising enabled_fn/interval_fn skips this job's tick; it must
+                # never kill the whole scheduler loop.
+                try:
+                    if job.running or not job.enabled_fn():
+                        continue
+                    if job.next_run is None:
+                        # First scheduling for this job: wait one full interval before
+                        # the first run so a restart loop never hammers backups on boot.
+                        job.next_run = now + max(TICK_SECONDS, job.interval_fn())
+                        continue
+                    if now >= job.next_run:
+                        job.next_run = now + max(TICK_SECONDS, job.interval_fn())
+                        asyncio.create_task(self._fire(job))
+                except Exception as e:  # noqa: BLE001 - config callables are user-supplied
+                    logger.warning("scheduler: job %s tick evaluation failed: %s", job.id, e)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=TICK_SECONDS)
             except asyncio.TimeoutError:
@@ -161,7 +166,11 @@ class Scheduler:
             job.last_run_at = _now_iso()
             job.last_duration_ms = round((time.monotonic() - started) * 1000, 1)
             # Reschedule relative to completion so a long run doesn't stack up.
-            job.next_run = time.monotonic() + max(TICK_SECONDS, job.interval_fn())
+            try:
+                job.next_run = time.monotonic() + max(TICK_SECONDS, job.interval_fn())
+            except Exception as e:  # noqa: BLE001 - keep a raising interval_fn from killing _fire
+                job.next_run = time.monotonic() + TICK_SECONDS
+                logger.warning("scheduler: job %s interval_fn failed on reschedule: %s", job.id, e)
 
 
 # Process-wide singleton, mirroring backend.websocket.manager.

@@ -143,7 +143,9 @@ async def test_id_derivation_scheme():
     trace_id = sha256(f"agd-backfill:{INSTANCE}:25173".encode()).hexdigest()[:32]
     assert all(r["trace_id"] == trace_id for r in rows)
     root = next(r for r in rows if r["name"] == "workflow.execute")
-    assert root["span_id"] == sha256(f"{trace_id}:workflow.execute:0".encode()).hexdigest()[:16]
+    # Root key is namespaced (BUG-027): a node NAMED "workflow.execute" must not
+    # collide with the root span id.
+    assert root["span_id"] == sha256(f"{trace_id}:\x00agd-root:0".encode()).hexdigest()[:16]
     for r in rows:
         if r["name"] == "node.execute":
             name = json.loads(r["attributes_json"])["n8n.node.name"]
@@ -244,7 +246,7 @@ async def test_insert_spans_round_trips_synthesized_rows(client):
         spans = await storage.get_trace(trace_id)
         assert len(spans) == 4
         assert {s["name"] for s in spans} == {"workflow.execute", "node.execute"}
-        assert await storage.trace_id_for_execution("25173") == trace_id
+        assert await storage.trace_id_for_execution("25173", INSTANCE) == trace_id
     finally:
         await db.execute("DELETE FROM otel_spans WHERE trace_id = ?", (trace_id,))
         await db.commit()

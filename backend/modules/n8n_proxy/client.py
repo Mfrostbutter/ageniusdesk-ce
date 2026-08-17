@@ -97,8 +97,13 @@ def _base_url() -> str:
     return get_n8n_url().rstrip("/")
 
 
-async def _get(path: str, params: Optional[dict] = None) -> dict | list:
-    """GET with retry on 429 and graceful 404 handling."""
+async def _get(path: str, params: Optional[dict] = None, raise_on_error: bool = False) -> dict | list:
+    """GET with retry on 429 and graceful 404 handling.
+
+    ``raise_on_error`` propagates non-404 failures (HTTP 5xx/401, network) so a
+    caller can report the real failure instead of treating {} as "not found".
+    404 always returns {} — absence is not an error.
+    """
     url = _base_url() + path
     for attempt in range(MAX_RETRIES):
         try:
@@ -113,11 +118,15 @@ async def _get(path: str, params: Optional[dict] = None) -> dict | list:
                 return resp.json()
         except httpx.HTTPStatusError as e:
             logger.error("n8n GET %s failed: HTTP %s", path, e.response.status_code)
+            if raise_on_error:
+                raise
             return {}
         except httpx.RequestError as e:
             logger.error("n8n GET %s error: %s", path, e)
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(2**attempt)
+            elif raise_on_error:
+                raise
             else:
                 return {}
     return {}
@@ -1079,18 +1088,33 @@ async def import_workflow(
 
 
 async def export_workflow(workflow_id: str) -> dict[str, Any]:
-    """Export a single workflow as its full JSON definition."""
-    return await _get(f"/api/v1/workflows/{workflow_id}")
+    """Export a single workflow as its full JSON definition.
+
+    {} means the workflow does not exist (404). Any other failure raises, so
+    promote reports the real error instead of "Not found on source".
+    """
+    return await _get(f"/api/v1/workflows/{workflow_id}", raise_on_error=True)
 
 
 async def export_all_workflows(active_only: bool = False) -> list[dict]:
-    """Export all workflows as full JSON definitions."""
+    """Export all workflows as full JSON definitions, paginating past 250."""
     params: dict = {"limit": 250}
     if active_only:
         params["active"] = "true"
 
-    result = await _get("/api/v1/workflows", params)
-    workflows = result.get("data", []) if isinstance(result, dict) else []
+    workflows: list[dict] = []
+    cursor = ""
+    while True:
+        q = dict(params)
+        if cursor:
+            q["cursor"] = cursor
+        result = await _get("/api/v1/workflows", q)
+        if not isinstance(result, dict):
+            break
+        workflows.extend(result.get("data", []) or [])
+        cursor = result.get("nextCursor") or ""
+        if not cursor:
+            break
     return workflows
 
 

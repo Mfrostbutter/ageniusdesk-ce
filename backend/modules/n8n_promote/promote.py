@@ -124,11 +124,13 @@ async def _provision_credential(target: dict, secret_name: str, cred_type: str) 
     if not url or not api_key:
         raise ValueError("target instance is missing its URL or API key")
 
-    prior = _load_mirrors().get(tid, {}).get(secret_name)
-    if prior and prior.get("credential_id"):
-        return prior["credential_id"], prior.get("credential_name") or secret_name
-
+    # Scope/host checks gate REUSE too, not just fresh provisioning: a stale
+    # mirror must not hand out a credential the secret is no longer allowed on.
     _assert_provision_allowed(secret_name, tid, url)
+
+    prior = _load_mirrors().get(tid, {}).get(secret_name)
+    if prior and prior.get("credential_id") and prior.get("credential_type") == cred_type:
+        return prior["credential_id"], prior.get("credential_name") or secret_name
 
     schemas = await _schemas_for_instance(tid)
     secret_value = _resolve_secret(secret_name)  # decrypted str or compound dict
@@ -423,8 +425,12 @@ async def preflight(
     plans: list[dict[str, Any]] = []
     all_creds: dict[str, dict[str, str]] = {}  # source_id -> cred info
     for wf_id in workflow_ids:
-        with use_instance(source):
-            wf = await client.export_workflow(wf_id)
+        try:
+            with use_instance(source):
+                wf = await client.export_workflow(wf_id)
+        except Exception as e:  # noqa: BLE001 - a 5xx/network failure is not "not found"
+            plans.append({"workflow_id": wf_id, "ok": False, "error": f"Source fetch failed: {e}"})
+            continue
         if not wf:
             plans.append({"workflow_id": wf_id, "ok": False, "error": "Not found on source."})
             continue

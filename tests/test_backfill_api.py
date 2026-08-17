@@ -125,7 +125,8 @@ def test_preview_happy_path(anon, monkeypatch):
     traces = {"81002": "real-trace", "81003": "bf-trace"}
     real = {"real-trace": True, "bf-trace": False}
 
-    async def fake_trace_for(execution_id):
+    async def fake_trace_for(execution_id, instance_id):
+        assert instance_id == INSTANCE  # preview must scope the lookup
         return traces.get(execution_id, "")
 
     async def fake_has_real(trace_id):

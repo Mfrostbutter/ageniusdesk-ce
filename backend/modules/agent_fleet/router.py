@@ -204,6 +204,11 @@ async def start_triage(req: TriageRequest):
     model = os.environ.get(agent.model_env, agent.default_model) if agent.model_env else agent.default_model
     target = str(req.error_id) if req.error_id is not None else (req.prompt.strip() or "latest")
     run = await storage.create_run(agent_id, target, req.prompt.strip(), model)
+    # Claim the single-flight slot synchronously; the old is_live-then-create_task
+    # gap let a double-click start two interleaved runs.
+    if not runner.claim(run["id"]):
+        await storage.delete_run(run["id"])  # never ran; drop the orphan row
+        raise HTTPException(status_code=409, detail="A run is already in progress.")
     # Fire-and-forget; the runner persists progress into the run's event log.
     asyncio.create_task(runner.run(run["id"], agent_id, req.error_id, req.prompt))
     return {"run_id": run["id"], "run": run}
@@ -214,7 +219,8 @@ async def resume_run(run_id: str, req: ResumeRequest):
     """Resume a HITL run parked at a human-approval interrupt."""
     if not runner.is_paused(run_id):
         raise HTTPException(status_code=409, detail="Run is not awaiting approval.")
-    if runner.is_live():
+    # Atomic claim closes the is_live-then-create_task race (double-resume).
+    if not runner.claim(run_id):
         raise HTTPException(status_code=409, detail="Another run is in progress.")
     decision = {"action": req.action, "edited": req.edited, "mode": req.mode, "choice": req.choice}
     asyncio.create_task(runner.resume(run_id, decision))
@@ -244,4 +250,5 @@ async def delete_run(run_id: str):
     ok = await storage.delete_run(run_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Run not found.")
+    runner.discard_parked(run_id)  # a deleted run must not linger as paused
     return {"ok": True}

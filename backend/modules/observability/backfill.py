@@ -101,7 +101,9 @@ async def synthesize(execution_raw: dict, instance_id: str) -> list[dict]:
     """
     execution_id = str(execution_raw.get("id") or "")
     trace_id = _trace_id(instance_id, execution_id)
-    root_span_id = _span_id(trace_id, "workflow.execute", 0)
+    # Namespaced root key: a node literally named "workflow.execute" must not
+    # collide with the root span id.
+    root_span_id = _span_id(trace_id, "\x00agd-root", 0)
 
     wf = execution_raw.get("workflowData") or {}
     nodes_by_name = {n.get("name"): n for n in wf.get("nodes") or [] if isinstance(n, dict)}
@@ -193,17 +195,21 @@ def _parse_iso(iso: str) -> Optional[datetime]:
     return dt
 
 
-async def _enrich(trace_id: str, detect_health: bool) -> None:
-    """Run the post-insert enrichers, mirroring ingest: cost always, health opt-out."""
+async def _enrich(trace_id: str, detect_health: bool, raw: dict | None = None) -> None:
+    """Run the post-insert enrichers, mirroring ingest: cost always, health opt-out.
+
+    ``raw`` is the already-fetched execution payload; passing it spares each
+    enricher its own includeData fetch (3 fetches per execution down to 1).
+    """
     from . import cost, health
 
     try:
-        await cost.enrich_trace(trace_id)
+        await cost.enrich_trace(trace_id, raw=raw)
     except Exception as e:  # noqa: BLE001 - enrichment is best-effort
         logger.debug("backfill: cost enrich failed for %s: %s", trace_id, e)
     if detect_health:
         try:
-            await health.enrich_trace_health(trace_id)
+            await health.enrich_trace_health(trace_id, raw=raw)
         except Exception as e:  # noqa: BLE001 - enrichment is best-effort
             logger.debug("backfill: health enrich failed for %s: %s", trace_id, e)
 
@@ -216,7 +222,7 @@ async def _backfill_one(execution_id: str, instance_id: str, detect_health: bool
     An existing backfill trace is re-synthesized; deterministic ids make that
     idempotent.
     """
-    existing = await storage.trace_id_for_execution(execution_id)
+    existing = await storage.trace_id_for_execution(execution_id, instance_id)
     if existing and await storage.trace_has_real_spans(existing):
         return ("skipped_traced", 0)
     raw = await n8n_client.get_execution_raw_by_instance(execution_id, instance_id)
@@ -225,9 +231,18 @@ async def _backfill_one(execution_id: str, instance_id: str, detect_health: bool
     run_data = (((raw.get("data") or {}).get("resultData")) or {}).get("runData") or {}
     if not run_data:
         return ("no_data", 0)
+    # No usable startedAt would synthesize received_at='' / start_ns=0 rows.
+    if not _parse_iso(str(raw.get("startedAt") or "")):
+        return ("error", 0)
     rows = await synthesize(raw, instance_id)
+    # TOCTOU re-check: a real trace may have landed during the fetch; it wins.
+    existing = await storage.trace_id_for_execution(execution_id, instance_id)
+    if existing and await storage.trace_has_real_spans(existing):
+        return ("skipped_traced", 0)
+    # Replace, don't accrete: clear stale backfill rows (older id derivations).
+    await storage.delete_backfill_spans(instance_id, execution_id)
     inserted = await storage.insert_spans(rows)
-    await _enrich(rows[0]["trace_id"], detect_health)
+    await _enrich(rows[0]["trace_id"], detect_health, raw)
     return ("backfilled", inserted)
 
 
@@ -322,15 +337,16 @@ async def backfill_instance(
                 continue
             if since_dt and not started:
                 continue
+            # Outside-retention rows are reported but must not eat the cap.
+            if retention_floor and started and started < retention_floor:
+                summary["outside_retention"] += 1
+                continue
             if summary["scanned"] >= cap:
                 stop = True
                 break
             summary["scanned"] += 1
-            if retention_floor and started and started < retention_floor:
-                summary["outside_retention"] += 1
-                continue
             exec_id = str(e.get("id") or "")
-            existing = await storage.trace_id_for_execution(exec_id)
+            existing = await storage.trace_id_for_execution(exec_id, instance_id)
             if existing and await storage.trace_has_real_spans(existing):
                 summary["skipped_traced"] += 1
                 continue

@@ -12,6 +12,7 @@ signatures stable.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import shutil
@@ -194,14 +195,19 @@ async def write(rel: str, content: str) -> dict:
     }
 
 
+# Serializes append's read-modify-write; concurrent appends were lost updates.
+_APPEND_LOCK = asyncio.Lock()
+
+
 async def append(rel: str, content: str) -> dict:
     """Append content to an existing note (or create if missing). Adds a
     newline separator if the existing content doesn't already end in one.
     Primary use case: agent scratchpads that accumulate over time."""
-    vp = resolve(rel)
-    existing = vp.abs.read_text() if vp.abs.exists() else ""
-    joiner = "" if existing.endswith("\n") or not existing else "\n"
-    return await write(rel, existing + joiner + content)
+    async with _APPEND_LOCK:
+        vp = resolve(rel)
+        existing = vp.abs.read_text() if vp.abs.exists() else ""
+        joiner = "" if existing.endswith("\n") or not existing else "\n"
+        return await write(rel, existing + joiner + content)
 
 
 async def archive(rel: str) -> dict:

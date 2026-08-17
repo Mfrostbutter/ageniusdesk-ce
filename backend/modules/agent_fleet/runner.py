@@ -73,9 +73,28 @@ def is_live() -> Optional[str]:
     return _live_run_id
 
 
+def claim(run_id: str) -> bool:
+    """Atomically claim the single-flight slot BEFORE create_task.
+
+    Sync on purpose: no await between check and set, so two racing requests on
+    the event loop cannot both win. run()/resume() release in their finally.
+    """
+    global _live_run_id
+    if _live_run_id is not None:
+        return False
+    _live_run_id = run_id
+    return True
+
+
 def is_paused(run_id: str) -> bool:
     """True when the run is parked awaiting human approval."""
     return run_id in _PAUSED
+
+
+def discard_parked(run_id: str) -> None:
+    """Drop a parked run's in-memory graph (delete-run path), so a deleted run
+    doesn't linger as is_paused() with a live checkpointer."""
+    _PAUSED.pop(run_id, None)
 
 
 def resolve_anthropic_key() -> str:
@@ -692,6 +711,9 @@ async def resume(run_id: str, decision: dict) -> None:
     parked = _PAUSED.get(run_id)
     if not parked:
         logger.warning("resume: run %s is not parked", run_id)
+        # Release a router-side claim so the aborted resume can't wedge the slot.
+        if _live_run_id == run_id:
+            _live_run_id = None
         return
 
     _live_run_id = run_id
