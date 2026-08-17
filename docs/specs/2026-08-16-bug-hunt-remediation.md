@@ -149,6 +149,19 @@ All eight sites landed as specified, credential-plaintext direction first, plus 
 - **BUG-049** self-container guard fails CLOSED when the container id cannot be resolved.
 - **BUG-051** `_fetch_executions` honors its `instance_id` argument.
 
+### Phase 4 outcome (2026-08-17, verified)
+
+All 31 bugs landed in `8fc033d` (survey doc: [2026-08-17-phase-4-survey.md](2026-08-17-phase-4-survey.md)). Suite 559 -> 583 green, 20 new tests across `test_phase4_p1p2.py` / `test_phase4_observability.py` / `test_phase4_misc.py`. Deviations from the written spec, each deliberate:
+
+- **BUG-036 reversed direction.** The spec said key the override `awsApi`; n8n's actual credential type name is lowercase `aws` (matching the generic `s3` and both existing consumers), so `KNOWN_TYPES` was the wrong side. `awsApi` would 404 the schema fetch and drop AWS entirely.
+- **BUG-037 fixed at the detect layer, not by migration.** `OPEN_AI_KEY` is the documented CE convention name (README, wizard, manifests, docs). Migrating stored secrets to `OPENAI_API_KEY` while everything still mints `OPEN_AI_KEY` would recreate the mismatch on the next wizard run; adding `OPEN_AI` to the `openAiApi` detect patterns closes the actual symptom.
+- **BUG-022 closed at the learn step**, not in ingest: an unpinned `unknown-<hash>` batch cannot be resolved at delete time by definition. `learn_unknowns` now snapshots the re-attributed real execution ids and runs the precedence delete under the real instance id after pinning.
+- **BUG-014 code half only.** Tolerant Code-node read + `agd-handler-version` marker + stale-handler refresh on reinstall are in; the live Error Trigger capture on n8n-dev (fixture) is still pending.
+- **Re-synthesis now replaces instead of accreting**: `_backfill_one` deletes existing backfill spans before insert, which also makes the BUG-027 root-id derivation change safe for traces backfilled under the old scheme.
+- **Baseline bonus fix**: the flaky module-uninstall test was a real Windows bug (worker not reaped after kill, rmtree racing the cwd handle release); uninstall now reaps and retries.
+
+Behavior-change note for the changelog: `scanned` in backfill summaries now counts only in-window rows (outside-retention no longer eats the cap), and a second backfill of the same execution reports its span count again instead of 0.
+
 ---
 
 ## Phase 5: Frontend lifecycle and polish (S3)

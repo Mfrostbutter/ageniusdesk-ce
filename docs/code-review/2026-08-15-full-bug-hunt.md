@@ -8,6 +8,19 @@ Comprehensive review of AgeniusDesk CE at the `feat/trace-backfill` tip (v0.5.0 
 
 **Re-grade 2026-08-16.** An adversarial re-review ([2026-08-15-full-bug-hunt-adversarial-review.md](2026-08-15-full-bug-hunt-adversarial-review.md)) was adjudicated against source; accepted re-grades are folded in below. BUG-004 and BUG-006 moved P1 to P2, BUG-014's verification label softened, fix-strategy notes added to S1 and BUG-002. Each carries a "Re-grade:" note. Rejected challenges (BUG-014 contract, BUG-009 impact) are documented in the review doc's adjudication.
 
+## Remediation status (updated 2026-08-17)
+
+Fixes landed on `feat/trace-backfill` per [2026-08-16-bug-hunt-remediation.md](../specs/2026-08-16-bug-hunt-remediation.md); per-phase outcome notes live there.
+
+| Phase | Fixed in | Bugs closed |
+|---|---|---|
+| 1 — frontend XSS (S1) | `bf1e384` | S1 root cause, BUG-001, 002, 003, 060, 062 + the BUG-020 site table |
+| 2 — backend security | `301e221` | BUG-008, 009, 015, 016, 018, 021, 031, 032, 040, 043 (043 mitigated, residual concurrency race logged) |
+| 3 — fleet TLS (S2) | `565e99f` | S2 root cause, BUG-010, 025, 033 |
+| 4 — backend correctness + P3 | `8fc033d` | BUG-004, 005, 006, 007, 012, 013, 014 (code; live Error Trigger capture pending), 017, 019, 022, 023, 024, 026, 027, 028, 029, 030, 034, 035, 036 (direction reversed: `awsApi` was the wrong side), 037 (detect-pattern fix, not the key migration), 038, 039, 041, 042, 044, 046, 047, 048, 049, 050, 051 |
+
+Still open: Phase 5 (S3 / router cleanup plus BUG-053, 054, 056, 057, 058, 059, 061, 063) and the open decisions (BUG-020 module-worker isolation, 045, 052, 055). BUG-014's live Error Trigger capture on n8n-dev is the one Phase 4 item still pending.
+
 ## Severity legend
 
 - **P1** broken feature, data loss, or security hole
