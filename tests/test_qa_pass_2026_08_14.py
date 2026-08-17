@@ -11,7 +11,6 @@ import re
 from pathlib import Path
 
 import pytest
-import tomllib
 
 from backend.modules.observability import storage
 
@@ -94,8 +93,9 @@ def test_observe_view_shows_setup_when_instance_has_no_spans():
 def test_mcp_pin_has_upper_bound():
     """mcp 2.0 removed mcp.server.fastmcp. Without a ceiling, a fresh build
     silently unmounts the built-in MCP server."""
-    meta = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    pins = [d for d in meta["project"]["dependencies"] if d.split(">")[0].split("<")[0].strip() == "mcp"]
+    # Plain-text scan, not tomllib: that module is 3.11+ and CI still runs 3.10.
+    raw = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pins = re.findall(r"\"(mcp\s*[><=~!][^\"]*)\"", raw)
     assert pins, "mcp must remain a declared dependency"
     assert "<2.0.0" in pins[0], (
         "mcp needs an upper bound while pydantic-ai's fastmcp-slim requires mcp<2.0; "
