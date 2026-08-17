@@ -176,6 +176,12 @@ Behavior-change note for the changelog: `scanned` in backfill summaries now coun
 - **BUG-061** add `autocomplete="off"`/`new-password` on Rotate-key, Add-Secret, and other credential inputs.
 - **BUG-063** `wizard.js:1131-1140`: bind the SecretField input to wizard state so Back/forward preserves the typed key.
 
+### Additions from the 2026-08-17 post-Phase-4 live QA pass
+
+- **QA-P2 (S3 instance, confirmed live):** `errors.js:187` — after navigating away from Errors, its broadcast listener keeps firing `loadErrors`, which writes `el.innerHTML` on a null element (34 uncaught TypeErrors during one 40-trace backfill). Fix rides on the S3 cleanup contract above; add a null-guard on the container as defense regardless.
+- **QA-P3 (BUG-007 follow-through):** `observability.js` receiver-off branch renders setup-only even when backfilled traces exist, so a rebuild's output is invisible on the view that produced it (only reachable via an error row's Trace button). When `status.enabled` is false but the span count is nonzero, render the traces list alongside the setup panel.
+- **QA-P3 (minor, batch with Phase 5):** transient 503s on `/api/n8n/workflows`/`executions` polls right after instance connect/switch; Overview Instances widget stale for one render after wizard connect; favicon.ico 404; notes "+ New" uses `window.prompt` (replace with the app's modal, also unblocks alert-sentinel test automation).
+
 ---
 
 ## Open decisions (parked, not scheduled)
