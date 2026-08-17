@@ -23,6 +23,7 @@
  */
 
 import { get } from '../api.js';
+import { attr } from '../lib/html.js';
 
 let refsCache = null;
 let refsCachePromise = null;
@@ -98,7 +99,7 @@ export function secretField(opts) {
         </button>
       </label>
       <div class="secret-field-input-row" style="position:relative">
-        <input type="password" class="secret-field-input" placeholder="${escHtml(placeholder)}"
+        <input type="password" class="secret-field-input" placeholder="${attr(placeholder)}"
                style="width:100%;box-sizing:border-box;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-size:13px;font-family:var(--font-mono)">
         <div class="secret-field-pill" hidden
              style="display:none;gap:6px;align-items:center;padding:6px 10px;background:var(--bg-input);border:1px solid var(--border-mid);border-radius:var(--radius);font-family:var(--font-mono);font-size:13px;color:var(--info)">
@@ -140,7 +141,7 @@ export function secretField(opts) {
       return;
     }
     dropdown.innerHTML = refs.map(r => `
-      <div class="secret-field-dropdown-item" data-ref="${escHtml(r.ref)}"
+      <div class="secret-field-dropdown-item" data-ref="${attr(r.ref)}"
            style="padding:8px 10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid var(--border-dim);font-size:12px">
         <code style="color:var(--info)">${escHtml(r.ref)}</code>
         <span style="color:var(--text-dim);font-family:var(--font-mono);font-size:10px">${escHtml(r.hint || '')}</span>

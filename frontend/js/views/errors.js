@@ -12,6 +12,7 @@ import { openTraceModal } from '../components/trace-waterfall.js';
 import { renderErrorItem } from '../components/error-item.js';
 import { getErrorLookback, setErrorLookback, lookbackOptionsHtml } from '../error-prefs.js';
 import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
+import { esc, attr, fmtMd } from '../lib/html.js';
 
 let unsub = null;
 
@@ -65,7 +66,7 @@ function instanceBadge(id) {
   const inst = _instanceMap[id];
   const name = inst ? inst.name : (id ? 'unknown' : 'no instance');
   const color = inst && inst.color ? inst.color : '#888';
-  return `<span class="instance-badge" title="${esc(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary);font-family:var(--font-mono)">`
+  return `<span class="instance-badge" title="${attr(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary);font-family:var(--font-mono)">`
     + `<span style="width:6px;height:6px;border-radius:50%;background:${attr(color)}"></span>`
     + `${esc(name)}</span>`;
 }
@@ -268,17 +269,14 @@ window.__askErrorAI = async function (btn) {
       context: '',
       surface: 'triage',
     });
-    // esc() FIRST so a prompt-injected LLM reply containing markup (e.g.
-    // <img src=x onerror=...>) is neutralized before the markdown regexes run.
-    const md = esc(resp.response || 'No response')
-      .replace(/\n/g, '<br>')
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:11px">$1</code>');
+    // fmtMd escapes the full response first, so the **/`/link capture groups carry
+    // already-inert text. Same pipeline as workflows.js so the two cannot drift.
+    const md = fmtMd(resp.response || 'No response').replace(/\n/g, '<br>');
     resultEl.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:11px;font-weight:600;color:var(--accent)">✦ AI Analysis</span>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="navigator.clipboard.writeText(${JSON.stringify(resp.response || '').replace(/'/g, '&#39;')}).then(()=>{this.textContent='Copied!'})">Copy</button>
+          <button class="btn btn-sm btn-ghost err-copy-btn" style="font-size:10px" data-response="${attr(resp.response || '')}">Copy</button>
           <button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="this.closest('.err-ai-result').style.display='none'">✕</button>
         </div>
       </div>
@@ -293,6 +291,17 @@ window.__askErrorAI = async function (btn) {
     resultEl.innerHTML = `<span style="color:var(--error)">${esc(e.message)}</span>`;
   }
 };
+
+// Delegated copy handler for the error analyzer. Replaces the inline
+// onclick="navigator.clipboard..." pattern whose JSON.stringify double quotes
+// broke the attribute. Response text lives on the button's data-response
+// attribute (attr-escaped); this listener reads it back.
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.err-copy-btn');
+  if (!btn) return;
+  const text = btn.dataset.response || '';
+  navigator.clipboard.writeText(text).then(() => { btn.textContent = 'Copied!'; });
+});
 
 window.__deleteExecution = async (executionId, btn) => {
   const orig = btn.textContent;
@@ -375,14 +384,6 @@ function updateBadge(count) {
 function formatTime(iso) {
   if (!iso) return 'just now';
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
-
-function attr(s) {
-  // Escape for an HTML double-quoted attribute value (data-* on the Ask AI button).
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function jsStr(s) {

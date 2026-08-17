@@ -147,19 +147,19 @@ async function loadAndRender() {
   const bucket = payload.bucket || 'hour';
 
   const byVolume = renderTopList(payload.top_by_volume || [], [
-    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>${observeLink(r)}` },
+    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${jsAttr(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>${observeLink(r)}` },
     { key: 'count', label: 'Runs', align: 'right', cell: r => fmtNum(r.count) },
     { key: 'success_rate', label: 'OK', align: 'right', cell: r => `<span style="color:${rateColor(r.success_rate)}">${fmtPct(r.success_rate)}</span>` },
   ]);
 
   const byErrors = renderTopList(payload.top_by_errors || [], [
-    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>${observeLink(r)}` },
+    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${jsAttr(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>${observeLink(r)}` },
     { key: 'errors', label: 'Errors', align: 'right', cell: r => `<span style="color:#ef4444;font-weight:600">${fmtNum(r.errors)}</span>` },
     { key: 'count', label: 'of', align: 'right', cell: r => fmtNum(r.count) },
   ]);
 
   const localTop = renderTopList(payload.top_local_errors || [], [
-    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${escapeHtml(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>` },
+    { key: 'workflow_name', label: 'Workflow', cell: r => `<a href="#" onclick="event.preventDefault();window.__nav('workflows',{selectId:'${jsAttr(r.workflow_id)}'})">${escapeHtml(r.workflow_name)}</a>` },
     { key: 'errors', label: 'Errors', align: 'right', cell: r => `<span style="color:#ef4444;font-weight:600">${fmtNum(r.errors)}</span>` },
     { key: 'last_occurred', label: 'Last seen', cell: r => escapeHtml(r.last_occurred || '—') },
   ]);

@@ -11,6 +11,7 @@
 
 import { get, post, del } from '../api.js';
 import * as toast from '../components/toast.js';
+import { attr } from '../lib/html.js';
 
 const SEV_COLOR = {
   CRITICAL: '#ff6d5a',
@@ -83,7 +84,7 @@ function moduleCard(entry, knownRefs, lock) {
 
   const uninstallBtn = isBuiltin
     ? ''
-    : `<button class="btn btn-sm btn-ghost module-uninstall-btn" data-module="${esc(mf.id)}" style="color:#ff6d5a">Uninstall</button>`;
+    : `<button class="btn btn-sm btn-ghost module-uninstall-btn" data-module="${attr(mf.id)}" style="color:#ff6d5a">Uninstall</button>`;
 
   const navToggle = (!isBuiltin && hasNav)
     ? (() => {
@@ -91,7 +92,7 @@ function moduleCard(entry, knownRefs, lock) {
         const isVisible = !hidden.includes(mf.id);
         return `
           <label class="module-toggle" title="Show/hide in sidebar nav" style="margin-left:auto">
-            <input type="checkbox" ${isVisible ? 'checked' : ''} data-module-toggle="${esc(mf.id)}">
+            <input type="checkbox" ${isVisible ? 'checked' : ''} data-module-toggle="${attr(mf.id)}">
             <span class="module-toggle-track"></span>
           </label>`;
       })()
@@ -154,8 +155,8 @@ function isolationPanel(iso) {
     const active = m === effective;
     const meta = ISO_META[m] || { label: m };
     const disabled = envLocked || (m === 'container' && noDocker);
-    return `<button class="iso-btn btn btn-sm ${active ? 'btn-primary' : ''}" data-iso="${esc(m)}"
-      ${disabled ? 'disabled' : ''} title="${esc((ISO_META[m] || {}).blurb || '')}"
+    return `<button class="iso-btn btn btn-sm ${active ? 'btn-primary' : ''}" data-iso="${attr(m)}"
+      ${disabled ? 'disabled' : ''} title="${attr((ISO_META[m] || {}).blurb || '')}"
       style="${active ? '' : 'opacity:0.85'}">${esc(meta.label)}${active ? ' ✓' : ''}</button>`;
   }).join('');
 
@@ -348,7 +349,7 @@ function consentModal(inspect) {
     if (hasCritical) {
       consentControls.push(`
         <label style="display:block;font-size:12px;margin:10px 0 4px">This module has <span style="color:${SEV_COLOR.CRITICAL}">CRITICAL</span> findings. Type the module id <code style="color:${SEV_COLOR.CRITICAL}">${esc(mf.id)}</code> to confirm you understand the risk.</label>
-        <input id="consent-typed" class="input" autocomplete="off" spellcheck="false" placeholder="${esc(mf.id)}" style="width:100%">
+        <input id="consent-typed" class="input" autocomplete="off" spellcheck="false" placeholder="${attr(mf.id)}" style="width:100%">
       `);
     }
     if (hasHigh) {

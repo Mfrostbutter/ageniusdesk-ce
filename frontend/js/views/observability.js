@@ -12,6 +12,7 @@
 import { get, post, onEvent } from '../api.js';
 import * as toast from '../components/toast.js';
 import { buildWaterfall } from '../components/trace-waterfall.js';
+import { attr } from '../lib/html.js';
 
 function esc(s) {
   const d = document.createElement('span');
@@ -286,7 +287,7 @@ async function refreshList() {
   }
 
   listEl.innerHTML = traces.map(t => `
-    <button class="obs-trace-row" data-trace="${esc(t.trace_id)}"
+    <button class="obs-trace-row" data-trace="${attr(t.trace_id)}"
       style="display:block;width:100%;text-align:left;border:1px solid ${t.trace_id === _selected ? 'var(--accent)' : 'var(--border-dim)'};border-radius:8px;background:var(--bg-elevated);padding:10px 12px;margin-bottom:8px;cursor:pointer">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
         <span style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.workflow_name || '(unknown workflow)')}</span>

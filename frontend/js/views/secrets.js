@@ -9,14 +9,13 @@
 import { del, get, post, put } from '../api.js';
 import * as toast from '../components/toast.js';
 import { invalidateRefsCache } from '../components/secretfield.js';
+import { esc, attr } from '../lib/html.js';
 
 // ── Local store state ─────────────────────────────────────────────────────────
 let _instances = [];
 let _typesByInstance = {};
 let _mirrorsByInstance = {};
 let _templates = {};
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s == null ? '' : String(s); return el.innerHTML; }
 
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.
@@ -107,7 +106,7 @@ function populateTypePicker() {
     if (bi === -1) return -1;
     return ai - bi;
   });
-  sel.innerHTML = keys.map(k => `<option value="${esc(k)}">${esc(_templates[k].label || k)}</option>`).join('')
+  sel.innerHTML = keys.map(k => `<option value="${attr(k)}">${esc(_templates[k].label || k)}</option>`).join('')
     || '<option value="api_key">API Key / Token</option>';
 }
 
@@ -156,15 +155,15 @@ function renderTypeFields(type) {
   host.innerHTML = fields.map(f => {
     const input_type = f.secret ? 'password' : 'text';
     const required = f.secret ? 'required' : '';
-    const def = f.default != null ? esc(f.default) : '';
+    const def = f.default != null ? attr(f.default) : '';
     const secretBadge = f.secret
       ? '<span style="font-size:10px;color:var(--text-dim);margin-left:6px">encrypted</span>'
       : '';
     return `
       <label>
         ${esc(f.label || f.name)} ${secretBadge}
-        <input type="${input_type}" class="secret-field-input" data-field="${esc(f.name)}"
-               placeholder="${esc(f.label || f.name)}" value="${def}" ${required}>
+        <input type="${input_type}" class="secret-field-input" data-field="${attr(f.name)}"
+               placeholder="${attr(f.label || f.name)}" value="${def}" ${required}>
       </label>
     `;
   }).join('');
@@ -260,7 +259,7 @@ function renderSecretRow(s) {
     ? `<span style="font-size:11px;color:var(--text-dim)">${(s.fields || []).length} fields</span>`
     : `<span style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono)">${esc(s.hint || '')}</span>`;
   const expandBtn = isCompound
-    ? `<button class="btn btn-sm btn-ghost secret-expand-toggle" data-name="${esc(s.name)}" title="Show fields">▾</button>`
+    ? `<button class="btn btn-sm btn-ghost secret-expand-toggle" data-name="${attr(s.name)}" title="Show fields">▾</button>`
     : '';
   // Scope editor UI is hidden pre-beta: scopes are only consulted by the n8n
   // credential mirror in n8n_credentials/router.py, not by general secret
@@ -270,7 +269,7 @@ function renderSecretRow(s) {
   const scopeRow = '';
 
   return `
-    <div class="secret-block" data-secret="${esc(s.name)}" style="border-bottom:1px solid var(--border-dim)">
+    <div class="secret-block" data-secret="${attr(s.name)}" style="border-bottom:1px solid var(--border-dim)">
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0">
         <code style="flex:1;font-size:13px">$${esc(s.name)}</code>
         ${typeBadge}
@@ -280,7 +279,7 @@ function renderSecretRow(s) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           Copy
         </button>
-        ${canSync ? `<button class="btn btn-sm btn-ghost secret-sync-toggle" data-name="${esc(s.name)}" title="Mirror this secret into an n8n instance as a typed credential">Sync to n8n</button>` : ''}
+        ${canSync ? `<button class="btn btn-sm btn-ghost secret-sync-toggle" data-name="${attr(s.name)}" title="Mirror this secret into an n8n instance as a typed credential">Sync to n8n</button>` : ''}
         <button class="btn btn-sm btn-ghost btn-danger" onclick="window.__deleteSecretStandalone('${jsStr(s.name)}')">Remove</button>
       </div>
       ${scopeRow}
@@ -299,22 +298,22 @@ function renderScopeEditor(s) {
         const inst = _instances.find((i) => i.id === id);
         const label = inst ? inst.name || inst.id : id;
         return `
-          <span class="scope-chip" data-instance="${esc(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary)">
+          <span class="scope-chip" data-instance="${attr(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary)">
             ${esc(label)}
-            <button class="scope-chip-remove" data-secret="${esc(s.name)}" data-instance="${esc(id)}" aria-label="Remove"
+            <button class="scope-chip-remove" data-secret="${attr(s.name)}" data-instance="${attr(id)}" aria-label="Remove"
                     style="background:none;border:none;color:var(--text-dim);cursor:pointer;padding:0;font-size:12px;line-height:1">x</button>
           </span>
         `;
       }).join('');
   const available = _instances.filter((inst) => !allowed.includes(inst.id));
   const addMenu = available.length
-    ? `<select class="scope-chip-add" data-secret="${esc(s.name)}" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:2px 6px;color:var(--text-dim);font-size:11px">
+    ? `<select class="scope-chip-add" data-secret="${attr(s.name)}" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:2px 6px;color:var(--text-dim);font-size:11px">
         <option value="">+ Add instance</option>
-        ${available.map((inst) => `<option value="${esc(inst.id)}">${esc(inst.name || inst.id)}</option>`).join('')}
+        ${available.map((inst) => `<option value="${attr(inst.id)}">${esc(inst.name || inst.id)}</option>`).join('')}
       </select>`
     : '';
   return `
-    <div class="secret-scope" data-secret="${esc(s.name)}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 0 8px 0;font-size:11px">
+    <div class="secret-scope" data-secret="${attr(s.name)}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 0 8px 0;font-size:11px">
       <span style="color:var(--text-dim);margin-right:4px">Applies to:</span>
       ${chips}
       ${addMenu}
@@ -328,11 +327,11 @@ function renderCompoundFields(s) {
       <code style="font-size:12px;color:var(--text-secondary)">$${esc(s.name)}.${esc(f.name)}</code>
       <span style="font-size:11px;color:var(--text-dim)">${esc(f.label || f.name)}</span>
       <span style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono)">${esc(f.hint || '')}</span>
-      <button class="btn btn-sm btn-ghost secret-field-copy" data-ref="$${esc(s.name)}.${esc(f.name)}" title="Copy $${esc(s.name)}.${esc(f.name)}">Copy</button>
+      <button class="btn btn-sm btn-ghost secret-field-copy" data-ref="$${attr(s.name)}.${attr(f.name)}" title="Copy $${attr(s.name)}.${attr(f.name)}">Copy</button>
     </div>
   `).join('');
   return `
-    <div class="secret-fields-panel" data-name="${esc(s.name)}" hidden style="padding:8px 12px;background:var(--bg-void);border-left:2px solid var(--accent-alt, var(--accent));margin:0 0 8px">
+    <div class="secret-fields-panel" data-name="${attr(s.name)}" hidden style="padding:8px 12px;background:var(--bg-void);border-left:2px solid var(--accent-alt, var(--accent));margin:0 0 8px">
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">Reference individual fields with <code>$${esc(s.name)}.fieldName</code>.</div>
       ${rows}
     </div>
@@ -403,7 +402,7 @@ function renderSyncPanel(s) {
   const scopedInstances = allowed.length ? _instances.filter((inst) => allowed.includes(inst.id)) : _instances;
   if (!scopedInstances.length) {
     return `
-      <div class="secret-sync-panel" data-name="${esc(secretName)}" hidden style="padding:10px 12px;background:var(--bg-void);border-left:2px solid var(--accent);margin:0 0 8px">
+      <div class="secret-sync-panel" data-name="${attr(secretName)}" hidden style="padding:10px 12px;background:var(--bg-void);border-left:2px solid var(--accent);margin:0 0 8px">
         <div style="font-size:11px;color:var(--text-dim)">No instances in this secret's scope. Add one via "Applies to" above to enable mirroring.</div>
       </div>
     `;
@@ -416,12 +415,12 @@ function renderSyncPanel(s) {
       ? `<span style="color:var(--success);font-size:11px">✓ ${esc(mirrored.credential_name || mirrored.credential_id || 'mirrored')}</span>`
       : `<span style="color:var(--text-dim);font-size:11px">Not mirrored</span>`;
     return `
-      <div class="secret-sync-row" data-instance="${esc(inst.id)}" data-secret="${esc(secretName)}"
+      <div class="secret-sync-row" data-instance="${attr(inst.id)}" data-secret="${attr(secretName)}"
            style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(140px,1fr) 90px 1fr 80px;gap:8px;padding:6px 0;align-items:center;font-size:12px">
         <span style="font-family:var(--font-mono);color:var(--text-secondary);font-size:12px">${esc(inst.name || inst.id)}</span>
         <select class="secret-sync-type" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:4px 8px;color:var(--text-primary);font-size:11px">
           <option value="">(pick type)</option>
-          ${types.map(t => `<option value="${esc(t.type)}" ${t.type === detected ? 'selected' : ''}>${esc(t.display_name)}</option>`).join('')}
+          ${types.map(t => `<option value="${attr(t.type)}" ${t.type === detected ? 'selected' : ''}>${esc(t.display_name)}</option>`).join('')}
         </select>
         <button class="btn btn-sm secret-sync-btn" style="font-size:11px;padding:4px 8px">${mirrored ? 'Re-mirror' : 'Mirror'}</button>
         <span class="secret-sync-status">${statusLine}</span>
@@ -430,7 +429,7 @@ function renderSyncPanel(s) {
     `;
   }).join('');
   return `
-    <div class="secret-sync-panel" data-name="${esc(secretName)}" hidden style="padding:10px 12px;background:var(--bg-void);border-left:2px solid var(--accent);margin:0 0 8px">
+    <div class="secret-sync-panel" data-name="${attr(secretName)}" hidden style="padding:10px 12px;background:var(--bg-void);border-left:2px solid var(--accent);margin:0 0 8px">
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">Mirror <code>$${esc(secretName)}</code> into n8n as a typed credential. Pick the credential type per instance.</div>
       ${rows}
     </div>

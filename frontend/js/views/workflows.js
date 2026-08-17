@@ -8,6 +8,7 @@ import * as modal from '../components/modal.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
 import { openTraceModal } from '../components/trace-waterfall.js';
 import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
+import { fmtMd, attr, esc } from '../lib/html.js';
 
 let selectedWorkflow = null;
 let selectedWorkflowMeta = { id: '', name: '' };
@@ -266,13 +267,16 @@ window.__analyzeExec = async function(execId, workflowName, workflowId) {
       surface: 'triage',
     });
 
-    const md = (resp.response || 'No response').replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:11px">$1</code>');
+    // fmtMd escapes the full response first, so the **/`/link capture groups below
+    // carry already-inert text. Interpolating raw text into those groups is the
+    // injection vector; a naive esc()-after-regex breaks the intended formatting.
+    const md = fmtMd(resp.response || 'No response').replace(/\n/g, '<br>');
     resultEl.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:11px;font-weight:600;color:var(--accent)">✦ AI Analysis</span>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="navigator.clipboard.writeText(${JSON.stringify(resp.response || '').replace(/'/g,"&#39;")}).then(()=>window.__wfToast('Copied!'))">Copy</button>
-          <button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="document.getElementById('ai-row-${execId}').style.display='none'">✕</button>
+          <button class="btn btn-sm btn-ghost wf-copy-btn" style="font-size:10px" data-response="${attr(resp.response || '')}">Copy</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="document.getElementById('ai-row-${attr(execId)}').style.display='none'">✕</button>
         </div>
       </div>
       <div style="color:var(--text-secondary)">${md}</div>
@@ -287,6 +291,17 @@ window.__analyzeExec = async function(execId, workflowName, workflowId) {
 };
 
 window.__wfToast = (msg) => toast.success(msg);
+
+// Delegated copy handler for the workflow analyzer. Replaces the inline
+// onclick="navigator.clipboard..." pattern whose JSON.stringify double quotes
+// broke the attribute. The response text lives on the button's data-response
+// attribute (attr-escaped), and this listener reads it back.
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.wf-copy-btn');
+  if (!btn) return;
+  const text = btn.dataset.response || '';
+  navigator.clipboard.writeText(text).then(() => window.__wfToast('Copied!'));
+});
 
 window.__triggerWorkflow = async function(id) {
   try {
@@ -412,7 +427,6 @@ function formatTime(iso) {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
 
 
 function jsStr(s) {

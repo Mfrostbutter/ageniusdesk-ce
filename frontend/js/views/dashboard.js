@@ -11,6 +11,7 @@ import { renderErrorItem } from '../components/error-item.js';
 import { WorkflowDetailPanel } from '../components/workflow-detail-panel.js';
 import * as getstarted from '../components/getstarted.js';
 import { getErrorLookback, setErrorLookback, lookbackShort, lookbackOptionsHtml } from '../error-prefs.js';
+import { esc, attr } from '../lib/html.js';
 
 // ── Widget registry ──────────────────────────────────────────────────────────
 
@@ -611,7 +612,7 @@ async function loadInstances() {
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             ${!inst.active ? `<button class="btn btn-sm btn-ghost" onclick="window.__dashSwitch('${jsStr(inst.id)}')">Switch</button>` : ''}
-            <a href="${esc(openUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">Open ↗</a>
+            <a href="${attr(openUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">Open ↗</a>
           </div>
         </div>
       `;
@@ -882,8 +883,8 @@ function renderTimeline(executions) {
     return `<div class="exec-block exec-block--${cls}"
          onclick="if('${jsStr(url)}')window.open('${jsStr(url)}','_blank')"
          data-idx="${executions.length - 1 - i}"
-         data-name="${esc(e.workflow_name)}"
-         data-status="${esc(disp)}"
+         data-name="${attr(e.workflow_name)}"
+         data-status="${attr(disp)}"
          data-cls="${cls}"
          data-time="${relativeTime(e.started_at)}">
     </div>`;
@@ -898,10 +899,12 @@ function renderTimeline(executions) {
   el.addEventListener('mouseover', (ev) => {
     const block = ev.target.closest('.exec-block');
     if (!block) return;
+    // dataset reads DECODE the attribute entities back to raw markup, so re-escape
+    // before innerHTML. The attribute write alone does not protect the read.
     tooltip.innerHTML = `
-      <div style="font-weight:600;margin-bottom:1px">${block.dataset.name}</div>
+      <div style="font-weight:600;margin-bottom:1px">${esc(block.dataset.name)}</div>
       <div style="display:flex;gap:6px;align-items:center">
-        <span class="pill pill-${block.dataset.cls}" style="font-size:8px">${block.dataset.status}</span>
+        <span class="pill pill-${block.dataset.cls}" style="font-size:8px">${esc(block.dataset.status)}</span>
         <span class="time-relative">${block.dataset.time}</span>
       </div>
       <div style="font-size:8px;color:rgba(255,255,255,.5);margin-top:2px">Click to open in n8n ↗</div>
@@ -954,7 +957,7 @@ function renderHealthGrid(workflows, executions) {
     const dotClass = status === 'error' ? 'offline' : status === 'running' ? 'checking' : 'online';
     return `
       <div class="health-card" data-wf-id="${jsStr(w.id)}" data-wf-name="${jsStr(w.name)}" data-wf-status="${jsStr(status)}" style="cursor:pointer">
-        <div class="health-card-name" title="${esc(w.name)}">${esc(w.name)}</div>
+        <div class="health-card-name" title="${attr(w.name)}">${esc(w.name)}</div>
         <div class="health-card-meta">
           <span class="health-card-status"><span class="status-dot ${dotClass}"></span> ${status}</span>
           <span class="health-card-trigger">${triggerIcon(w.trigger_type)}</span>
@@ -1005,7 +1008,7 @@ function _instanceBadge(id) {
   const inst = _instanceMap[id];
   const name = inst ? inst.name : (id ? 'unknown' : 'no instance');
   const color = inst && inst.color ? inst.color : '#888';
-  return `<span class="instance-badge" title="${esc(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary);font-family:var(--font-mono)">`
+  return `<span class="instance-badge" title="${attr(id)}" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius);background:var(--bg-input);color:var(--text-secondary);font-family:var(--font-mono)">`
     + `<span style="width:6px;height:6px;border-radius:50%;background:${esc(color)}"></span>`
     + `${esc(name)}</span>`;
 }
@@ -1262,9 +1265,6 @@ function triggerIcon(t) {
   if (t === 'error') return 'error';
   return t || 'other';
 }
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
-
 
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.

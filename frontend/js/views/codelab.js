@@ -6,6 +6,7 @@
 import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
 import { attachApprovals, hasPendingActions, renderPendingActions } from '../components/tool-approval.js';
+import { attr } from '../lib/html.js';
 
 let editor = null;
 let monacoLoaded = false;
@@ -1113,7 +1114,7 @@ window.__codeRegisterAgent = async () => {
   const toolRows = tools.length
     ? tools.map((t) =>
         `<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;padding:3px 0">
-           <input type="checkbox" class="reg-tool" value="${esc(t.name)}" style="margin-top:3px">
+           <input type="checkbox" class="reg-tool" value="${attr(t.name)}" style="margin-top:3px">
            <span><span style="font-family:var(--font-mono);color:var(--text-primary)">${esc(t.name)}</span><span style="color:var(--text-muted)"> — ${esc((t.description || '').split('\n')[0])}</span></span>
          </label>`).join('')
     : '<div style="color:var(--text-muted);font-size:12px">No tools available (install the langgraph extra to run agents).</div>';
@@ -1465,7 +1466,7 @@ window.__openPromptBuilder = () => {
   const sectionsHtml = PB_SECTIONS.map(s => `
     <label style="display:block;margin-bottom:10px">
       <span style="display:block;font-size:12px;font-weight:600;margin-bottom:3px">${esc(s.label)}</span>
-      <textarea id="pb-${s.key}" rows="3" placeholder="${esc(s.hint)}"
+      <textarea id="pb-${s.key}" rows="3" placeholder="${attr(s.hint)}"
         style="width:100%;padding:7px 9px;font-size:12px;line-height:1.4;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:4px;color:var(--text-primary);resize:vertical;font-family:inherit"></textarea>
     </label>
   `).join('');

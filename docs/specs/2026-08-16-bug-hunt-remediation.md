@@ -51,6 +51,15 @@ Every finding in the log is dispositioned here: fixed in a phase, parked behind 
 
 ---
 
+### Phase 1 outcome (2026-08-16, verified)
+
+Built and passed the hostile-stub gate. Findings for later phases:
+
+- **A helper-consolidation sweep leaves duplicate-declaration landmines.** Two views (`workflows.js`, `settings.js`) kept a local `esc`/`attr` definition alongside the new import, a hard `SyntaxError` that takes the whole module offline (browser console: `Identifier 'esc' has already been declared`). The per-file `node --check` gate does NOT catch it (it parses each file as a loose script). For every later phase that adds imports, add a gate that greps each importing file for a surviving local definition of the same name.
+- **The grep gate proves sinks were touched, not that all sinks were found.** The first sweep missed ~40 attribute sinks across 14 files still on quote-blind escapers. The residual pass caught them by grepping every `(attr-name)="${(esc|escHtml|escapeHtml|_esc)(` pattern, not just the BUG-020 worklist. Treat the worklist as a starting point, not the boundary.
+- **Escape-then-format double-escapes `&`.** `fmtMd()`/`inline()` take text already escaped by `esc()` (so `&` is `&amp;`), then feed captured URLs to `attr()`, yielding `&amp;amp;` and broken query strings. Unescape `&amp;`→`&` before `attr()` on any value pulled from already-escaped text.
+- Live-verified inert: BUG-001 (33-hover dataset round-trip), BUG-002 (`fmtMd` unit proof), BUG-003 (slug rejected, no iframe), plus Overview/Workflows/Errors/Containers. Stub promoted to `tests/stubs/stub_n8n.py --hostile`.
+
 ## Phase 2: Backend security hardening
 
 - **BUG-009** `n8n_proxy/router.py:166` `edit_instance`: run `assert_safe_probe_url` on the submitted URL always; when `url` or `api_key` changed, probe with `test_connection_with` before saving (the create/rotate pattern). A failed probe returns 400 and leaves the stored instance untouched. Also fixes the BUG-034 blank-field hazard in the same route: blank `url`/`name` in the PUT is a 400, not a save.

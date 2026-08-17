@@ -8,6 +8,7 @@
  */
 
 import { get } from '../api.js';
+import { attr } from '../lib/html.js';
 
 function esc(s) {
   const d = document.createElement('span');
@@ -88,7 +89,7 @@ export function buildWaterfall(spans) {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:3px 0;cursor:pointer';
     row.innerHTML = `
-      <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${esc(label)} (${esc(kindHint)})">
+      <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${attr(label)} (${attr(kindHint)})">
         ${dotColor ? `<span style="color:${dotColor}">●</span> ` : ''}${esc(label)}
       </div>
       <div style="flex:1;position:relative;height:16px;background:var(--bg-input,rgba(255,255,255,.04));border-radius:3px">

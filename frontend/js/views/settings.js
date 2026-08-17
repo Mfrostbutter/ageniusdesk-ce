@@ -941,7 +941,7 @@ function confirmPill(policy) {
     none:   ['success', 'Nothing', 'Trusted: this server runs unattended'],
   };
   const [cls, label, title] = map[policy] || map.writes;
-  return `<span class="pill pill-${cls}" style="font-size:10px" title="${esc(title)}">${esc(label)}</span>`;
+  return `<span class="pill pill-${cls}" style="font-size:10px" title="${attr(title)}">${esc(label)}</span>`;
 }
 
 async function loadMCPList() {
@@ -1837,7 +1837,7 @@ async function renderSessions(box) {
           ${s.current ? '<span class="badge">this device</span>' : ''}</div>
         <div class="muted" style="font-size:12px">${_esc(s.ip)} · last seen ${_esc(s.last_seen)}</div>
       </div>
-      ${s.current ? '' : `<button class="btn btn-secondary btn-sm" data-revoke="${_esc(s.id)}">Revoke</button>`}
+      ${s.current ? '' : `<button class="btn btn-secondary btn-sm" data-revoke="${attr(s.id)}">Revoke</button>`}
     </div>`).join('');
   box.querySelectorAll('[data-revoke]').forEach(btn => {
     btn.onclick = async () => {

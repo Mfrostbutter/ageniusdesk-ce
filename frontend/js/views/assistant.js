@@ -18,6 +18,7 @@
 import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
 import { attachApprovals, renderPendingActions } from '../components/tool-approval.js';
+import { esc, attr } from '../lib/html.js';
 
 let chatHistory = [];
 let isConfigured = false;
@@ -238,7 +239,7 @@ function renderConfigCard(ctx) {
           <div style="font-size:10px;font-weight:600;color:var(--text-secondary);letter-spacing:.3px;text-transform:uppercase">Quick prompts</div>
           <div style="display:flex;flex-wrap:wrap;gap:4px">
             ${QUICK_PROMPTS.map((p, i) => `
-              <button type="button" class="quick-prompt-chip" data-qp="${i}" title="${esc(p.text)}"
+              <button type="button" class="quick-prompt-chip" data-qp="${i}" title="${attr(p.text)}"
                 style="background:transparent;border:1px solid var(--border-dim);color:var(--text-secondary);border-radius:999px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:var(--font-body);transition:all .15s"
                 onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text-primary)'"
                 onmouseout="this.style.borderColor='var(--border-dim)';this.style.color='var(--text-secondary)'"
@@ -556,7 +557,7 @@ async function populateModels(modelSel, provider, preferredModel) {
       return;
     }
     modelSel.innerHTML = models.map(m =>
-      `<option value="${esc(m.id)}">${esc(m.name)}${m.provider ? ` (${esc(m.provider)})` : ''}</option>`
+      `<option value="${attr(m.id)}">${esc(m.name)}${m.provider ? ` (${esc(m.provider)})` : ''}</option>`
     ).join('');
     if (preferredModel && modelSel.querySelector(`option[value="${CSS.escape(preferredModel)}"]`)) {
       modelSel.value = preferredModel;
@@ -928,9 +929,11 @@ function renderMarkdown(text) {
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>')
       // Only emit a link for http(s) hrefs — blocks javascript:/data: URIs.
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, href) =>
-        /^https?:\/\//i.test(href.trim()) ? `<a href="${href}" target="_blank" style="color:var(--accent)">${text}</a>` : text);
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, href) => {
+        // href comes from esc()'d text, so & is already &amp;; undo before attr()
+        // or query-string links double-escape and break.
+        const h = href.trim().replace(/&amp;/g, '&');
+        return /^https?:\/\//i.test(h) ? `<a href="${attr(h)}" target="_blank" style="color:var(--accent)">${text}</a>` : text;
+      });
   }
 }
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s == null ? '' : String(s); return el.innerHTML; }

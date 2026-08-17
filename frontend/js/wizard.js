@@ -18,6 +18,7 @@ import * as toast from './components/toast.js';
 import { secretField, invalidateRefsCache } from './components/secretfield.js';
 import * as connectN8nGuide from './components/connect-n8n-guide.js';
 import * as errorHandlerPrompt from './components/error-handler-prompt.js';
+import { attr } from './lib/html.js';
 
 const STEPS = [
   { id: 'welcome',  label: 'Welcome'       },
@@ -467,7 +468,7 @@ function renderStack() {
       <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
         <span style="color:#34d399;flex-shrink:0">→</span>
         <code>${esc(p.template_name || p.template_id)}</code>
-        <a href="${esc(p.url)}" target="_blank" style="color:var(--accent);font-size:11px">${esc(p.url)}</a>
+        <a href="${attr(p.url)}" target="_blank" style="color:var(--accent);font-size:11px">${esc(p.url)}</a>
       </div>
     `).join('');
 
@@ -513,8 +514,8 @@ function renderStack() {
       ...visible.filter(f => f.id !== 'instance_name' && f.id !== 'port'),
     ];
     return `
-      <label class="wizard-stack-card ${sel.selected ? 'selected' : ''}" data-tid="${esc(t.id)}" style="display:flex;gap:12px;padding:12px;border:1px solid var(--border-dim);border-radius:var(--radius);margin-bottom:8px;cursor:pointer;background:${sel.selected ? 'rgba(96,165,250,0.05)' : 'var(--bg-input)'};transition:background 0.1s">
-        <input type="checkbox" class="wizard-stack-check" data-tid="${esc(t.id)}" ${checked} style="margin-top:2px;flex-shrink:0">
+      <label class="wizard-stack-card ${sel.selected ? 'selected' : ''}" data-tid="${attr(t.id)}" style="display:flex;gap:12px;padding:12px;border:1px solid var(--border-dim);border-radius:var(--radius);margin-bottom:8px;cursor:pointer;background:${sel.selected ? 'rgba(96,165,250,0.05)' : 'var(--bg-input)'};transition:background 0.1s">
+        <input type="checkbox" class="wizard-stack-check" data-tid="${attr(t.id)}" ${checked} style="margin-top:2px;flex-shrink:0">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px">
             <span style="font-size:18px">${esc(t.icon)}</span>
@@ -530,11 +531,11 @@ function renderStack() {
                 const type = f.type === 'password' ? 'text' : (f.type === 'number' ? 'number' : 'text');
                 return `
                   <label style="color:var(--text-dim);align-self:center">${esc(f.label)}</label>
-                  <input type="${type}" class="wizard-stack-field" data-tid="${esc(t.id)}" data-fid="${esc(f.id)}" value="${esc(String(val))}" placeholder="${esc(f.placeholder || '')}" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:5px 8px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px">
+                  <input type="${type}" class="wizard-stack-field" data-tid="${attr(t.id)}" data-fid="${attr(f.id)}" value="${attr(String(val))}" placeholder="${attr(f.placeholder || '')}" style="background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:5px 8px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px">
                 `;
               }).join('')}
             </div>
-            <div class="wizard-stack-portwarn" data-tid="${esc(t.id)}"></div>
+            <div class="wizard-stack-portwarn" data-tid="${attr(t.id)}"></div>
           ` : ''}
         </div>
       </label>
@@ -717,8 +718,8 @@ function renderSecrets() {
     <div id="wizard-secrets-rows">
       ${rows.map((r, i) => `
         <div class="wizard-secret-row" data-i="${i}" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-          <input type="text" class="wizard-secret-name" placeholder="NAME (e.g. ANTHROPIC_KEY)" value="${esc(r.name)}" style="flex:1;text-transform:uppercase;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:13px">
-          <input type="password" class="wizard-secret-value" placeholder="value (paste your key)" value="${esc(r.value)}" style="flex:2;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:13px">
+          <input type="text" class="wizard-secret-name" placeholder="NAME (e.g. ANTHROPIC_KEY)" value="${attr(r.name)}" style="flex:1;text-transform:uppercase;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:13px">
+          <input type="password" class="wizard-secret-value" placeholder="value (paste your key)" value="${attr(r.value)}" style="flex:2;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:13px">
           <button class="btn btn-sm btn-ghost wizard-secret-remove" type="button" title="Remove">&times;</button>
         </div>
       `).join('')}
@@ -888,11 +889,11 @@ function renderN8n() {
       <div>
         <label>
           Instance Name
-          <input type="text" id="wizard-n8n-name" placeholder="e.g. My n8n, Production, Dev" value="${esc(n.name || '')}">
+          <input type="text" id="wizard-n8n-name" placeholder="e.g. My n8n, Production, Dev" value="${attr(n.name || '')}">
         </label>
         <label>
           n8n URL
-          <input type="url" id="wizard-n8n-url" placeholder="https://your-n8n.example.com" value="${esc(n.url || '')}">
+          <input type="url" id="wizard-n8n-url" placeholder="https://your-n8n.example.com" value="${attr(n.url || '')}">
         </label>
         <div style="margin-top:10px">
           <div id="wizard-n8n-key-field"></div>
@@ -969,7 +970,7 @@ function renderAI() {
         ${isOllama ? `
           <label>
             Ollama URL
-            <input type="url" id="wizard-ai-key" placeholder="${cur.placeholder}" value="${esc(ai.api_key || '')}">
+            <input type="url" id="wizard-ai-key" placeholder="${cur.placeholder}" value="${attr(ai.api_key || '')}">
             <small>Don't have one? <a href="${cur.keyUrl}" target="_blank" rel="noopener">${cur.keyLabel} &rarr;</a></small>
           </label>
         ` : `
@@ -981,7 +982,7 @@ function renderAI() {
         <label>
           Model <span style="font-size:11px;color:var(--text-dim);font-weight:400;margin-left:4px">optional, auto-picks a default if blank</span>
           <select id="wizard-ai-model"><option value="">Loading&hellip;</option></select>
-          <input type="text" id="wizard-ai-model-custom" placeholder="${modelHint(cur.id)}" style="display:none;margin-top:6px" value="${esc(ai.model || '')}">
+          <input type="text" id="wizard-ai-model-custom" placeholder="${modelHint(cur.id)}" style="display:none;margin-top:6px" value="${attr(ai.model || '')}">
         </label>
         <div id="wizard-ai-test-result" style="font-size:12px"></div>
         <button class="btn btn-sm" id="wizard-ai-test" type="button" style="align-self:flex-start">Test connection</button>
@@ -1240,7 +1241,7 @@ async function populateModelSelect(modelSel, customEl, provider, currentModel) {
   }
 
   const options = models.map(m =>
-    `<option value="${esc(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.name || m.id)}</option>`
+    `<option value="${attr(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.name || m.id)}</option>`
   );
   options.push(`<option value="__custom__" ${cur && !inList ? 'selected' : ''}>&mdash; custom model &mdash;</option>`);
   modelSel.innerHTML = options.join('');

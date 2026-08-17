@@ -3,6 +3,7 @@
  */
 
 import { get, post, del } from '../api.js';
+import { esc } from '../lib/html.js';
 import * as toast from '../components/toast.js';
 
 let activeTab = 'n8n-users';
@@ -306,7 +307,7 @@ async function renderSystem(el) {
         ${infoRow('n8n URL', status.n8n_url || 'Not configured')}
         ${infoRow('WebSocket Clients', status.websocket_clients)}
         ${infoRow('Theme', status.theme)}
-        ${infoRow('Configured', `<span class="pill pill-${status.configured ? 'success' : 'error'}">${status.configured ? 'Yes' : 'No'}</span>`)}
+        ${infoRow('Configured', `<span class="pill pill-${status.configured ? 'success' : 'error'}">${status.configured ? 'Yes' : 'No'}</span>`, true)}
       </div>
     `;
   } catch {
@@ -314,10 +315,12 @@ async function renderSystem(el) {
   }
 }
 
-function infoRow(label, value) {
+// `html` is the explicit opt-in for rows that pass pre-built markup; every other
+// value is escaped so an instance name or n8n URL with markup renders as text.
+function infoRow(label, value, html = false) {
   return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-dim)">
-    <span style="color:var(--text-secondary)">${label}</span>
-    <span style="font-family:var(--font-mono);font-size:12px">${value}</span>
+    <span style="color:var(--text-secondary)">${esc(label)}</span>
+    <span style="font-family:var(--font-mono);font-size:12px">${html ? value : esc(value)}</span>
   </div>`;
 }
 
@@ -326,9 +329,6 @@ function roleClass(r) {
   if (r === 'operator') return 'warning';
   return 'neutral';
 }
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
-
 
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.
