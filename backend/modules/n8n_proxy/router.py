@@ -23,6 +23,7 @@ from backend.config import (
     update_instance,
 )
 from backend.modules.n8n_proxy import client
+from backend.net import UnsafeProbeURL, assert_safe_probe_url
 
 logger = logging.getLogger(__name__)
 
@@ -165,13 +166,53 @@ async def create_instance(req: InstanceRequest, request: Request):
 
 @router.put("/instances/{instance_id}")
 async def edit_instance(instance_id: str, req: InstanceRequest):
-    """Update an existing instance."""
-    browser_url = req.url.rstrip("/")
+    """Update an existing instance.
+
+    An edit that touches the URL or API key re-verifies connectivity against the
+    NEW values before saving, so a typo or a hostile URL never becomes the
+    stored configuration. The URL is also run through the outbound-URL guard so
+    the edit endpoint cannot be turned into an SSRF probe.
+    """
+    name = req.name.strip()
+    url_raw = req.url.strip()
+    api_key = req.api_key.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    if not url_raw:
+        raise HTTPException(status_code=400, detail="URL cannot be empty")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key cannot be empty")
+
+    inst = next((i for i in get_instances() if i["id"] == instance_id), None)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    try:
+        browser_url = assert_safe_probe_url(url_raw)
+    except UnsafeProbeURL as e:
+        raise HTTPException(status_code=400, detail=f"Instance URL is not allowed: {e}")
     backend_url = client.dockerize_url(browser_url)
+
+    # Re-probe whenever the connection target or credential changed. A failed
+    # probe leaves the stored instance exactly as it was.
+    url_changed = backend_url != inst.get("url", "")
+    key_changed = api_key != decrypt_value(inst.get("api_key", "") or "") and api_key != inst.get("api_key", "")
+    if url_changed or key_changed:
+        tls = req.tls_verify if req.tls_verify is not None else inst.get("tls_verify")
+        result = await client.test_connection_with(backend_url, api_key, verify=tls)
+        if not result["connected"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": result.get("message") or "Could not connect to n8n with the new values. The stored instance was not changed.",
+                    "error_class": result.get("error_class", "generic"),
+                },
+            )
+
     updates = {
-        "name": req.name,
+        "name": name,
         "url": backend_url,
-        "api_key": req.api_key,
+        "api_key": api_key,
         "color": req.color,
         "owner_email": req.owner_email,
         "owner_password": req.owner_password,

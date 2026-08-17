@@ -30,6 +30,7 @@ except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _ServerClass
     _MCP_V2 = False
 
+from backend.auth_gate import current_user, role_at_least
 from backend.config import get_instances, load_config, load_secrets
 from backend.database import get_db
 from backend.modules.n8n_proxy import client as n8n_client
@@ -159,10 +160,31 @@ async def list_n8n_instances() -> list[dict[str, Any]]:
     return out
 
 
+async def _require_admin_for_tool() -> None:
+    """Gate an admin-surface MCP tool on the caller being an admin.
+
+    The transport middleware already requires operator+, but secret-name
+    enumeration mirrors the admin-only HTTP surface (/api/admin/secrets), so it
+    additionally requires admin here. The MCP context carries the Starlette
+    request, which current_user resolves through the same session/edge/token
+    precedence as the HTTP API.
+    """
+    try:
+        request = mcp.request_context.request
+    except Exception:
+        request = None
+    if request is None:
+        raise HTTPException(status_code=403, detail="admin role required")
+    user = await current_user(request)
+    if not role_at_least(user, "admin"):
+        raise HTTPException(status_code=403, detail="admin role required")
+
+
 @mcp.tool()
 async def list_secrets_metadata() -> list[dict[str, Any]]:
     """Names and types of stored secrets. Never returns actual values; use
     the Secrets UI for that."""
+    await _require_admin_for_tool()
     secrets = load_secrets()
     out = []
     for name in sorted(secrets):

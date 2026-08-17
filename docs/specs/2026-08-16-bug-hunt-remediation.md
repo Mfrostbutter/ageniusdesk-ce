@@ -75,7 +75,14 @@ Built and passed the hostile-stub gate. Findings for later phases:
 
 **Verification.** New pytest cases per bug (edit-PUT SSRF rejection, TOTP pending-secret state machine, last-admin 409/400, chunked 413 via raw socket test, MCP fail-closed classification with decoy names, audit row on MCP execute, MCP secrets tool 403 at operator). Timing-oracle test asserts hash work happens on the miss path (call-count via monkeypatch, not wall clock).
 
----
+### Phase 2 outcome (2026-08-17, verified)
+
+Built and verified; full suite 549 green (534 + 15 new). Findings:
+
+- **BUG-031 shipped a self-recursion landmine.** The chunked-body guard reassigned `request._receive = guarded_receive`, and `guarded_receive` awaited `request._receive()`, now itself, so every chunked request recursed until the stack blew, the opposite of the intended 413. Fixed by capturing `original_receive` before the wrap. Caught by a middleware unit test, not by reading; a chunked-body test is mandatory here, the happy path (Content-Length) never exercises the wrapper.
+- **Eight of the ten findings were already correctly implemented** in the working tree before verification (BUG-008/009/015/016/018/021/032/040 plus BUG-034), several with prose comments describing the exact hunt concern. The implementation was sound; the gap was test coverage (5 of 10 bugs) and the one recursion bug. Added tests for BUG-008 (TOTP stage/activate/abandon state machine), BUG-018 (operator denied, fail-closed without context), BUG-031 (chunked 413).
+- **BUG-043 is mitigated, not eliminated.** The `os.environ["ANTHROPIC_API_KEY"]` write is now scoped and restored in a `finally`, closing the permanent-exposure concern, but two concurrent PydanticAI runs with different keys still race on the shared global. Acceptable while pydantic-ai forces env resolution; a real fix needs per-run env isolation (subprocess or client-param), tracked for a later pass.
+- **Verified-by-audit against current code:** the `audit.record` in `mcp_client.execute_tool` scrubs its fields via `audit.scrub` (line 98 of audit.py), so passing raw `arguments` does not re-leak what BUG-040 closed.
 
 ## Phase 3: Fleet TLS correctness (S2)
 

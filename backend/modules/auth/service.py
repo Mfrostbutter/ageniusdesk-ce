@@ -135,6 +135,12 @@ def hash_password(password: str, salt: str | None = None, iterations: int = PBKD
     return {"password_hash": hashed, "salt": salt, "algo": ALGO, "iterations": iterations}
 
 
+# Fixed dummy hash used to keep the unknown-username login path doing the same
+# PBKDF2 work as the real-account path, so the response time doesn't reveal
+# whether the account exists. Generated once at import; value is irrelevant.
+_DUMMY_HASH = hash_password("not-the-password")
+
+
 def verify_password(user: dict, password: str) -> bool:
     salt = user.get("salt", "")
     iterations = int(user.get("iterations") or LEGACY_ITERATIONS)
@@ -143,6 +149,23 @@ def verify_password(user: dict, password: str) -> bool:
         return False
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations).hex()
     return hmac.compare_digest(candidate, expected)
+
+
+def verify_password_or_dummy(user: dict | None, password: str) -> bool:
+    """Verify against the account, or run the same hash work against a fixed
+    dummy when the account does not exist. Keeps the unknown-username path from
+    short-circuiting before the expensive PBKDF2 step, which would otherwise be
+    a username-enumeration timing oracle. The dummy result is always discarded.
+    """
+    if not user:
+        hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode(),
+            _DUMMY_HASH["salt"].encode(),
+            int(_DUMMY_HASH["iterations"]),
+        ).hex()
+        return False
+    return verify_password(user, password)
 
 
 def needs_rehash(user: dict) -> bool:
@@ -503,14 +526,25 @@ def consume_pending(token: str) -> str | None:
 
 
 def totp_enroll(username: str) -> tuple[str, str]:
-    """Generate a pending (not-yet-enabled) secret. Returns (secret, otpauth_uri)."""
+    """Generate a pending (not-yet-enabled) secret. Returns (secret, otpauth_uri).
+
+    Enrolling while 2FA is ALREADY enabled must not clobber the live secret or
+    flip the account back to disabled: a session-holder who cannot satisfy the
+    disable step-up could otherwise POST /enroll to silently turn 2FA off. The
+    new secret is staged as ``pending_secret_enc``; activation swaps it in
+    atomically, and an abandoned enrollment leaves the existing 2FA untouched.
+    """
     secret = totp.generate_secret()
     users = load_users()
     for u in users:
         if u.get("username") == username:
             block = u.get("totp") or {}
-            block["secret_enc"] = encrypt_value(secret)
-            block["enabled"] = False
+            if block.get("enabled"):
+                # Re-enrollment on an enabled account: stage, don't clobber.
+                block["pending_secret_enc"] = encrypt_value(secret)
+            else:
+                block["secret_enc"] = encrypt_value(secret)
+                block["enabled"] = False
             u["totp"] = block
             save_users(users)
             break
@@ -522,17 +556,32 @@ def _user_secret(user: dict) -> str:
     return decrypt_value(enc) if enc else ""
 
 
+def _pending_secret(block: dict) -> str:
+    enc = block.get("pending_secret_enc", "")
+    return decrypt_value(enc) if enc else ""
+
+
 def totp_activate(username: str, code: str) -> list[str] | None:
-    """Verify the pending secret; on success enable + return recovery codes."""
+    """Verify the pending secret; on success enable + return recovery codes.
+
+    For a fresh account the pending secret lives in ``secret_enc``. For a
+    re-enrollment on an already-enabled account it lives in
+    ``pending_secret_enc``; a successful activation swaps it into the live slot
+    atomically and drops the staging key, so the account is never left with 2FA
+    disabled mid-rotation.
+    """
     users = load_users()
     for u in users:
         if u.get("username") == username:
-            secret = _user_secret(u)
+            block = u.get("totp") or {}
+            # Prefer the staged re-enrollment secret; fall back to first enroll.
+            secret = _pending_secret(block) or _user_secret(u)
             step = totp.verify_step(secret, code) if secret else None
             if step is None:
                 return None
             codes = totp.generate_recovery_codes()
-            block = u.get("totp") or {}
+            block["secret_enc"] = encrypt_value(secret)
+            block.pop("pending_secret_enc", None)
             block["enabled"] = True
             block["recovery_codes"] = [totp.hash_recovery_code(c) for c in codes]
             # Seed the replay guard so the activation code can't be reused to log in.
@@ -547,7 +596,7 @@ def totp_disable(username: str) -> None:
     users = load_users()
     for u in users:
         if u.get("username") == username:
-            u["totp"] = {"enabled": False, "secret_enc": "", "recovery_codes": []}
+            u["totp"] = {"enabled": False, "secret_enc": "", "pending_secret_enc": "", "recovery_codes": []}
             save_users(users)
             break
 

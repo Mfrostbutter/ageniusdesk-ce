@@ -438,10 +438,20 @@ async def _run_pydantic(agent, task: str, api_key: str, emit) -> tuple:
     as tool_call/tool_result events (best-effort; the run is not live-streamed yet).
     Returns (final_md, native_meta). The graph.py factory built a pydantic_ai.Agent
     and ignores the llm/checkpointer args."""
-    os.environ["ANTHROPIC_API_KEY"] = api_key  # pydantic-ai resolves the key from env
-    pa = agent.build(None, None)
-    await emit({"phase": "thinking", "node": "agent", "text": "Running the PydanticAI agent."})
-    result = await pa.run(task)
+    # pydantic-ai resolves the key from env. Scope the mutation to this run and
+    # restore the prior value afterward so concurrent agents using different keys
+    # (and the parent process env) are not affected.
+    _prev_key = os.environ.get("ANTHROPIC_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    try:
+        pa = agent.build(None, None)
+        await emit({"phase": "thinking", "node": "agent", "text": "Running the PydanticAI agent."})
+        result = await pa.run(task)
+    finally:
+        if _prev_key is None:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        else:
+            os.environ["ANTHROPIC_API_KEY"] = _prev_key
 
     # Replay the message history as tool steps (shape varies across versions).
     try:
