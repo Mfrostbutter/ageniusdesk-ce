@@ -17,9 +17,9 @@ Fixes landed on `feat/trace-backfill` per [2026-08-16-bug-hunt-remediation.md](.
 | 1 — frontend XSS (S1) | `bf1e384` | S1 root cause, BUG-001, 002, 003, 060, 062 + the BUG-020 site table |
 | 2 — backend security | `301e221` | BUG-008, 009, 015, 016, 018, 021, 031, 032, 040, 043 (043 mitigated, residual concurrency race logged) |
 | 3 — fleet TLS (S2) | `565e99f` | S2 root cause, BUG-010, 025, 033 |
-| 4 — backend correctness + P3 | `8fc033d` | BUG-004, 005, 006, 007, 012, 013, 014 (code; live Error Trigger capture pending), 017, 019, 022, 023, 024, 026, 027, 028, 029, 030, 034, 035, 036 (direction reversed: `awsApi` was the wrong side), 037 (detect-pattern fix, not the key migration), 038, 039, 041, 042, 044, 046, 047, 048, 049, 050, 051 |
+| 4 — backend correctness + P3 | `8fc033d` | BUG-004, 005, 006, 007, 012, 013, 014 (live-confirmed 2026-08-18), 017, 019, 022, 023, 024, 026, 027, 028, 029, 030, 034, 035, 036 (direction reversed: `awsApi` was the wrong side), 037 (detect-pattern fix, not the key migration), 038, 039, 041, 042, 044, 046, 047, 048, 049, 050, 051 |
 
-Still open: Phase 5 (S3 / router cleanup plus BUG-053, 054, 056, 057, 058, 059, 061, 063) and the open decisions (BUG-020 module-worker isolation, 045, 052, 055). BUG-014's live Error Trigger capture on n8n-dev is the one Phase 4 item still pending.
+Still open: Phase 5 (S3 / router cleanup plus BUG-053, 054, 056, 057, 058, 059, 061, 063) and the open decisions (BUG-020 module-worker isolation, 045, 052, 055). BUG-014's live capture completed 2026-08-18: the Error Trigger emits `workflow` top-level (no `execution.workflow` exists), fixture at `tests/fixtures/error_trigger_payload.json`.
 
 ## Severity legend
 
@@ -103,7 +103,7 @@ Sites: `dashboard.js:167` (20s poll of six endpoints), `dashboard.js:852-861` (w
 ### BUG-013 Promote reuses a prior mirror without checking credential type [reported]
 `backend/modules/n8n_promote/promote.py:128`. `_provision_credential` returns a prior mirror for a secret without confirming its `credential_type` matches the requested type, and skips `_assert_provision_allowed`. Resolving an ambiguous row by picking a differently-typed existing secret binds the promoted workflow to a wrong-type credential that fails at runtime, the green-but-broken state the module exists to prevent; a since-tightened scope/URL guard is also not re-checked.
 
-### BUG-014 Shipped error handler loses workflow attribution on every error [verified against documented contract, live test pending]
+### BUG-014 Shipped error handler loses workflow attribution on every error [live-confirmed 2026-08-18]
 `backend/n8n_workflows/global-error-handler.json` (Extract Error Details). The Code node reads `execution.workflow`, but n8n's documented Error Trigger contract emits `workflow` as a top-level sibling of `execution`, so it is always `{}`. Every pushed error is stored as `workflow_id:'unknown'` / `Unknown Workflow`; `get_errors_grouped` partitions by `(instance, workflow_id, node, type)`, so all workflows collapse into one `unknown` bucket, distinct workflows failing on the same node+type merge, and the Errors view cannot name the failing workflow. This is the recommended one-click install path. Message/node/execution_id are extracted correctly (their field paths match the documented shape exactly; only `workflow` is misnested), which supports contract bug over variant shape. Label softened 2026-08-16: confirm with a live n8n Error Trigger firing before fixing; dogfood would not have caught this because 3066's errors arrive via OTLP/execution polling, not this webhook.
 
 ### BUG-015 MCP tool classification fails open on server-controlled names [reported]
