@@ -198,6 +198,33 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    # ticket_sink_state — one row per error group the ticket sink has filed a
+    # PSA ticket for. group_key = instance|workflow|node|error_type (same
+    # grouping as the errors UI). closed_ticket_ids is a JSON list of prior
+    # tickets for the group (re-arm history). Created in _migrate so it lands
+    # on both fresh and upgraded installs.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS ticket_sink_state (
+            group_key         TEXT PRIMARY KEY,
+            instance_id       TEXT NOT NULL DEFAULT '',
+            workflow_id       TEXT NOT NULL DEFAULT '',
+            workflow_name     TEXT NOT NULL DEFAULT '',
+            node_name         TEXT NOT NULL DEFAULT '',
+            error_type        TEXT NOT NULL DEFAULT '',
+            psa_ticket_id     INTEGER NOT NULL,
+            ticket_number     INTEGER,
+            occurrences       INTEGER NOT NULL DEFAULT 1,
+            last_replied_at   TEXT,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            closed_ticket_ids TEXT NOT NULL DEFAULT '[]'
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ticket_sink_updated ON ticket_sink_state(updated_at DESC)"
+    )
+    await db.commit()
+
     # module_installs — tamper-light audit trail of community module installs.
     # One row per confirmed install: what capabilities were declared, what the
     # scan found, who approved it, and when. Makes "what did we agree to, and

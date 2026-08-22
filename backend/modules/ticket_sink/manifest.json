@@ -1,0 +1,23 @@
+{
+  "id": "ticket_sink",
+  "name": "Ticket Sink",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "description": "Files a PSA ticket per error group via itops-mcp: create on a new group, reply on recurrence, re-arm when the ticket is closed.",
+  "author": "AgeniusDesk",
+  "license": "MIT",
+  "routes_prefix": "/api/ticket-sink",
+  "builtin": true,
+  "secrets_required": [
+    { "key": "ITOPS_MCP_TOKEN", "description": "Bearer token for the itops-mcp tool plane. Needed only when the sink is enabled.", "required": false }
+  ],
+  "capabilities": {
+    "network": { "outbound": true },
+    "env": [
+      "AGD_TICKET_SINK_ENABLED",
+      "ITOPS_MCP_URL",
+      "AGD_TICKET_SINK_CLIENT_ID",
+      "AGD_TICKET_SINK_REPLY_INTERVAL_MIN"
+    ]
+  }
+}

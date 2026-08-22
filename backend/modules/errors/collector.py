@@ -75,6 +75,17 @@ async def store_error(error: dict[str, Any]) -> int:
     await manager.broadcast("error", broadcast_data)
     logger.info("Error stored and broadcast: [%s/%s] %s", instance_id or "no-instance", error.get("workflow_name"), error.get("error_message", "")[:80])
 
+    # Ticket sink: fire-and-forget so PSA latency never blocks ingest. The
+    # sink no-ops fast when disabled and swallows its own failures.
+    try:
+        import asyncio
+
+        from backend.modules.ticket_sink.service import maybe_file_error
+
+        asyncio.create_task(maybe_file_error(broadcast_data))
+    except Exception:
+        logger.debug("ticket sink dispatch failed", exc_info=True)
+
     return error_id
 
 
