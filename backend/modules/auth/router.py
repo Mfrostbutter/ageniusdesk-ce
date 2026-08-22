@@ -163,7 +163,7 @@ async def login(body: LoginBody, request: Request, response: Response):
         raise HTTPException(status_code=429, detail="Too many attempts; try again later")
 
     user = service.find_user(username)
-    if not user or not service.verify_password(user, body.password):
+    if not service.verify_password_or_dummy(user, body.password):
         service.throttle_record_failure(username, ip)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
@@ -238,6 +238,10 @@ async def forgot_password(body: ForgotBody, request: Request):
         asyncio.create_task(
             mailer.send_password_reset(user.get("email") or body.email.strip(), reset_url)
         )
+    else:
+        # Run the same hash work as the real-account path so the response time
+        # does not reveal whether the email is registered. The result is unused.
+        service.verify_password_or_dummy(None, body.email)
     return {"ok": True}
 
 

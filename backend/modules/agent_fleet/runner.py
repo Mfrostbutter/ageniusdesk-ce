@@ -73,9 +73,65 @@ def is_live() -> Optional[str]:
     return _live_run_id
 
 
+def claim(run_id: str) -> bool:
+    """Atomically claim the single-flight slot BEFORE create_task.
+
+    Sync on purpose: no await between check and set, so two racing requests on
+    the event loop cannot both win. run()/resume() release in their finally.
+    """
+    global _live_run_id
+    if _live_run_id is not None:
+        return False
+    _live_run_id = run_id
+    return True
+
+
 def is_paused(run_id: str) -> bool:
     """True when the run is parked awaiting human approval."""
     return run_id in _PAUSED
+
+
+def discard_parked(run_id: str) -> None:
+    """Drop a parked run's in-memory graph (delete-run path), so a deleted run
+    doesn't linger as is_paused() with a live checkpointer."""
+    _PAUSED.pop(run_id, None)
+
+
+class RunStartError(Exception):
+    """Run could not start. `status` maps to the HTTP code at the API edge."""
+
+    def __init__(self, status: int, detail: str):
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+async def start(agent_id: str, error_id: Optional[int], prompt: str) -> dict:
+    """Create, claim, and launch a run. Shared by the fleet UI route and the
+    public API, so both enforce identical single-flight and agent checks."""
+    from . import registry, storage
+
+    live = is_live()
+    if live:
+        raise RunStartError(409, f"A run is already in progress ({live}).")
+
+    resolved_id = agent_id or registry.DEFAULT_AGENT_ID
+    agent = registry.get_agent(resolved_id)
+    if agent is None:
+        raise RunStartError(404, f"Unknown agent '{resolved_id}'.")
+
+    model = os.environ.get(agent.model_env, agent.default_model) if agent.model_env else agent.default_model
+    prompt = (prompt or "").strip()
+    target = str(error_id) if error_id is not None else (prompt or "latest")
+    run_row = await storage.create_run(resolved_id, target, prompt, model)
+    # Claim the single-flight slot synchronously; an is_live-then-create_task
+    # gap would let two racing requests start interleaved runs.
+    if not claim(run_row["id"]):
+        await storage.delete_run(run_row["id"])  # never ran; drop the orphan row
+        raise RunStartError(409, "A run is already in progress.")
+    # Fire-and-forget; the runner persists progress into the run's event log.
+    asyncio.create_task(run(run_row["id"], resolved_id, error_id, prompt))
+    return run_row
 
 
 def resolve_anthropic_key() -> str:
@@ -438,10 +494,20 @@ async def _run_pydantic(agent, task: str, api_key: str, emit) -> tuple:
     as tool_call/tool_result events (best-effort; the run is not live-streamed yet).
     Returns (final_md, native_meta). The graph.py factory built a pydantic_ai.Agent
     and ignores the llm/checkpointer args."""
-    os.environ["ANTHROPIC_API_KEY"] = api_key  # pydantic-ai resolves the key from env
-    pa = agent.build(None, None)
-    await emit({"phase": "thinking", "node": "agent", "text": "Running the PydanticAI agent."})
-    result = await pa.run(task)
+    # pydantic-ai resolves the key from env. Scope the mutation to this run and
+    # restore the prior value afterward so concurrent agents using different keys
+    # (and the parent process env) are not affected.
+    _prev_key = os.environ.get("ANTHROPIC_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    try:
+        pa = agent.build(None, None)
+        await emit({"phase": "thinking", "node": "agent", "text": "Running the PydanticAI agent."})
+        result = await pa.run(task)
+    finally:
+        if _prev_key is None:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        else:
+            os.environ["ANTHROPIC_API_KEY"] = _prev_key
 
     # Replay the message history as tool steps (shape varies across versions).
     try:
@@ -513,7 +579,15 @@ async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) 
             await fail(f"LangGraph dependencies not installed (pip install '.[langgraph]'): {e}")
             return
 
-        from . import registry
+        from . import registry, tools_mcp
+
+        # Pre-warm the MCP tool cache so the sync graph factory can resolve
+        # `mcp:server:tool` names. Non-fatal: a down MCP server only degrades
+        # agents that declare its tools.
+        try:
+            await tools_mcp.prefetch_all()
+        except Exception as e:  # noqa: BLE001 - discovery must not kill the run
+            logger.warning("MCP tool prefetch failed: %s", e)
 
         agent = registry.get_agent(agent_id)
         if agent is None:
@@ -682,6 +756,9 @@ async def resume(run_id: str, decision: dict) -> None:
     parked = _PAUSED.get(run_id)
     if not parked:
         logger.warning("resume: run %s is not parked", run_id)
+        # Release a router-side claim so the aborted resume can't wedge the slot.
+        if _live_run_id == run_id:
+            _live_run_id = None
         return
 
     _live_run_id = run_id

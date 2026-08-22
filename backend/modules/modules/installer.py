@@ -458,7 +458,15 @@ def uninstall(module_id: str) -> dict[str, Any]:
         raise RuntimeError(f"Module {module_id!r} not installed")
 
     _teardown_isolated(module_id)
-    shutil.rmtree(target)
+    # Windows releases a killed worker's cwd handle slightly after reap; retry.
+    for attempt in range(10):
+        try:
+            shutil.rmtree(target)
+            break
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.2)
 
     lock = _load_lock()
     removed = lock.pop(module_id, None)

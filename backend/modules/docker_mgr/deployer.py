@@ -481,31 +481,34 @@ async def recreate_bundle(
     if q is None:
         return
 
+    async def _bail(message: str) -> None:
+        # Early-return path: end the stream AND release the queue entry, or the
+        # _queues registry leaks one entry per failed recreate. Mirrors
+        # deploy_bundle's finally (drain grace, then release; release is a pop,
+        # so the happy path's own release cannot double-fire).
+        await _push(q, "error", message=message)
+        await q.put(None)
+        await asyncio.sleep(5)
+        release(deploy_id)
+
     try:
         template_id, instance_name = bundle_mod.parse_bundle_id(bundle_id)
     except ValueError as exc:
-        await _push(q, "error", message=f"Bad bundle_id: {exc}")
-        await q.put(None)
+        await _bail(f"Bad bundle_id: {exc}")
         return
 
     snapshot = bundle_mod.load_bundle_snapshot(template_id, instance_name)
     if not snapshot or "_fields" not in snapshot:
-        await _push(
-            q,
-            "error",
-            message=(
-                f"No persisted bundle definition for {bundle_id}. "
-                "Bundle was deployed before recreate support landed, or "
-                "template_state was reset. Destroy and redeploy to fix."
-            ),
+        await _bail(
+            f"No persisted bundle definition for {bundle_id}. "
+            "Bundle was deployed before recreate support landed, or "
+            "template_state was reset. Destroy and redeploy to fix."
         )
-        await q.put(None)
         return
 
     template = tmpl.get(template_id)
     if template is None or template.bundle_id is None:
-        await _push(q, "error", message=f"Template {template_id} is not bundle-shaped.")
-        await q.put(None)
+        await _bail(f"Template {template_id} is not bundle-shaped.")
         return
 
     field_values = dict(snapshot["_fields"])
@@ -588,6 +591,8 @@ async def deploy(
     if template is None:
         await error(f"Unknown template: {template_id}")
         await q.put(None)
+        await asyncio.sleep(5)
+        release(deploy_id)  # same leak as recreate_bundle's early returns
         return
 
     # Bundle-shaped templates use the multi-container path.

@@ -9,6 +9,7 @@
 
 import { get, post, put, patch, del } from '../api.js';
 import * as toast from '../components/toast.js';
+import { esc, attr } from '../lib/html.js';
 
 // ── Module state ────────────────────────────────────────────────────────────
 
@@ -448,7 +449,7 @@ function renderAppearance(el) {
     <div class="card" style="margin-top:16px">
       <div class="card-header"><span class="card-title">Accent color</span></div>
       <div style="display:flex;align-items:center;gap:10px">
-        <input type="color" id="f-accent_override" value="${esc(a.accent_override || '#ff6d5a')}" style="width:50px;height:36px;background:none;border:1px solid var(--border-dim);border-radius:var(--radius)" oninput="window.__musicSetAppearance('accent_override', this.value)">
+        <input type="color" id="f-accent_override" value="${attr(a.accent_override || '#ff6d5a')}" style="width:50px;height:36px;background:none;border:1px solid var(--border-dim);border-radius:var(--radius)" oninput="window.__musicSetAppearance('accent_override', this.value)">
         <button class="btn btn-sm btn-ghost" onclick="window.__musicSetAppearance('accent_override', null)">Reset to theme</button>
         <span style="font-size:11px;color:var(--text-dim)">Overrides the theme accent used for the player banner.</span>
       </div>
@@ -473,7 +474,7 @@ function selectRow(key, label, value, options) {
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-dim)">
       <span style="font-size:13px">${esc(label)}</span>
       <select class="form-input" style="width:160px" onchange="window.__musicSetAppearance('${jsStr(key)}', this.value)">
-        ${options.map(([v, l]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+        ${options.map(([v, l]) => `<option value="${attr(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}
       </select>
     </div>
   `;
@@ -522,7 +523,7 @@ function renderBehavior(el) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
         <span style="font-size:13px">Global hotkey to toggle player</span>
-        <input type="text" class="form-input" style="width:140px" value="${esc(b.hotkey_toggle || '')}" placeholder="e.g. alt+m"
+        <input type="text" class="form-input" style="width:140px" value="${attr(b.hotkey_toggle || '')}" placeholder="e.g. alt+m"
           onblur="window.__musicSetBehavior('hotkey_toggle', this.value.trim() || null)">
       </div>
     </div>
@@ -667,7 +668,7 @@ function reactionRow(key, label, val) {
           `<option value="${v}" ${val.action === v ? 'selected' : ''}>${l}</option>`
         ).join('')}
       </select>
-      <input type="text" class="form-input" value="${esc(val.url || '')}" placeholder="URL (only for Play)" onblur="window.__trigReaction('${jsStr(key)}', 'url', this.value.trim())">
+      <input type="text" class="form-input" value="${attr(val.url || '')}" placeholder="URL (only for Play)" onblur="window.__trigReaction('${jsStr(key)}', 'url', this.value.trim())">
     </div>
   `;
 }
@@ -737,7 +738,7 @@ async function renderSpotify(el) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
         <div>
           <label class="form-label">Client ID</label>
-          <input id="sp-client-id" type="text" class="form-input" value="${esc(status.client_id)}" placeholder="Spotify App Client ID">
+          <input id="sp-client-id" type="text" class="form-input" value="${attr(status.client_id)}" placeholder="Spotify App Client ID">
         </div>
         <div>
           <label class="form-label">Client Secret</label>
@@ -821,14 +822,6 @@ function renderData(el) {
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
-
-function esc(s) {
-  if (s === null || s === undefined) return '';
-  const el = document.createElement('span');
-  el.textContent = String(s);
-  return el.innerHTML;
-}
-
 
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.

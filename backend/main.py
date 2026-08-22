@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend import module_registry
 from backend.config import (
     agents_enabled,
     get_active_instance,
@@ -329,6 +330,10 @@ def _rate_limited_response():
     )
 
 
+class _BodyTooLarge(Exception):
+    """Raised by the chunked-body stream guard when the cap is crossed."""
+
+
 def _otel_token_ok(request) -> bool:
     """Validate the OTLP ingest token. Unset token = open (trusted-LAN only),
     same posture as the legacy webhooks. n8n sends it as an Authorization bearer
@@ -396,15 +401,47 @@ async def require_internal_api_auth(request, call_next):
 
 @app.middleware("http")
 async def limit_request_size(request, call_next):
-    """Reject oversized bodies by Content-Length before reading them."""
+    """Reject oversized bodies.
+
+    The fast path checks Content-Length before reading. A chunked body carries
+    no Content-Length, so for those we wrap the receive channel and count bytes
+    as they stream in, aborting with 413 the moment the cap is crossed instead
+    of buffering the whole body first.
+    """
+    cap = settings.agd_max_request_bytes
     cl = request.headers.get("content-length")
     if cl is not None:
         try:
-            if int(cl) > settings.agd_max_request_bytes:
+            if int(cl) > cap:
                 return JSONResponse({"detail": "Request body too large"}, status_code=413)
         except ValueError:
             pass
-    return await call_next(request)
+
+    if (request.headers.get("transfer-encoding") or "").lower() == "chunked":
+        seen = 0
+        # Capture the ORIGINAL receive before wrapping. Calling request._receive
+        # from inside the wrapper would re-enter the wrapper (it is what we assign
+        # below), recursing until the stack blows on the first chunk.
+        original_receive = request._receive
+
+        async def guarded_receive():
+            nonlocal seen
+            message = await original_receive()
+            if message.get("type") == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > cap:
+                    # Raising here surfaces to the route as a client disconnect,
+                    # which the route/exception layer translates to a 413-class
+                    # abort rather than accepting an over-cap body.
+                    raise _BodyTooLarge()
+            return message
+
+        request._receive = guarded_receive
+
+    try:
+        return await call_next(request)
+    except _BodyTooLarge:
+        return JSONResponse({"detail": "Request body too large"}, status_code=413)
 
 
 @app.middleware("http")
@@ -555,6 +592,20 @@ async def websocket_endpoint(ws: WebSocket):
 
 modules = register_modules(app)
 logger.info("Registered %d modules: %s", len(modules), ", ".join(modules))
+
+# A built-in that failed to load is a shipped feature silently missing from this
+# install. Restate it after the roster so it is not a lone line scrolled past
+# hundreds of startup messages earlier.
+_failed_builtins = [
+    e for e in module_registry.get_registry().values()
+    if e.source == "builtin" and e.status == "failed"
+]
+if _failed_builtins:
+    logger.error(
+        "%d built-in module(s) did not load and their features are unavailable: %s",
+        len(_failed_builtins),
+        "; ".join(f"{e.manifest.id} ({e.error})" for e in _failed_builtins),
+    )
 
 # ── Public API v1 sub-app — clean docs at /api/v1/docs ───────────────────────
 # Mounted as a separate ASGI sub-app so /api/v1/docs is isolated from internal

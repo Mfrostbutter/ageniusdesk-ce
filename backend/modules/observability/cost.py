@@ -54,8 +54,12 @@ def _token_usage(run: dict):
     return tu if isinstance(tu, dict) else None
 
 
-async def enrich_trace(trace_id: str) -> int:
-    """Enrich one trace with per-AI-span cost. Returns spans priced (0 if skipped)."""
+async def enrich_trace(trace_id: str, raw: dict | None = None) -> int:
+    """Enrich one trace with per-AI-span cost. Returns spans priced (0 if skipped).
+
+    ``raw`` is the already-fetched execution payload (backfill passes it to skip
+    a duplicate includeData fetch); None preserves the lazy self-fetch.
+    """
     if await storage.has_cost(trace_id):
         return 0
     spans = await storage.get_trace(trace_id)
@@ -65,20 +69,22 @@ async def enrich_trace(trace_id: str) -> int:
     inst = next((s["instance_id"] for s in spans if s.get("instance_id")), "")
     if not exec_id:
         return 0
-    # An unattributed-and-unresolved trace (unknown-<hash>) is not yet mapped to a
-    # fetchable instance; skip until the learn step re-attributes it. Any known
-    # instance (active or not) is fetched through its own creds.
-    if inst.startswith("unknown-"):
-        return 0
-    try:
-        # Bound the fetch: run-data for a big execution can be multi-MB; never let
-        # a slow fetch stall the trace-open request. Best-effort, retries next open.
-        raw = await asyncio.wait_for(
-            n8n_client.get_execution_raw_by_instance(exec_id, inst), timeout=8.0
-        )
-    except Exception as e:
-        logger.debug("cost enrich: fetch failed/slow for exec %s: %s", exec_id, e)
-        return 0
+    if raw is None:
+        # An unattributed-and-unresolved trace (unknown-<hash>) is not yet mapped
+        # to a fetchable instance; skip until the learn step re-attributes it. Any
+        # known instance (active or not) is fetched through its own creds.
+        if inst.startswith("unknown-"):
+            return 0
+        try:
+            # Bound the fetch: run-data for a big execution can be multi-MB; never
+            # let a slow fetch stall the trace-open request. Best-effort, retries
+            # next open.
+            raw = await asyncio.wait_for(
+                n8n_client.get_execution_raw_by_instance(exec_id, inst), timeout=8.0
+            )
+        except Exception as e:
+            logger.debug("cost enrich: fetch failed/slow for exec %s: %s", exec_id, e)
+            return 0
     run_data = ((raw or {}).get("data") or {}).get("resultData", {}).get("runData", {})
     if not run_data:
         return 0

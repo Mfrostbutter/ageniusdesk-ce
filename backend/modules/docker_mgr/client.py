@@ -301,6 +301,12 @@ async def self_container() -> tuple[str, str]:
     return full, name
 
 
+def is_containerized() -> bool:
+    """True when the dashboard itself runs inside a container (override or
+    /.dockerenv), i.e. when a self-container plausibly exists to protect."""
+    return bool(os.environ.get("AGD_SELF_CONTAINER", "").strip()) or os.path.exists("/.dockerenv")
+
+
 async def is_self_container(container_id: str) -> bool:
     """True if container_id refers to the dashboard's own container."""
     self_full, self_name = await self_container()

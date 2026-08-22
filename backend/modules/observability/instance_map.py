@@ -38,6 +38,8 @@ from backend.config import decrypt_value, get_instances
 from backend.database import get_db
 from backend.modules.n8n_proxy.client import dockerize_url
 
+from . import storage
+
 logger = logging.getLogger(__name__)
 
 # Prefix for a resource whose instance is not yet known. Kept distinct from any
@@ -146,7 +148,9 @@ async def _probe_instance(inst: dict, execution_id: str, workflow_id: str) -> bo
         return False
     headers = {"X-N8N-API-KEY": api_key, "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+        # Targets `inst`, not the active instance, so TLS resolves against it.
+        from backend.net import tls_verify_for_instance
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
             resp = await client.get(f"{url}/api/v1/executions/{execution_id}", headers=headers)
         if resp.status_code != 200:
             return False
@@ -204,11 +208,26 @@ async def learn_unknowns(unknown_hashes: dict[str, tuple[str, str]]) -> int:
             continue
         await pin(rhash, inst_id, "learned")
         db = await get_db()
+        # Real executions about to be re-attributed: their ingest-time backfill-
+        # precedence delete ran under unknown-<hash> and missed any backfill
+        # trace stored under the real id, so re-run it here (BUG-022).
+        cur = await db.execute(
+            "SELECT DISTINCT execution_id FROM otel_spans "
+            "WHERE instance_id = ? AND execution_id != '' "
+            "AND (origin IS NULL OR origin != 'backfill')",
+            (f"{UNKNOWN_PREFIX}{rhash}",),
+        )
+        real_exec_ids = [r["execution_id"] for r in await cur.fetchall()]
         await db.execute(
             "UPDATE otel_spans SET instance_id = ? WHERE instance_id = ?",
             (inst_id, f"{UNKNOWN_PREFIX}{rhash}"),
         )
         await db.commit()
+        for exec_id2 in real_exec_ids:
+            try:
+                await storage.delete_backfill_spans(inst_id, exec_id2)
+            except Exception as e:  # noqa: BLE001 - precedence cleanup is best-effort
+                logger.warning("instance_map: precedence delete failed for exec %s: %s", exec_id2, e)
         newly += 1
         logger.info("instance_map: learned %s -> %s, re-attributed its spans", rhash[:12], inst_id)
     return newly

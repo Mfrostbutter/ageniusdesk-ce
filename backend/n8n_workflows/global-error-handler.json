@@ -11,7 +11,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const err = $input.first().json;\n\nconst execution = err.execution || {};\nconst workflow = execution.workflow || {};\nconst lastNode = execution.lastNodeExecuted || 'unknown';\nconst errMsg = err.execution?.error?.message || err.message || 'Unknown error';\nconst errType = err.execution?.error?.name || 'Error';\n\nreturn [{\n  json: {\n    workflow_id: workflow.id || 'unknown',\n    workflow_name: workflow.name || 'Unknown Workflow',\n    execution_id: String(execution.id || ''),\n    node_name: lastNode,\n    error_message: errMsg,\n    error_type: errType\n  }\n}];"
+        "jsCode": "// agd-handler-version: 2\nconst err = $input.first().json;\n\nconst execution = err.execution || {};\n// Error Trigger emits `workflow` as a top-level sibling of `execution`;\n// tolerate the nested shape too.\nconst workflow = err.workflow || execution.workflow || {};\nconst lastNode = execution.lastNodeExecuted || 'unknown';\nconst errMsg = execution.error?.message || err.message || 'Unknown error';\nconst errType = execution.error?.name || 'Error';\n\nreturn [{\n  json: {\n    workflow_id: workflow.id || 'unknown',\n    workflow_name: workflow.name || 'Unknown Workflow',\n    execution_id: String(execution.id || ''),\n    node_name: lastNode,\n    error_message: errMsg,\n    error_type: errType\n  }\n}];"
       },
       "id": "err-extract",
       "name": "Extract Error Details",
@@ -45,7 +45,7 @@
     },
     {
       "parameters": {
-        "content": "## Global Error Handler → AgeniusDesk\n\nCatches errors from ALL workflows and sends them to your AgeniusDesk instance.\n\n**Setup:**\n1. Set the `AGENIUSDESK_URL` environment variable in your n8n instance\n   (e.g., `http://your-dashboard:3000`)\n2. Or edit the HTTP Request node URL directly\n3. Go to n8n Settings → Workflows → Error Workflow → Select this workflow\n\n**If your dashboard sets `AGD_WEBHOOK_TOKEN`:** also set `AGD_WEBHOOK_TOKEN` in this n8n instance's environment, so the POST carries the matching token (otherwise errors are rejected and silently dropped).",
+        "content": "## Global Error Handler → AgeniusDesk\n\nCatches errors from ALL workflows and sends them to your AgeniusDesk instance.\n\n**Setup:**\n1. Set the `AGENIUSDESK_URL` environment variable in your n8n instance\n   (e.g., `http://your-dashboard:3000`)\n2. Or edit the HTTP Request node URL directly\n3. Go to n8n Settings → Workflows → Error Workflow → Select this workflow\n4. Keep this workflow ACTIVE — on n8n 2.x an inactive error workflow silently never fires\n\n**If your dashboard sets `AGD_WEBHOOK_TOKEN`:** also set `AGD_WEBHOOK_TOKEN` in this n8n instance's environment, so the POST carries the matching token (otherwise errors are rejected and silently dropped).",
         "height": 220,
         "width": 520,
         "color": 4

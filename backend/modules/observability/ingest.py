@@ -179,6 +179,13 @@ async def ingest_trace_request(req) -> int:
         )
     except Exception as e:
         logger.warning("otel prune failed: %s", e)
+    # Real telemetry outranks a reconstruction: drop any backfilled trace for the
+    # executions in this batch before inserting. No-op in the common case.
+    for inst_id, exec_id in {(r["instance_id"], r["execution_id"]) for r in rows if r.get("execution_id")}:
+        try:
+            await storage.delete_backfill_spans(inst_id, exec_id)
+        except Exception as e:  # noqa: BLE001 - precedence cleanup is best-effort
+            logger.warning("otel backfill-precedence delete failed for exec %s: %s", exec_id, e)
     inserted = await storage.insert_spans(rows)
     # Learn any still-unknown exporter hashes: probe the fleet for the execution,
     # pin hash->instance, and re-attribute this batch's unknown rows. One probe

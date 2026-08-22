@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     # webhooks). Retention is bounded both ways — oldest pruned past either cap.
     agd_otel_enabled: bool = False
     agd_otel_token: str = ""
-    agd_otel_retention_hours: int = 72       # age-based span pruning
+    agd_otel_retention_hours: int = 168      # age-based span pruning (7d, per spec)
     agd_otel_max_spans: int = 500000         # hard row cap, oldest pruned first
     # Silent-failure detection: low-output anomaly classifier (spec
     # 2026-07-07-silent-failure-detection, Phase 2). A zero/low output only alerts
@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     # legitimate cascade skip downstream of an empty node is not flagged.
     agd_health_deadman_enabled: bool = True
     agd_health_deadman_min_run_rate: float = 0.9  # node must have run in >= this share of recent workflow executions
+    # Trace backfill (on-demand rebuild from n8n execution history). Bounds the
+    # fan-out against a production instance: parallel run-data fetches and a hard
+    # per-run execution cap.
+    agd_backfill_concurrency: int = 4
+    agd_backfill_max_executions: int = 500
     # Cost observability: how often to refresh the LLM price book from OpenRouter's
     # public models API. The fetched table is cached to data/price_book.json with a
     # last-good fallback; operator overrides and a bundled default layer over it.
@@ -307,11 +312,17 @@ def get_instances() -> list[dict]:
 
 
 def get_active_instance_id() -> str:
-    """Get the active instance ID."""
+    """Get the active instance ID, resolved identically to get_active_instance():
+    a stale persisted id falls back to the first instance's id, so the two never
+    disagree about which instance is active."""
     override = _instance_override.get()
     if override is not None:
         return override.get("id", "")
-    return load_config().get("active_instance", "")
+    active_id = load_config().get("active_instance", "")
+    instances = get_instances()
+    if any(i["id"] == active_id for i in instances):
+        return active_id
+    return instances[0]["id"] if instances else ""
 
 
 def get_active_instance() -> Optional[dict]:
@@ -936,11 +947,15 @@ def update_instance(instance_id: str, updates: dict) -> bool:
                     updates["owner_password"] = encrypt_value(updates["owner_password"])
                 else:
                     updates.pop("owner_password", None)
-            # owner_email and login_url: blank == "keep existing" so partial
-            # updates (e.g. scripts/fix-login-urls.sh) don't clobber data.
-            for field in ("owner_email", "login_url"):
+            # Blank == "keep existing" for every string field, so partial updates
+            # (e.g. scripts/fix-login-urls.sh) don't clobber data. None == keep
+            # for tls_verify. These fields are never legitimately empty; clearing
+            # one means writing a new non-blank value.
+            for field in ("owner_email", "login_url", "name", "url", "color"):
                 if field in updates and not updates[field]:
                     updates.pop(field, None)
+            if "tls_verify" in updates and updates["tls_verify"] is None:
+                updates.pop("tls_verify")
             inst.update(updates)
             save_config(config)
             return True

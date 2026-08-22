@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "captured": "2026-08-18",
+    "source": "live Error Trigger output, n8n 2.x, mode=webhook failure (BUG-014 confirmation)",
+    "sanitized": "ids, url, workflow name, and stack truncated/replaced; structure verbatim",
+    "notes": [
+      "workflow is a TOP-LEVEL sibling of execution; execution.workflow does not exist",
+      "execution.error has no `name` field in this shape; consumers must tolerate its absence",
+      "on n8n 2.x the error workflow only fires if it is ACTIVE (published version)"
+    ]
+  },
+  "payload": {
+    "execution": {
+      "id": "10042",
+      "url": "https://n8n.example.com/workflow/wfExample123/executions/10042",
+      "error": {
+        "level": "info",
+        "shouldReport": false,
+        "description": null,
+        "tags": {},
+        "lineNumber": 1,
+        "message": "Example deliberate failure [line 1]",
+        "stack": "Error: Example deliberate failure\n    at VmCodeWrapper (evalmachine.<anonymous>:1:966)\n    at Script.runInContext (node:vm:149:12)"
+      },
+      "lastNodeExecuted": "Explode",
+      "mode": "webhook",
+      "executionContext": {
+        "version": 1,
+        "establishedAt": 1787000000000,
+        "source": "webhook",
+        "triggerNode": {
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook"
+        },
+        "redaction": {
+          "version": 2,
+          "production": false,
+          "manual": false,
+          "source": "workflow"
+        }
+      }
+    },
+    "workflow": {
+      "id": "wfExample123",
+      "name": "Example Failing Workflow"
+    }
+  }
+}

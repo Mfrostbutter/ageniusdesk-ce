@@ -3,6 +3,8 @@
  * Supports: Spotify, YouTube, SoundCloud, Apple Music, YouTube Music, Tidal, direct audio.
  */
 
+import { esc, attr } from '../lib/html.js';
+
 const SERVICES = [
   {
     name: 'Spotify', icon: '🎵', color: '#1DB954',
@@ -34,7 +36,9 @@ const SERVICES = [
   },
   {
     name: 'Apple Music', icon: '♫', color: '#FC3C44',
-    match: /music\.apple\.com\/([a-z]{2})\/(album|playlist|station)\/([^/]+)\/([a-z0-9.]+)/i,
+    // Slug excludes quotes and angle brackets so a crafted URL cannot break out
+    // of the iframe src attribute even before the embedUrl is attr-escaped.
+    match: /music\.apple\.com\/([a-z]{2})\/(album|playlist|station)\/([A-Za-z0-9._~-]+)\/([a-z0-9.]+)/i,
     embed: (m) => `https://embed.music.apple.com/${m[1]}/${m[2]}/${m[3]}/${m[4]}`,
     height: (m) => m[2] === 'album' || m[2] === 'playlist' ? 175 : 150,
     title: (m) => decodeURIComponent(m[3]).replace(/-/g, ' '),
@@ -191,7 +195,7 @@ export function renderBanner() {
       <!-- Right: Controls -->
       <div class="player-banner-right">
         <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" id="player-url" class="player-url-input" value="${esc(currentUrl)}" placeholder="Change URL..."
+          <input type="text" id="player-url" class="player-url-input" value="${attr(currentUrl)}" placeholder="Change URL..."
             onkeydown="if(event.key==='Enter'){event.preventDefault();window.__playUrl()}">
           <button class="btn btn-sm btn-ghost btn-danger" onclick="window.__clearPlayer()" title="Close" style="padding:4px 8px">✕</button>
         </div>
@@ -211,7 +215,7 @@ export function renderBanner() {
           ${savedUrls.slice(1, 8).map(u => {
             const s = detectService(u);
             const c = s?.service.color || 'var(--text-dim)';
-            return `<button class="player-history-btn" onclick="window.__playDirect('${jsStr(u)}')" title="${esc(u)}" style="--svc-color:${c}">
+            return `<button class="player-history-btn" onclick="window.__playDirect('${jsStr(u)}')" title="${attr(u)}" style="--svc-color:${c}">
               ${s?.service.icon || '🎵'} ${s?.service.name || 'Audio'}
             </button>`;
           }).join('')}
@@ -260,10 +264,10 @@ function detectService(url) {
 function renderEmbed(url) {
   const detected = detectService(url);
   if (!detected) return '';
-  if (detected.isAudio) return `<audio controls style="width:100%;height:40px" src="${esc(url)}"></audio>`;
+  if (detected.isAudio) return `<audio controls style="width:100%;height:40px" src="${attr(url)}"></audio>`;
   const embedUrl = detected.service.embed(detected.match, url);
   const height = detected.service.height(detected.match);
-  return `<iframe src="${embedUrl}" width="100%" height="${height}" frameborder="0"
+  return `<iframe src="${attr(embedUrl)}" width="100%" height="${height}" frameborder="0"
     allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
     loading="lazy" style="border-radius:8px;border:none"></iframe>`;
 }
@@ -402,14 +406,14 @@ function renderSpotifyBanner() {
   return `
     <div class="player-banner player-banner--playing" style="--svc-color:#1DB954;${albumArt ? `background:linear-gradient(90deg,#191414 0%,#1a1a2e 100%)` : ''}">
       <!-- Album art -->
-      ${albumArt ? `<div style="flex-shrink:0;width:64px;height:64px;border-radius:6px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.5)"><img src="${esc(albumArt)}" style="width:100%;height:100%;object-fit:cover"></div>` : ''}
+      ${albumArt ? `<div style="flex-shrink:0;width:64px;height:64px;border-radius:6px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.5)"><img src="${attr(albumArt)}" style="width:100%;height:100%;object-fit:cover"></div>` : ''}
 
       <!-- EQ + track info -->
       <div class="player-banner-left" style="gap:12px">
         <div class="player-eq-large ${isNowPlaying ? 'player-eq--active' : 'player-eq--idle'}" style="--eq-color:#1DB954">${eqBars(12)}</div>
         <div class="player-now-playing">
           <div class="player-np-label">NOW PLAYING <span style="color:#1DB954;font-size:9px">● SPOTIFY</span></div>
-          <div class="player-np-title" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(trackName)}">${esc(trackName)}</div>
+          <div class="player-np-title" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${attr(trackName)}">${esc(trackName)}</div>
           <div style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(artists)}</div>
           <div style="font-size:10px;color:var(--text-dim);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(album)}</div>
         </div>
@@ -567,7 +571,7 @@ window.__spDoSearch = async () => {
       const id = item.id;
       const fn = isPlaylist ? `window.__spPlayPlaylist('${id}')` : `window.__spPlayTrack('${id}')`;
       return `<div onclick="${fn}" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-dim);cursor:pointer;border-radius:4px" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">
-        ${art ? `<img src="${esc(art)}" style="width:36px;height:36px;border-radius:4px;flex-shrink:0;object-fit:cover">` : `<div style="width:36px;height:36px;background:var(--bg-input);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px">${isPlaylist ? '📋' : '🎵'}</div>`}
+        ${art ? `<img src="${attr(art)}" style="width:36px;height:36px;border-radius:4px;flex-shrink:0;object-fit:cover">` : `<div style="width:36px;height:36px;background:var(--bg-input);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px">${isPlaylist ? '📋' : '🎵'}</div>`}
         <div style="min-width:0">
           <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>
           <div style="font-size:11px;color:var(--text-secondary)">${esc(sub)}</div>
@@ -608,7 +612,7 @@ window.__spPlaylists = async () => {
         ${items.map(p => {
           const art = p.images?.[0]?.url || '';
           return `<div onclick="window.__spPlayPlaylist('${jsStr(p.id)}')" style="cursor:pointer;border-radius:6px;overflow:hidden;background:var(--bg-input);padding:8px;display:flex;gap:8px;align-items:center" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--bg-input)'">
-            ${art ? `<img src="${esc(art)}" style="width:32px;height:32px;border-radius:3px;flex-shrink:0;object-fit:cover">` : `<div style="width:32px;height:32px;background:var(--bg-void);border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center">📋</div>`}
+            ${art ? `<img src="${attr(art)}" style="width:32px;height:32px;border-radius:3px;flex-shrink:0;object-fit:cover">` : `<div style="width:32px;height:32px;background:var(--bg-void);border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center">📋</div>`}
             <div style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${esc(p.name)}</div>
           </div>`;
         }).join('')}
@@ -616,9 +620,6 @@ window.__spPlaylists = async () => {
     `;
   } catch(e) { panel.innerHTML = `<div style="padding:12px;color:var(--error);font-size:12px">${e.message}</div>`; }
 };
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
-
 
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.

@@ -9,6 +9,7 @@ import * as modal from './components/modal.js';
 import * as toast from './components/toast.js';
 import * as player from './components/player.js';
 import { secretField, invalidateRefsCache } from './components/secretfield.js';
+import { esc, attr } from './lib/html.js';
 
 import * as wizard from './wizard.js';
 import * as dashboardView from './views/dashboard.js';
@@ -491,7 +492,7 @@ async function loadInstances() {
             <span class="instance-dot" style="background:${inst.color || '#ff6d5a'}"></span>
             ${esc(inst.name)}
           </button>
-          ${openUrl ? `<button class="instance-open" title="Open ${esc(inst.name)} in a new tab" onclick="window.open('${jsStr(openUrl)}','_blank','noopener')" style="flex:none;display:flex;align-items:center;gap:3px;font-size:11px;padding:5px 9px;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:6px;color:var(--text-secondary);cursor:pointer;white-space:nowrap">Open <span aria-hidden="true">&#8599;</span></button>` : ''}
+          ${openUrl ? `<button class="instance-open" title="Open ${attr(inst.name)} in a new tab" onclick="window.open('${jsStr(openUrl)}','_blank','noopener')" style="flex:none;display:flex;align-items:center;gap:3px;font-size:11px;padding:5px 9px;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:6px;color:var(--text-secondary);cursor:pointer;white-space:nowrap">Open <span aria-hidden="true">&#8599;</span></button>` : ''}
         </div>`;
       }).join('')}
       <button class="instance-add" onclick="window.__addInstance()">+ Add</button>
@@ -557,9 +558,6 @@ async function _initSetupUrlHint() {
   _toggleHint();
 }
 
-function esc(s) { const d = document.createElement('span'); d.textContent = s || ''; return d.innerHTML; }
-
-
 function jsStr(s) {
   // Escape for a JS single-quoted string literal inside an HTML double-quoted attribute.
   return String(s == null ? '' : s)
@@ -599,7 +597,7 @@ async function loadAccount() {
     const name = u.username || 'Account';
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid var(--border-dim)">
-        <span style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(name)}">${esc(name)}</span>
+        <span style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${attr(name)}">${esc(name)}</span>
         <button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px;flex:none" onclick="window.__logout()" title="Log out">Log out</button>
       </div>`;
   } catch { el.innerHTML = ''; }

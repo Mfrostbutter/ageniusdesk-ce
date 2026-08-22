@@ -97,10 +97,16 @@ TOOL_REGISTRY = {t.name: t for t in TOOLS}
 
 def resolve_tools(names: list[str] | None) -> list:
     """Resolve tool names to @tool objects (unknown names skipped). Empty/None means
-    the full built-in toolset, a sensible default for an unscoped agent."""
+    the full built-in toolset, a sensible default for an unscoped agent.
+
+    `mcp:{server_id}:{tool}` names resolve from the MCP tool cache the runner
+    pre-warms before build (see tools_mcp)."""
     if not names:
         return list(TOOLS)
-    return [TOOL_REGISTRY[n] for n in names if n in TOOL_REGISTRY]
+    from . import tools_mcp
+
+    local = [TOOL_REGISTRY[n] for n in names if n in TOOL_REGISTRY]
+    return local + tools_mcp.resolve_cached([n for n in names if tools_mcp.is_mcp_name(n)])
 
 
 def tool_catalog() -> list[dict]:

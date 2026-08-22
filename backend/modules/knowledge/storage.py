@@ -70,8 +70,13 @@ async def update_source(source_id: int, **fields) -> dict[str, Any] | None:
     sets, vals = [], []
     for k, v in patch.items():
         if k == "config":
+            # Partial PUT: merge onto the stored config so an update touching one
+            # key (e.g. collection) doesn't silently drop the others (url, key ref).
+            existing = await get_source(source_id)
+            merged = dict((existing or {}).get("config") or {})
+            merged.update(v or {})
             sets.append("config_json = ?")
-            vals.append(json.dumps(v or {}))
+            vals.append(json.dumps(merged))
         elif k == "enabled":
             sets.append("enabled = ?")
             vals.append(1 if v else 0)

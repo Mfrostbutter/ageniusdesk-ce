@@ -39,11 +39,27 @@ async def _guard_not_self(container_id: str, action: str) -> None:
     Destroying / stopping / recreating our own container from inside the app
     takes the dashboard down (and a failed recreate could leave it gone). That
     is a Docker-Desktop / host operation, never an in-app one.
+
+    Fails CLOSED when the dashboard is containerized but cannot prove the
+    target is not itself (identity unresolved, or the check errored). A
+    non-containerized dashboard has no self to protect and stays permissive.
     """
+    containerized = docker.is_containerized()
     try:
         is_self = await docker.is_self_container(container_id)
+        self_id, self_name = await docker.self_container()
+        unproven = containerized and not is_self and not self_id and not self_name
     except Exception:
-        is_self = False
+        is_self, unproven = False, containerized
+    if unproven:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Refusing to {action}: the dashboard runs in a container whose identity "
+                "could not be resolved, so this might be its own container. Set "
+                "AGD_SELF_CONTAINER to the dashboard container's id or name."
+            ),
+        )
     if is_self:
         raise HTTPException(
             status_code=403,

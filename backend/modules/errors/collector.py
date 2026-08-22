@@ -40,7 +40,9 @@ async def store_error(error: dict[str, Any]) -> int:
     that maps a known source instance). Otherwise we tag with the currently
     active instance so the UI can filter reliably.
     """
-    occurred_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # Caller-supplied occurred_at (event time, e.g. a backfilled trace's
+    # execution time) wins over ingest time so history sorts as history.
+    occurred_at = error.get("occurred_at") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     instance_id = error.get("instance_id") or get_active_instance_id() or ""
     db = await get_db()
     cursor = await db.execute(
@@ -72,6 +74,17 @@ async def store_error(error: dict[str, Any]) -> int:
     }
     await manager.broadcast("error", broadcast_data)
     logger.info("Error stored and broadcast: [%s/%s] %s", instance_id or "no-instance", error.get("workflow_name"), error.get("error_message", "")[:80])
+
+    # Ticket sink: fire-and-forget so PSA latency never blocks ingest. The
+    # sink no-ops fast when disabled and swallows its own failures.
+    try:
+        import asyncio
+
+        from backend.modules.ticket_sink.service import maybe_file_error
+
+        asyncio.create_task(maybe_file_error(broadcast_data))
+    except Exception:
+        logger.debug("ticket sink dispatch failed", exc_info=True)
 
     return error_id
 

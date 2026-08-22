@@ -37,8 +37,7 @@ from backend.config import (
     load_secrets,
     record_scope_hosts,
 )
-from backend.modules.n8n_proxy.client import _verify as _tls_verify
-from backend.net import UnsafeProbeURL, assert_safe_probe_url
+from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify_for_instance
 
 from .mappings import build_credential_payload, build_types_list_for_ui, fetch_live_schemas
 
@@ -160,7 +159,7 @@ async def _schemas_for_instance(instance_id: str) -> dict[str, dict]:
 
     inst = _instance_by_id(instance_id)
     url, api_key = _resolve_instance_creds(inst)
-    schemas = await fetch_live_schemas(url, api_key)
+    schemas = await fetch_live_schemas(url, api_key, inst=inst)
     _SCHEMA_CACHE[instance_id] = {"fetched_at": now, "schemas": schemas}
     return schemas
 
@@ -226,7 +225,9 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
     schemas = await _schemas_for_instance(instance_id)
 
     results = []
-    async with httpx.AsyncClient(timeout=15.0, verify=_tls_verify()) as client:
+    # Plaintext secret values are POSTed inside this loop, so TLS resolves
+    # against the target instance, not the active one.
+    async with httpx.AsyncClient(timeout=15.0, verify=tls_verify_for_instance(inst)) as client:
         for item in req.items:
             if item.skip:
                 results.append({"secret_name": item.secret_name, "status": "skipped"})
@@ -273,20 +274,10 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
                     schema=schemas.get(item.credential_type),
                 )
 
-                # Re-mirror idempotency: if this secret was previously mirrored,
-                # delete the prior credential in n8n before POSTing a new one so
-                # the user doesn't accumulate duplicates on every wizard run.
+                # Re-mirror idempotency: create the replacement FIRST, delete the
+                # prior credential last. A failed create leaves the working
+                # credential and its mirror record untouched.
                 prior = instance_state.get(item.secret_name)
-                if prior and prior.get("credential_id"):
-                    try:
-                        await client.delete(
-                            f"{url}/api/v1/credentials/{prior['credential_id']}",
-                            headers={"X-N8N-API-KEY": api_key},
-                        )
-                    except httpx.HTTPError:
-                        # If the old credential was already deleted in n8n,
-                        # that's fine — we just move on and create the new one.
-                        pass
 
                 r = await client.post(
                     f"{url}/api/v1/credentials",
@@ -321,6 +312,16 @@ async def mirror_to_instance(instance_id: str, req: MirrorBatch):
                 # Persist this entry immediately under the lock so a concurrent
                 # writer can't clobber it with a stale snapshot at batch end.
                 await _record_mirror(instance_id, item.secret_name, entry)
+                # Old credential removed last (best-effort) so re-mirroring
+                # doesn't accumulate duplicates; already-gone is fine.
+                if prior and prior.get("credential_id") and prior["credential_id"] != cred_id:
+                    try:
+                        await client.delete(
+                            f"{url}/api/v1/credentials/{prior['credential_id']}",
+                            headers={"X-N8N-API-KEY": api_key},
+                        )
+                    except httpx.HTTPError:
+                        pass
                 results.append({
                     "secret_name": item.secret_name,
                     "status": "ok",
@@ -378,7 +379,7 @@ async def unlink_mirror(instance_id: str, secret_name: str):
     n8n_error = ""
     if cred_id and url and api_key:
         try:
-            async with httpx.AsyncClient(timeout=10.0, verify=_tls_verify()) as client:
+            async with httpx.AsyncClient(timeout=10.0, verify=tls_verify_for_instance(inst)) as client:
                 r = await client.delete(
                     f"{url}/api/v1/credentials/{cred_id}",
                     headers={"X-N8N-API-KEY": api_key},
@@ -390,9 +391,15 @@ async def unlink_mirror(instance_id: str, secret_name: str):
             n8n_error = f"Network: {e}"
 
     # Always clear the local mapping so the UI stays consistent with reality.
-    instance_state.pop(secret_name, None)
-    mirrors[instance_id] = instance_state
-    _save_mirrors(mirrors)
+    # Re-read fresh state under the lock (mirroring _record_mirror): the network
+    # DELETE above awaited, so our earlier snapshot may be stale and writing it
+    # back would clobber a concurrent writer's entries.
+    async with _MIRRORS_LOCK:
+        mirrors = _load_mirrors()
+        instance_state = mirrors.get(instance_id, {})
+        instance_state.pop(secret_name, None)
+        mirrors[instance_id] = instance_state
+        _save_mirrors(mirrors)
 
     return {
         "success": True,

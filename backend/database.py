@@ -170,6 +170,14 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    # origin on otel_spans (trace backfill). NULL/'otlp' = received over OTLP,
+    # 'backfill' = synthesized from n8n execution history.
+    cursor = await db.execute("PRAGMA table_info(otel_spans)")
+    ocols = {row["name"] for row in await cursor.fetchall()}
+    if "origin" not in ocols:
+        await db.execute("ALTER TABLE otel_spans ADD COLUMN origin TEXT")
+    await db.commit()
+
     # otel_instance_map — resolves an n8n exporter's identity (the opaque
     # resource `n8n.instance.id` hash n8n emits over OTLP) to a configured AGD
     # instance. n8n's resource attributes carry no name/url AGD can match, so
@@ -187,6 +195,33 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             learned_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
+    )
+    await db.commit()
+
+    # ticket_sink_state — one row per error group the ticket sink has filed a
+    # PSA ticket for. group_key = instance|workflow|node|error_type (same
+    # grouping as the errors UI). closed_ticket_ids is a JSON list of prior
+    # tickets for the group (re-arm history). Created in _migrate so it lands
+    # on both fresh and upgraded installs.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS ticket_sink_state (
+            group_key         TEXT PRIMARY KEY,
+            instance_id       TEXT NOT NULL DEFAULT '',
+            workflow_id       TEXT NOT NULL DEFAULT '',
+            workflow_name     TEXT NOT NULL DEFAULT '',
+            node_name         TEXT NOT NULL DEFAULT '',
+            error_type        TEXT NOT NULL DEFAULT '',
+            psa_ticket_id     INTEGER NOT NULL,
+            ticket_number     INTEGER,
+            occurrences       INTEGER NOT NULL DEFAULT 1,
+            last_replied_at   TEXT,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            closed_ticket_ids TEXT NOT NULL DEFAULT '[]'
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ticket_sink_updated ON ticket_sink_state(updated_at DESC)"
     )
     await db.commit()
 

@@ -230,6 +230,11 @@ class ModuleWorker:
                 self.proc.wait(timeout=STOP_GRACE_S)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                # Reap after kill so file handles (worker cwd) are released.
+                try:
+                    self.proc.wait(timeout=STOP_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    pass
         if USE_UDS and self.uds_path and os.path.exists(self.uds_path):
             try:
                 os.unlink(self.uds_path)

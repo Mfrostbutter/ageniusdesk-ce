@@ -15,15 +15,10 @@
 
 import { get } from '../api.js';
 import { renderErrorItem } from '../components/error-item.js';
+import { esc, attr } from '../lib/html.js';
 
 let _tab = 'health';
 let _instMap = {};
-
-function esc(s) {
-  const d = document.createElement('span');
-  d.textContent = s == null ? '' : String(s);
-  return d.innerHTML;
-}
 
 function rateColor(rate) {
   if (rate >= 20) return '#ff6d5a';
@@ -55,7 +50,7 @@ function instanceCard(inst) {
     <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-left:3px solid ${esc(color)};border-radius:var(--radius);padding:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
         <strong style="font-size:14px">${esc(inst.name || inst.id)}${inst.active ? ' <span style="font-size:10px;opacity:0.55;font-weight:400">active</span>' : ''}</strong>
-        ${inst.login_url ? `<a href="${esc(inst.login_url)}" target="_blank" style="font-size:11px;color:var(--accent,#60a5fa)">open ↗</a>` : ''}
+        ${inst.login_url ? `<a href="${attr(inst.login_url)}" target="_blank" style="font-size:11px;color:var(--accent,#60a5fa)">open ↗</a>` : ''}
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
         <div><div style="font-size:20px;font-weight:700">${esc(inst.workflows_active)}/${esc(inst.workflows_total)}</div><div style="font-size:11px;opacity:0.6">active</div></div>

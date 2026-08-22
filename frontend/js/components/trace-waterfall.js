@@ -8,6 +8,7 @@
  */
 
 import { get } from '../api.js';
+import { attr } from '../lib/html.js';
 
 function esc(s) {
   const d = document.createElement('span');
@@ -63,7 +64,11 @@ export function buildWaterfall(spans) {
   const costHtml = totalCost > 0
     ? ` · <span style="color:var(--accent)">${fmtUsd(totalCost)}${anyEstimate ? ' est' : ''}</span>`
     : '';
-  head.innerHTML = `<span>${spans.length} spans</span><span>total ${((t1 - t0) / 1e6).toFixed(1)} ms${costHtml}</span>`;
+  // A trace synthesized from execution history is not live telemetry; say so.
+  const reconstructed = spans.every(s => s.origin === 'backfill')
+    ? ' <span class="pill pill-neutral" title="Synthesized from n8n execution history, not live telemetry">reconstructed</span>'
+    : '';
+  head.innerHTML = `<span>${spans.length} spans${reconstructed}</span><span>total ${((t1 - t0) / 1e6).toFixed(1)} ms${costHtml}</span>`;
   wrap.appendChild(head);
 
   ordered.forEach(s => {
@@ -88,7 +93,7 @@ export function buildWaterfall(spans) {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:3px 0;cursor:pointer';
     row.innerHTML = `
-      <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${esc(label)} (${esc(kindHint)})">
+      <div style="flex:0 0 230px;min-width:0;padding-left:${indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-primary)" title="${attr(label)} (${attr(kindHint)})">
         ${dotColor ? `<span style="color:${dotColor}">●</span> ` : ''}${esc(label)}
       </div>
       <div style="flex:1;position:relative;height:16px;background:var(--bg-input,rgba(255,255,255,.04));border-radius:3px">

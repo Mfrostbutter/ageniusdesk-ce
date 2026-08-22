@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from backend import audit
 from backend.config import decrypt_value, load_config
 from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify
 
@@ -854,7 +855,10 @@ async def _chat_openai_compat(messages: list[dict], system: str, cfg: dict,
                         except json.JSONDecodeError:
                             args = {}
 
-                        logger.info("Tool call: %s(%s)", tool_name, json.dumps(args)[:100])
+                        # Scrub before logging: tool args can carry credentials
+                        # (an import_workflow payload, an api_key field), and INFO
+                        # logs are not a secret store.
+                        logger.info("Tool call: %s(%s)", tool_name, json.dumps(audit.scrub(args))[:100])
 
                         result = await _dispatch_tool(tool_name, args, mcp_tool_map, pending)
 
@@ -1106,7 +1110,8 @@ async def _chat_anthropic(messages: list[dict], system: str, cfg: dict) -> dict[
                         args = tu.get("input", {})
                         tool_use_id = tu.get("id", "")
 
-                        logger.info("Tool call: %s(%s)", tool_name, json.dumps(args)[:100])
+                        # Scrub before logging (see the OpenAI-path note above).
+                        logger.info("Tool call: %s(%s)", tool_name, json.dumps(audit.scrub(args))[:100])
 
                         result = await _dispatch_tool(tool_name, args, mcp_tool_map, pending)
 

@@ -248,6 +248,32 @@ async def _find_handler() -> dict | None:
     return None
 
 
+# Marker embedded in the Extract node's jsCode; bump when the template changes so
+# reinstall-over-existing detects (and refreshes) a stale handler.
+_HANDLER_VERSION_MARKER = "agd-handler-version: 2"
+
+
+async def _refresh_stale_handler(wf_id: str) -> bool:
+    """Refresh an installed handler whose Extract node predates the current
+    template (version marker absent). Best-effort; returns True when updated."""
+    try:
+        raw = await n8n.get_workflow_raw(wf_id)
+        nodes = raw.get("nodes") or []
+        extract = next((n for n in nodes if n.get("name") == "Extract Error Details"), None)
+        if not extract:
+            return False
+        if _HANDLER_VERSION_MARKER in ((extract.get("parameters") or {}).get("jsCode") or ""):
+            return False
+        tmpl = _load_handler_template()
+        tmpl_extract = next(n for n in tmpl["nodes"] if n["name"] == "Extract Error Details")
+        extract.setdefault("parameters", {})["jsCode"] = tmpl_extract["parameters"]["jsCode"]
+        res = await n8n.put_workflow_full(wf_id, raw)
+        return bool(res.get("success"))
+    except Exception as e:  # noqa: BLE001 - refresh is best-effort
+        logger.warning("stale-handler refresh failed for %s: %s", wf_id, e)
+        return False
+
+
 def _load_handler_template(dashboard_url: str = "") -> dict:
     """Load the global error-handler workflow JSON, pre-filling the dashboard
     webhook URL as the HTTP node's default. The `$env.FLOW_DASHBOARD_URL`
@@ -313,6 +339,7 @@ async def install_handler(req: _InstallHandlerRequest):
     existing = await _find_handler()
     if existing:
         wf_id = existing.get("id", "")
+        updated = await _refresh_stale_handler(wf_id) if wf_id else False
         activated = bool(existing.get("active", False))
         activation_error = ""
         if req.activate and not activated and wf_id:
@@ -327,6 +354,7 @@ async def install_handler(req: _InstallHandlerRequest):
             "activated": activated,
             "activation_error": activation_error,
             "already_existed": True,
+            "updated": updated,
         }
 
     wf = _load_handler_template(req.dashboard_url)

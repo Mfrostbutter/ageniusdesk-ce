@@ -1,3 +1,4 @@
+import { attr } from '../lib/html.js';
 /**
  * WorkflowDetailPanel — shared workflow detail element used by both the
  * Workflows view (right-hand panel) and the Dashboard workflow health drawer.
@@ -176,16 +177,16 @@ export function WorkflowDetailPanel(wf, executions, opts = {}) {
           <td style="font-family:var(--font-mono);font-size:12px">${_formatTime(e.started_at)}</td>
           <td style="white-space:nowrap">
             ${onObserve
-              ? `<button class="btn btn-sm btn-ghost wdp-observe-btn" data-exec-id="${_esc(e.id)}" style="font-size:10px;padding:2px 8px" title="View this execution's OpenTelemetry trace">&#128202; Observe</button>`
+              ? `<button class="btn btn-sm btn-ghost wdp-observe-btn" data-exec-id="${attr(e.id)}" style="font-size:10px;padding:2px 8px" title="View this execution's OpenTelemetry trace">&#128202; Observe</button>`
               : ''}
             ${e.status === 'error' && onAnalyze
-              ? `<button class="btn btn-sm btn-ghost wdp-analyze-btn" data-exec-id="${_esc(e.id)}" style="font-size:10px;padding:2px 8px" title="Ask AI to analyze this failure">&#10022; Ask AI</button>`
+              ? `<button class="btn btn-sm btn-ghost wdp-analyze-btn" data-exec-id="${attr(e.id)}" style="font-size:10px;padding:2px 8px" title="Ask AI to analyze this failure">&#10022; Ask AI</button>`
               : ''}
           </td>
         </tr>
-        <tr id="ai-row-${_esc(e.id)}" style="display:none">
+        <tr id="ai-row-${attr(e.id)}" style="display:none">
           <td colspan="5" style="padding:0">
-            <div id="ai-result-${_esc(e.id)}" style="padding:10px 12px;background:var(--bg-void);border-top:1px solid var(--border-dim);font-size:12px;line-height:1.6"></div>
+            <div id="ai-result-${attr(e.id)}" style="padding:10px 12px;background:var(--bg-void);border-top:1px solid var(--border-dim);font-size:12px;line-height:1.6"></div>
           </td>
         </tr>
       `;

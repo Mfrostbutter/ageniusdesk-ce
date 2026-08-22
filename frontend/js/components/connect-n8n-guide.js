@@ -14,10 +14,9 @@
 import { post } from '../api.js';
 import * as toast from './toast.js';
 import * as errorHandlerPrompt from './error-handler-prompt.js';
+import { attr } from '../lib/html.js';
 
 const DISMISS_KEY = 'agd_connect_n8n_dismissed';
-
-function esc(s) { const d = document.createElement('span'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
 // Prefill the n8n URL with the SAME host the user reached AgeniusDesk by — i.e.
 // this machine's address as their browser sees it — keeping n8n's port from the
@@ -63,7 +62,7 @@ export function open(url, opts = {}) {
           <div style="flex:1">
             <div class="cn-step-title">Open n8n and create your account</div>
             <div class="cn-step-desc">It opens to a "set up owner account" screen on first run. Pick an email and password — that's your n8n login, separate from AgeniusDesk.</div>
-            <a href="${esc(safeUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px">Open n8n &#8599;</a>
+            <a href="${attr(safeUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px">Open n8n &#8599;</a>
           </div>
         </li>
         <li style="display:flex;gap:12px">
@@ -87,7 +86,7 @@ export function open(url, opts = {}) {
           <input type="text" id="cn-name" value="n8n" style="width:100%;box-sizing:border-box;margin-top:4px">
         </label>
         <label style="font-size:12px;color:var(--text-secondary)">n8n URL
-          <input type="url" id="cn-url" value="${esc(safeUrl)}" style="width:100%;box-sizing:border-box;margin-top:4px">
+          <input type="url" id="cn-url" value="${attr(safeUrl)}" style="width:100%;box-sizing:border-box;margin-top:4px">
           <span style="display:block;margin-top:5px;font-size:11px;color:var(--warning,#fbbf24);line-height:1.45">
             Tip: if it won't connect, use this machine's <strong>LAN IP</strong> (e.g. http://192.168.x.x:5678), not localhost. The dashboard runs in Docker, so localhost can point at the wrong place.
           </span>

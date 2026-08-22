@@ -1,8 +1,16 @@
-"""FastMCP server exposing dashboard read APIs. Phase 4 MVP — read-only.
+"""MCP server exposing dashboard read APIs. Phase 4 MVP — read-only.
 
-The server uses FastMCP's streamable HTTP transport. Tools are thin wrappers
-over existing internal helpers rather than HTTP calls to self, to avoid loop
+The server uses the streamable HTTP transport. Tools are thin wrappers over
+existing internal helpers rather than HTTP calls to self, to avoid loop
 overhead and so they work correctly inside the same event loop.
+
+Supports both lines of the `mcp` SDK. 2.0 renamed the server class
+(``mcp.server.fastmcp.FastMCP`` → ``mcp.server.mcpserver.MCPServer``) and moved
+the transport options off the constructor onto ``streamable_http_app()``. The
+tool decorator and the transport-security model are identical across both, so
+the shim is confined to construction and mount. pyproject currently pins
+``mcp<2.0`` because pydantic-ai's fastmcp-slim requires it, which the langgraph
+extra pulls in; this module is ready for the day that ceiling lifts.
 """
 
 from __future__ import annotations
@@ -13,9 +21,16 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException
-from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+try:  # mcp >= 2.0
+    from mcp.server.mcpserver import MCPServer as _ServerClass
+    _MCP_V2 = True
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _ServerClass
+    _MCP_V2 = False
+
+from backend.auth_gate import current_user, role_at_least
 from backend.config import get_instances, load_config, load_secrets
 from backend.database import get_db
 from backend.modules.n8n_proxy import client as n8n_client
@@ -25,32 +40,43 @@ logger = logging.getLogger(__name__)
 MCP_PATH = "/api/mcp-dashboard"
 MCP_TOKEN_ENV = "DASHBOARD_MCP_TOKEN"
 
-mcp = FastMCP(
-    name="ageniusdesk-dashboard",
-    instructions=(
-        "Read-only tools for inspecting an AgeniusDesk instance: n8n workflows "
-        "and executions, recent errors, configured n8n instances, secrets "
-        "metadata (names only, never values), MCP servers, and messages."
-    ),
-    # Serve the JSON-RPC endpoint at the root of this mount so clients point
-    # at /api/mcp-dashboard directly (FastMCP's default "/mcp" suffix would
-    # force them to /api/mcp-dashboard/mcp).
-    streamable_http_path="/",
-    # DNS-rebinding protection rejects Host headers not on its allowlist.
-    # Add the compose service name + the usual localhost variants so in-network
-    # callers (e.g. a sibling container reaching us as `dashboard:3000`) work.
-    # Override with DASHBOARD_MCP_ALLOWED_HOSTS="a,b,c" for custom deployments.
-    transport_security=TransportSecuritySettings(
-        allowed_hosts=[
-            h.strip()
-            for h in os.environ.get(
-                "DASHBOARD_MCP_ALLOWED_HOSTS",
-                "dashboard:3000,localhost:3000,127.0.0.1:3000,localhost,127.0.0.1",
-            ).split(",")
-            if h.strip()
-        ],
-    ),
+# Serve the JSON-RPC endpoint at the root of this mount so clients point at
+# /api/mcp-dashboard directly (the SDK's default "/mcp" suffix would force them
+# to /api/mcp-dashboard/mcp).
+_STREAMABLE_HTTP_PATH = "/"
+
+# DNS-rebinding protection rejects Host headers not on its allowlist. Includes
+# the compose service name + the usual localhost variants so in-network callers
+# (e.g. a sibling container reaching us as `dashboard:3000`) work. Override with
+# DASHBOARD_MCP_ALLOWED_HOSTS="a,b,c" for custom deployments.
+_TRANSPORT_SECURITY = TransportSecuritySettings(
+    allowed_hosts=[
+        h.strip()
+        for h in os.environ.get(
+            "DASHBOARD_MCP_ALLOWED_HOSTS",
+            "dashboard:3000,localhost:3000,127.0.0.1:3000,localhost,127.0.0.1",
+        ).split(",")
+        if h.strip()
+    ],
 )
+
+_INSTRUCTIONS = (
+    "Read-only tools for inspecting an AgeniusDesk instance: n8n workflows "
+    "and executions, recent errors, configured n8n instances, secrets "
+    "metadata (names only, never values), MCP servers, and messages."
+)
+
+# 2.0 takes the transport options at app-build time; 1.x takes them on the
+# constructor and reuses them when building the app.
+if _MCP_V2:
+    mcp = _ServerClass(name="ageniusdesk-dashboard", instructions=_INSTRUCTIONS)
+else:
+    mcp = _ServerClass(
+        name="ageniusdesk-dashboard",
+        instructions=_INSTRUCTIONS,
+        streamable_http_path=_STREAMABLE_HTTP_PATH,
+        transport_security=_TRANSPORT_SECURITY,
+    )
 
 
 # ── Tools ───────────────────────────────────────────────────────────────────
@@ -134,10 +160,31 @@ async def list_n8n_instances() -> list[dict[str, Any]]:
     return out
 
 
+async def _require_admin_for_tool() -> None:
+    """Gate an admin-surface MCP tool on the caller being an admin.
+
+    The transport middleware already requires operator+, but secret-name
+    enumeration mirrors the admin-only HTTP surface (/api/admin/secrets), so it
+    additionally requires admin here. The MCP context carries the Starlette
+    request, which current_user resolves through the same session/edge/token
+    precedence as the HTTP API.
+    """
+    try:
+        request = mcp.request_context.request
+    except Exception:
+        request = None
+    if request is None:
+        raise HTTPException(status_code=403, detail="admin role required")
+    user = await current_user(request)
+    if not role_at_least(user, "admin"):
+        raise HTTPException(status_code=403, detail="admin role required")
+
+
 @mcp.tool()
 async def list_secrets_metadata() -> list[dict[str, Any]]:
     """Names and types of stored secrets. Never returns actual values; use
     the Secrets UI for that."""
+    await _require_admin_for_tool()
     secrets = load_secrets()
     out = []
     for name in sorted(secrets):
@@ -393,11 +440,17 @@ async def ping(authorization: str | None = Header(default=None)) -> dict[str, An
 
 
 def mount_on(app) -> None:
-    """Attach the FastMCP streamable-HTTP app to a FastAPI instance.
+    """Attach the streamable-HTTP MCP app to a FastAPI instance.
 
     Call once from main.py after register_modules. Safe to re-call (the
     mount will just replace the previous one). MCP is always enabled.
     """
-    inner = mcp.streamable_http_app()
+    if _MCP_V2:
+        inner = mcp.streamable_http_app(
+            streamable_http_path=_STREAMABLE_HTTP_PATH,
+            transport_security=_TRANSPORT_SECURITY,
+        )
+    else:
+        inner = mcp.streamable_http_app()
     app.mount(MCP_PATH, inner)
     logger.info("Dashboard MCP server mounted at %s", MCP_PATH)

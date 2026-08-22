@@ -112,6 +112,19 @@ async def create_user(req: CreateUser):
 async def delete_user(username: str):
     users = _load_users()
     before = len(users)
+    target = next((u for u in users if u["username"] == username), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Refuse to delete the last admin. Removing every admin would leave no
+    # account able to manage users, and (with zero accounts) would re-open the
+    # unauthenticated /api/auth/setup flow to the first caller.
+    if target.get("role") == "admin":
+        remaining_admins = sum(1 for u in users if u["username"] != username and u.get("role") == "admin")
+        if remaining_admins == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete the last admin account. Promote another user to admin first.",
+            )
     users = [u for u in users if u["username"] != username]
     if len(users) == before:
         raise HTTPException(status_code=404, detail="User not found")

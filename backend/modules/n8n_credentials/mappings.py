@@ -269,11 +269,13 @@ def build_credential_payload(
     }
 
 
-async def fetch_live_schemas(url: str, api_key: str, timeout: float = 8.0) -> dict[str, dict]:
+async def fetch_live_schemas(url: str, api_key: str, timeout: float = 8.0,
+                             inst: dict | None = None) -> dict[str, dict]:
     """Fetch schemas for every name in KNOWN_TYPES from an n8n instance, in parallel.
 
     Types the instance doesn't ship (404) or that error are silently omitted.
-    Returns `{type_name: schema_dict}`.
+    Returns `{type_name: schema_dict}`. Pass ``inst`` (the target instance dict)
+    so TLS verification resolves against it rather than the active instance.
     """
     if not url or not api_key:
         return {}
@@ -295,9 +297,9 @@ async def fetch_live_schemas(url: str, api_key: str, timeout: float = 8.0) -> di
         except (httpx.HTTPError, ValueError):
             pass  # 404 / network / decode — drop quietly
 
-    from backend.modules.n8n_proxy.client import _verify as _tls_verify
+    from backend.net import tls_verify_for_instance
 
-    async with httpx.AsyncClient(timeout=timeout, verify=_tls_verify()) as client:
+    async with httpx.AsyncClient(timeout=timeout, verify=tls_verify_for_instance(inst)) as client:
         await asyncio.gather(*[_one(client, name) for name, _, _ in KNOWN_TYPES])
 
     return results

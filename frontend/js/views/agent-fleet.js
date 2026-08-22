@@ -17,6 +17,7 @@
 import { get, post, del, onEvent } from '../api.js';
 import * as toast from '../components/toast.js';
 import { renderGraphSvg } from './agent-fleet-graph.js';
+import { esc, attr } from '../lib/html.js';
 
 // Markdown rendering (marked + DOMPurify from CDN), inlined so the view is
 // self-contained. The rendered text is agent/LLM output (untrusted), and
@@ -62,8 +63,6 @@ let _serverLive = null;    // the SERVER's live_run_id: authoritative "is anythi
 const _expandedCards = new Set();  // agent ids whose catalog card is expanded
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function esc(s) { const el = document.createElement('span'); el.textContent = s == null ? '' : String(s); return el.innerHTML; }
 
 const STATUS = {
   running: { label: 'Running',           color: '#38bdf8', spin: true },
@@ -172,7 +171,7 @@ function openUsageModal(run) {
           ? 'Per-call detail not available (LangSmith returned only the aggregate).'
           : 'Per-call detail not available. Enable LangSmith tracing for a per-call breakdown.'}</div>`}
       <div style="font-size:11px;color:var(--text-muted);margin-top:12px">${run.trace_url
-        ? `Figures from the LangSmith trace for this run. <a href="${esc(run.trace_url)}" target="_blank" style="color:var(--accent)">Open full trace ↗</a>`
+        ? `Figures from the LangSmith trace for this run. <a href="${attr(run.trace_url)}" target="_blank" style="color:var(--accent)">Open full trace ↗</a>`
         : 'Estimated from token counts against the built-in price book. Set LANGSMITH_TRACING=true with a LANGSMITH_API_KEY for exact per-call figures.'}</div>
     </div>`;
   const close = () => overlay.remove();
@@ -202,7 +201,7 @@ function modelChip(model) {
   if (m.includes('haiku')) { label = 'Haiku'; color = '#34d399'; }
   else if (m.includes('sonnet')) { label = 'Sonnet'; color = '#38bdf8'; }
   else if (m.includes('opus')) { label = 'Opus'; color = '#f59e0b'; }
-  return `<span title="${esc(m)}" style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:10px;padding:1px 7px">${esc(label)}</span>`;
+  return `<span title="${attr(m)}" style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:10px;padding:1px 7px">${esc(label)}</span>`;
 }
 
 // Framework label (LangGraph vs PydanticAI) so the card shows what runs it.
@@ -211,7 +210,7 @@ function frameworkChip(framework) {
   const isPa = f === 'pydantic-ai';
   const label = isPa ? 'PydanticAI' : 'LangGraph';
   const color = isPa ? '#c084fc' : '#818cf8';
-  return `<span title="${esc(f)}" style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:10px;padding:1px 7px">${label}</span>`;
+  return `<span title="${attr(f)}" style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:10px;padding:1px 7px">${label}</span>`;
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -352,12 +351,12 @@ function renderCatalog() {
     const active = a.id === _selectedAgentId;
     const open = _expandedCards.has(a.id);
     const badges = (a.badges || []).map(badgeChip).join(' ');
-    return `<div class="lg-agent-card" data-id="${esc(a.id)}" style="border-color:${active ? 'var(--accent)' : 'var(--border)'};${active ? 'box-shadow:0 0 0 1px var(--accent) inset' : ''}">
+    return `<div class="lg-agent-card" data-id="${attr(a.id)}" style="border-color:${active ? 'var(--accent)' : 'var(--border)'};${active ? 'box-shadow:0 0 0 1px var(--accent) inset' : ''}">
       <div class="lg-card-head">
         <span style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>
         ${a.hitl ? '<span title="Pauses for human approval" style="font-size:10px">⏸️</span>' : ''}
         ${modelChip(a.model)}
-        <button class="lg-card-exp" data-exp="${esc(a.id)}" title="${open ? 'Hide details' : 'Show details'}" aria-label="toggle details">${open ? '▴' : '▾'}</button>
+        <button class="lg-card-exp" data-exp="${attr(a.id)}" title="${open ? 'Hide details' : 'Show details'}" aria-label="toggle details">${open ? '▴' : '▾'}</button>
       </div>
       ${open ? `<div class="lg-card-body">
         <div style="font-size:11.5px;color:var(--text-muted);line-height:1.45;margin-bottom:7px">${esc(a.tagline)}</div>
@@ -365,7 +364,7 @@ function renderCatalog() {
           ${frameworkChip(a.framework)}${badges}
           ${a.builtin
             ? '<span title="Bundled example; cannot be deleted" style="font-size:10px;color:var(--text-faint);margin-left:auto">built-in</span>'
-            : `<button class="lg-agent-del" data-del="${esc(a.id)}" title="Delete this agent from your vault" style="margin-left:auto;padding:4px 9px;background:var(--bg-void);border:1px solid var(--border);border-radius:var(--radius);font-size:11px;color:var(--text-muted);cursor:pointer">Delete</button>`}
+            : `<button class="lg-agent-del" data-del="${attr(a.id)}" title="Delete this agent from your vault" style="margin-left:auto;padding:4px 9px;background:var(--bg-void);border:1px solid var(--border);border-radius:var(--radius);font-size:11px;color:var(--text-muted);cursor:pointer">Delete</button>`}
         </div>
       </div>` : ''}
     </div>`;
@@ -448,7 +447,7 @@ async function loadErrorPicker() {
   const opts = ['<option value="">Most recent error</option>'];
   for (const err of _errors) {
     const label = `#${err.id} · ${err.workflow_name || err.workflow_id} · ${(err.error_message || '').slice(0, 60)}`;
-    opts.push(`<option value="${esc(err.id)}">${esc(label)}</option>`);
+    opts.push(`<option value="${attr(err.id)}">${esc(label)}</option>`);
   }
   sel.innerHTML = opts.join('');
 }
@@ -637,7 +636,7 @@ function renderList() {
   }
   list.innerHTML = _runs.map(r => {
     const active = r.id === _selectedId;
-    return `<div class="lg-card" data-id="${esc(r.id)}" style="cursor:pointer;flex-shrink:0;min-width:210px;max-width:248px;background:var(--bg-surface);border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:var(--radius);padding:12px 14px">
+    return `<div class="lg-card" data-id="${attr(r.id)}" style="cursor:pointer;flex-shrink:0;min-width:210px;max-width:248px;background:var(--bg-surface);border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:var(--radius);padding:12px 14px">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(runTitle(r))}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         ${statusBadge(r.status)}
@@ -713,7 +712,7 @@ function renderWaterfall(events, status) {
   const durTxt = (d) => (d >= 100 ? (d / 1000).toFixed(1) + 's' : Math.round(d) + 'ms');
   const bars = rows.map((r) => `
     <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">
-      <div style="width:160px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);color:var(--text-secondary)" title="${esc(r.label)}">${esc(r.label)}</div>
+      <div style="width:160px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);color:var(--text-secondary)" title="${attr(r.label)}">${esc(r.label)}</div>
       <div style="flex:1;position:relative;height:14px;background:var(--bg-void);border-radius:3px;min-width:80px">
         <div style="position:absolute;left:${r.leftPct}%;width:${r.widthPct}%;top:0;bottom:0;background:${_WF_COLORS[r.kind] || '#5a6678'};border-radius:3px;opacity:.9"></div>
       </div>
@@ -800,7 +799,7 @@ async function renderDetail({ stickToBottom = false } = {}) {
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
         ${usageChip(run)}
-        ${run.trace_url ? `<a href="${esc(run.trace_url)}" target="_blank" style="padding:7px 12px;background:rgba(52,211,153,0.12);color:#34d399;border:1px solid rgba(52,211,153,0.4);border-radius:var(--radius);font-size:12px;font-weight:700;text-decoration:none">View trace in LangSmith ↗</a>` : ''}
+        ${run.trace_url ? `<a href="${attr(run.trace_url)}" target="_blank" style="padding:7px 12px;background:rgba(52,211,153,0.12);color:#34d399;border:1px solid rgba(52,211,153,0.4);border-radius:var(--radius);font-size:12px;font-weight:700;text-decoration:none">View trace in LangSmith ↗</a>` : ''}
         <button class="lg-del" style="padding:7px 10px;background:var(--bg-void);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text-muted);cursor:pointer">Delete</button>
       </div>
     </div>`;
@@ -860,7 +859,7 @@ async function renderDetail({ stickToBottom = false } = {}) {
         <div id="lg-proposal" style="font-size:14px;line-height:1.6">${proposalHtml || '<em style="color:var(--text-muted)">No proposal text.</em>'}</div>
         ${(run.choices && run.choices.length) ? `
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">
-          ${run.choices.map(c => `<button class="lg-choice" data-choice="${esc(String(c.value))}" style="text-align:left;padding:10px 14px;background:#34d399;color:#04231a;border:none;border-radius:var(--radius);font-size:13px;font-weight:700;cursor:pointer">✓ ${esc(c.label)}</button>`).join('')}
+          ${run.choices.map(c => `<button class="lg-choice" data-choice="${attr(String(c.value))}" style="text-align:left;padding:10px 14px;background:#34d399;color:#04231a;border:none;border-radius:var(--radius);font-size:13px;font-weight:700;cursor:pointer">✓ ${esc(c.label)}</button>`).join('')}
           <button class="lg-reject" style="align-self:flex-start;padding:8px 14px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:var(--radius);font-size:13px;color:#fca5a5;cursor:pointer">Reject all</button>
         </div>` : (writesToN8n ? `
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">

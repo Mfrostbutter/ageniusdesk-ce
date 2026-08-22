@@ -68,13 +68,25 @@ async def _fetch_executions(instance_id: str, since: datetime, max_pages: int) -
     """Paginate n8n.list_executions until either we cross `since` or hit max_pages.
 
     n8n's API returns most-recent-first, so we can stop scanning as soon as a
-    page's last execution is older than the window.
+    page's last execution is older than the window. A non-empty ``instance_id``
+    scopes the fetch to that instance (use_instance); '' means active.
     """
+    from backend.config import get_instance_by_id, use_instance
+
+    inst = get_instance_by_id(instance_id) if instance_id else None
+    if instance_id and inst is None:
+        logger.warning("insights: unknown instance %s, returning no executions", instance_id)
+        return []
+
     rows: list[dict[str, Any]] = []
     cursor = ""
     for page in range(max_pages):
         try:
-            result = await n8n_client.list_executions(limit=_PAGE_SIZE, cursor=cursor)
+            if inst is not None:
+                with use_instance(inst):
+                    result = await n8n_client.list_executions(limit=_PAGE_SIZE, cursor=cursor)
+            else:
+                result = await n8n_client.list_executions(limit=_PAGE_SIZE, cursor=cursor)
         except Exception as exc:
             logger.warning("insights: list_executions failed page=%d: %s", page, exc)
             break

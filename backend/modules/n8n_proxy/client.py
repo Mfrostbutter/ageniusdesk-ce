@@ -1,4 +1,13 @@
-"""Async n8n REST API client with retry logic and webhook fallback."""
+"""Async n8n REST API client with retry logic and webhook fallback.
+
+TLS verification rule for this module: ``_verify()`` resolves against the
+ACTIVE instance (honoring ``use_instance()``), so it is legal only for calls
+that genuinely target the active instance. Any call that targets a specific
+instance dict — fleet health, backup fan-out, promote probe/provision, schema
+fetch, observability probe — must pass ``tls_verify_for_instance(inst)``
+instead. ``tests/test_phase3_tls.py`` greps the known per-instance sites so a
+regression fails loudly.
+"""
 
 import asyncio
 import logging
@@ -88,8 +97,13 @@ def _base_url() -> str:
     return get_n8n_url().rstrip("/")
 
 
-async def _get(path: str, params: Optional[dict] = None) -> dict | list:
-    """GET with retry on 429 and graceful 404 handling."""
+async def _get(path: str, params: Optional[dict] = None, raise_on_error: bool = False) -> dict | list:
+    """GET with retry on 429 and graceful 404 handling.
+
+    ``raise_on_error`` propagates non-404 failures (HTTP 5xx/401, network) so a
+    caller can report the real failure instead of treating {} as "not found".
+    404 always returns {} — absence is not an error.
+    """
     url = _base_url() + path
     for attempt in range(MAX_RETRIES):
         try:
@@ -104,11 +118,15 @@ async def _get(path: str, params: Optional[dict] = None) -> dict | list:
                 return resp.json()
         except httpx.HTTPStatusError as e:
             logger.error("n8n GET %s failed: HTTP %s", path, e.response.status_code)
+            if raise_on_error:
+                raise
             return {}
         except httpx.RequestError as e:
             logger.error("n8n GET %s error: %s", path, e)
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(2**attempt)
+            elif raise_on_error:
+                raise
             else:
                 return {}
     return {}
@@ -280,13 +298,16 @@ async def test_connection_with(url: str, api_key: str, verify: bool | None = Non
     `verify` overrides TLS verification for this probe. The instance is not saved
     yet, so its tls_verify setting cannot be resolved from config — the caller
     passes it through, otherwise a self-signed box would fail its own connect
-    test and never get added. None = the global default.
+    test and never get added. None = the global default (AGD_TLS_VERIFY), NOT
+    the active instance's per-instance override: a probe of an unsaved URL has
+    no instance to resolve against, and borrowing the active instance's setting
+    can wrongly reject a rotate-key probe.
 
     Returns {"connected": bool, "error_class": str, "message": str}.
     error_class is one of: "ok", "dns", "auth", "notfound", "timeout", "generic".
     """
     from backend.config import decrypt_value
-    from backend.net import UnsafeProbeURL, assert_safe_probe_url
+    from backend.net import UnsafeProbeURL, assert_safe_probe_url, tls_verify
     url = decrypt_value(url)
     api_key = decrypt_value(api_key)
     # SSRF floor for every connect path (create instance, setup wizard, test-creds):
@@ -297,7 +318,7 @@ async def test_connection_with(url: str, api_key: str, verify: bool | None = Non
     except UnsafeProbeURL as exc:
         return {"connected": False, "error_class": "blocked", "message": f"URL not allowed: {exc}"}
     headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
-    tls = _verify() if verify is None else bool(verify)
+    tls = tls_verify() if verify is None else bool(verify)
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls) as client:
             resp = await client.get(f"{url.rstrip('/')}/api/v1/workflows", headers=headers, params={"limit": 1})
@@ -362,12 +383,16 @@ async def _instance_health(inst: dict, exec_limit: int = 50) -> dict[str, Any]:
         "exec_error": 0,
         "error_rate": 0,
         "unhealthy": [],
+        "data_save_coverage": "unknown",
+        "data_save_affected": [],
+        "data_save_reason": "",
     }
     url = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/")
     api_key = decrypt_value(inst.get("api_key", ""))
     headers = {"X-N8N-API-KEY": api_key, "Content-Type": "application/json", "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+        # Targets `inst`, not the active instance, so TLS resolves against it.
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
             wf = await client.get(f"{url}/api/v1/workflows", headers=headers, params={"limit": 250})
             if wf.status_code != 200:
                 out["error"] = "auth" if wf.status_code in (401, 403) else f"HTTP {wf.status_code}"
@@ -392,6 +417,15 @@ async def _instance_health(inst: dict, exec_limit: int = 50) -> dict[str, Any]:
                 ({"id": wid, "name": names.get(wid, wid), "errors": n} for wid, n in err_by_wf.items()),
                 key=lambda x: -x["errors"],
             )[:10]
+
+            # Coverage warning: an instance/workflow saving no successful-run data
+            # can never be trace-backfilled for those runs. Surface it here rather
+            # than at recovery time.
+            from backend.modules.n8n_proxy import coverage
+            cov = await coverage.check_data_save_coverage(inst)
+            out["data_save_coverage"] = cov["status"]
+            out["data_save_affected"] = cov["affected_workflows"]
+            out["data_save_reason"] = cov["reason"]
     except httpx.ConnectError:
         out["error"] = "unreachable"
     except httpx.TimeoutException:
@@ -1054,18 +1088,33 @@ async def import_workflow(
 
 
 async def export_workflow(workflow_id: str) -> dict[str, Any]:
-    """Export a single workflow as its full JSON definition."""
-    return await _get(f"/api/v1/workflows/{workflow_id}")
+    """Export a single workflow as its full JSON definition.
+
+    {} means the workflow does not exist (404). Any other failure raises, so
+    promote reports the real error instead of "Not found on source".
+    """
+    return await _get(f"/api/v1/workflows/{workflow_id}", raise_on_error=True)
 
 
 async def export_all_workflows(active_only: bool = False) -> list[dict]:
-    """Export all workflows as full JSON definitions."""
+    """Export all workflows as full JSON definitions, paginating past 250."""
     params: dict = {"limit": 250}
     if active_only:
         params["active"] = "true"
 
-    result = await _get("/api/v1/workflows", params)
-    workflows = result.get("data", []) if isinstance(result, dict) else []
+    workflows: list[dict] = []
+    cursor = ""
+    while True:
+        q = dict(params)
+        if cursor:
+            q["cursor"] = cursor
+        result = await _get("/api/v1/workflows", q)
+        if not isinstance(result, dict):
+            break
+        workflows.extend(result.get("data", []) or [])
+        cursor = result.get("nextCursor") or ""
+        if not cursor:
+            break
     return workflows
 
 
@@ -1088,7 +1137,8 @@ async def export_all_workflows_for(inst: dict, active_only: bool = False) -> lis
 
     workflows: list[dict] = []
     cursor = ""
-    async with httpx.AsyncClient(timeout=TIMEOUT, verify=_verify()) as client:
+    # Targets `inst`, not the active instance, so TLS resolves against it.
+    async with httpx.AsyncClient(timeout=TIMEOUT, verify=tls_verify_for_instance(inst)) as client:
         while True:
             q = dict(params)
             if cursor:

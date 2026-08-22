@@ -85,7 +85,7 @@ requires-dist = [
     { name = "langchain-openai", marker = "extra == 'langgraph'", specifier = ">=1.0.0,<2.0.0" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = "==1.2.4" },
     { name = "langsmith", marker = "extra == 'langgraph'", specifier = "==0.8.14" },
-    { name = "mcp", specifier = ">=1.2.0" },
+    { name = "mcp", specifier = ">=1.2.0,<2.0.0" },
     { name = "minio", marker = "extra == 'dev'", specifier = ">=7.2.0" },
     { name = "minio", marker = "extra == 's3'", specifier = ">=7.2.0" },
     { name = "openai", marker = "extra == 'assistant'", specifier = ">=1.50.0" },

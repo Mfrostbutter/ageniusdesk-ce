@@ -7,6 +7,7 @@
  */
 
 import { status } from '../onboarding/index.js';
+import { attr } from '../lib/html.js';
 
 const DISMISSED_KEY = 'agd_getstarted_dismissed';
 
@@ -36,7 +37,7 @@ export async function mount(slot, opts = {}) {
       : `<span class="gs-check" aria-hidden="true">${i + 1}</span>`;
     const action = m.done
       ? `<span class="gs-done-label">Done</span>`
-      : `<button class="btn btn-sm btn-ghost gs-cta" data-mi="${esc(m.id)}">${esc(m.cta.label)}</button>`;
+      : `<button class="btn btn-sm btn-ghost gs-cta" data-mi="${attr(m.id)}">${esc(m.cta.label)}</button>`;
     const tag = m.optional && !m.done ? `<span class="gs-opt">recommended</span>` : '';
     return `
       <div class="gs-row ${m.done ? 'gs-row--done' : ''}">

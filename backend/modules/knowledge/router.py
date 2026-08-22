@@ -116,6 +116,7 @@ async def search(q: str, sources: str = "", limit: int = 10) -> dict[str, Any]:
     """Fan-out search. `sources` is a comma-separated list of source names
     (empty = all enabled). Each source runs concurrently with its own error
     isolation; one bad source never kills the response."""
+    limit = max(1, min(int(limit), 50))
     wanted = {s.strip() for s in sources.split(",") if s.strip()}
     all_sources = await storage.list_sources(enabled_only=True)
     selected = [s for s in all_sources if not wanted or s["name"] in wanted]

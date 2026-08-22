@@ -9,6 +9,7 @@
 import { get, post } from '../api.js';
 import * as toast from '../components/toast.js';
 import { openModal } from '../components/modal.js';
+import { esc, attr } from '../lib/html.js';
 
 // Host ports Chrome and most browsers refuse to open (ERR_UNSAFE_PORT). We steer
 // the deploy port picker away from these so a deployed service is reachable.
@@ -413,7 +414,7 @@ async function loadContainers(showToast = false) {
     if (showToast) toast.success('Refreshed');
   } catch (e) {
     document.getElementById('ct-tbody').innerHTML =
-      `<tr><td colspan="6" style="padding:24px;color:#ff6d5a;font-size:12px">Failed to load: ${escHtml(e.message)}</td></tr>`;
+      `<tr><td colspan="6" style="padding:24px;color:#ff6d5a;font-size:12px">Failed to load: ${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -436,7 +437,7 @@ function renderSummary(info) {
     <strong style="color:#34d399">${info.running ?? 0}</strong> running ·
     <strong>${info.stopped ?? 0}</strong> stopped ·
     <strong>${info.images ?? 0}</strong> images
-    ${info.docker_version ? `· Docker ${escHtml(info.docker_version)}` : ''}
+    ${info.docker_version ? `· Docker ${esc(info.docker_version)}` : ''}
   `;
 }
 
@@ -496,7 +497,7 @@ function renderGrouped(tbody, containers) {
     const label = project === '__standalone__' ? 'Standalone' : project;
     const running = items.filter(c => c.state === 'running').length;
     html += `<tr><td colspan="6" class="ct-project-header">
-      ${escHtml(label)}
+      ${esc(label)}
       <span style="font-weight:400;margin-left:6px;opacity:0.6">${running}/${items.length} running</span>
     </td></tr>`;
     html += items.map(rowHtml).join('');
@@ -599,7 +600,7 @@ function rowHtml(c) {
   const isRunning = c.state === 'running';
   const ports = c.ports.slice(0, 3).join(' · ') + (c.ports.length > 3 ? ' …' : '');
   const svc = c.compose_service
-    ? `<span class="ct-badge" style="background:rgba(96,165,250,0.12);color:#60a5fa">${escHtml(c.compose_service)}</span> `
+    ? `<span class="ct-badge" style="background:rgba(96,165,250,0.12);color:#60a5fa">${esc(c.compose_service)}</span> `
     : '';
   const openUrl = getPublicUrl(c);
   const httpUrl = getHttpUrl(c);
@@ -614,82 +615,82 @@ function rowHtml(c) {
   const iconDocText = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
 
   return `
-    <tr class="ct-row" data-id="${escHtml(c.id_full)}">
+    <tr class="ct-row" data-id="${attr(c.id_full)}">
       <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}"></span></td>
       <td>
-        ${svc}<code style="font-size:12px">${escHtml(c.name)}</code>
-        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${escHtml(c.id)}</div>
+        ${svc}<code style="font-size:12px">${esc(c.name)}</code>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${esc(c.id)}</div>
       </td>
-      <td style="font-size:11px;color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(c.image)}">
-        ${escHtml(c.image)}
+      <td style="font-size:11px;color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${attr(c.image)}">
+        ${esc(c.image)}
       </td>
-      <td style="font-size:11px;color:var(--text-dim);white-space:nowrap">${escHtml(ports)}</td>
-      <td style="font-size:11px;white-space:nowrap;color:${color}">${escHtml(c.status)}</td>
+      <td style="font-size:11px;color:var(--text-dim);white-space:nowrap">${esc(ports)}</td>
+      <td style="font-size:11px;white-space:nowrap;color:${color}">${esc(c.status)}</td>
       <td style="white-space:nowrap;position:relative">
         ${isSelf
           ? `<span class="ct-badge" style="background:rgba(96,165,250,0.12);color:#60a5fa" title="This is the container AgeniusDesk runs in. Stop/destroy it from Docker Desktop or the host, not here. Restart is OK — it bounces and comes back.">🏠 this dashboard</span>
-             <button class="ct-action-btn" data-action="restart" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Restart the dashboard (it will bounce and come back)">
+             <button class="ct-action-btn" data-action="restart" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}" title="Restart the dashboard (it will bounce and come back)">
                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.48"/></svg>
              </button>`
           : isRunning
-          ? `<button class="ct-action-btn danger" data-action="stop" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Stop ${escHtml(c.name)}">
+          ? `<button class="ct-action-btn danger" data-action="stop" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}" title="Stop ${attr(c.name)}">
                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
              </button>
-             <button class="ct-action-btn" data-action="restart" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Restart ${escHtml(c.name)}">
+             <button class="ct-action-btn" data-action="restart" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}" title="Restart ${attr(c.name)}">
                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.48"/></svg>
              </button>`
-          : `<button class="ct-action-btn primary" data-action="start" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" title="Start ${escHtml(c.name)}">
+          : `<button class="ct-action-btn primary" data-action="start" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}" title="Start ${attr(c.name)}">
                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
              </button>`
         }
         <button class="ct-action-btn"
-                data-action="open" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}"
-                data-url="${escHtml(httpUrl)}"
-                title="${hasHttp ? `Open ${escHtml(c.name)} in browser` : 'No web UI exposed'}"
+                data-action="open" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}"
+                data-url="${attr(httpUrl)}"
+                title="${hasHttp ? `Open ${attr(c.name)} in browser` : 'No web UI exposed'}"
                 ${hasHttp ? '' : 'disabled'}>${iconExternalLink}</button>
-        <button class="ct-action-btn" data-action="logs" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}"
-                title="View logs for ${escHtml(c.name)}">${iconDocText}</button>
-        <button class="ct-action-btn ct-more-btn" data-action="more" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}"
-                data-n8n="${isN8nManaged(c) ? '1' : ''}" data-url="${escHtml(openUrl)}" title="More actions">⋯</button>
-        <div class="ct-dropdown" id="dd-${escHtml(c.id)}" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);min-width:180px;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
-          <button class="ct-dd-item" data-action="inspect" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}">🔍 Inspect</button>
+        <button class="ct-action-btn" data-action="logs" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}"
+                title="View logs for ${attr(c.name)}">${iconDocText}</button>
+        <button class="ct-action-btn ct-more-btn" data-action="more" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}"
+                data-n8n="${isN8nManaged(c) ? '1' : ''}" data-url="${attr(openUrl)}" title="More actions">⋯</button>
+        <div class="ct-dropdown" id="dd-${attr(c.id)}" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);min-width:180px;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+          <button class="ct-dd-item" data-action="inspect" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}">🔍 Inspect</button>
           ${isSelf
             ? `<div class="ct-dd-item ct-dd-item--disabled" style="white-space:normal;line-height:1.4" title="Manage the dashboard's own container from Docker Desktop or the host">🏠 AgeniusDesk's own container — stop/recreate/destroy it from Docker Desktop, not here.</div>`
-            : `<button class="ct-dd-item" data-action="update" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}">↑ Recreate (pull latest)</button>
-          ${isN8nManaged(c) ? `<button class="ct-dd-item" data-action="register" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" data-url="${escHtml(getRegisterUrl(c))}">+ Register as instance</button>` : ''}
+            : `<button class="ct-dd-item" data-action="update" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}">↑ Recreate (pull latest)</button>
+          ${isN8nManaged(c) ? `<button class="ct-dd-item" data-action="register" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}" data-url="${attr(getRegisterUrl(c))}">+ Register as instance</button>` : ''}
           <button class="ct-dd-item ct-dd-item--disabled" title="Coming soon — G1 snapshot support">📦 Snapshot <span style="font-size:9px;opacity:0.5;margin-left:4px">soon</span></button>
-          ${(c.labels || {})['ageniusdesk.bundle'] ? `<button class="ct-dd-item" data-action="recreate-bundle" data-id="${escHtml(c.id_full)}" data-bundle="${escHtml((c.labels || {})['ageniusdesk.bundle'])}">⟳ Recreate bundle (pull latest)</button>` : ''}
-          <button class="ct-dd-item ct-dd-item--danger" data-action="destroy" data-id="${escHtml(c.id_full)}" data-name="${escHtml(c.name)}" data-managed="${(c.labels || {})['ageniusdesk.managed'] === 'true' ? '1' : ''}" data-bundle="${escHtml((c.labels || {})['ageniusdesk.bundle'] || '')}">🗑 Destroy…</button>`
+          ${(c.labels || {})['ageniusdesk.bundle'] ? `<button class="ct-dd-item" data-action="recreate-bundle" data-id="${attr(c.id_full)}" data-bundle="${attr((c.labels || {})['ageniusdesk.bundle'])}">⟳ Recreate bundle (pull latest)</button>` : ''}
+          <button class="ct-dd-item ct-dd-item--danger" data-action="destroy" data-id="${attr(c.id_full)}" data-name="${attr(c.name)}" data-managed="${(c.labels || {})['ageniusdesk.managed'] === 'true' ? '1' : ''}" data-bundle="${attr((c.labels || {})['ageniusdesk.bundle'] || '')}">🗑 Destroy…</button>`
           }
         </div>
       </td>
     </tr>
-    <tr class="ct-register-row" id="reg-${escHtml(c.id)}" style="display:none">
+    <tr class="ct-register-row" id="reg-${attr(c.id)}" style="display:none">
       <td colspan="6" style="padding:0">
         <div style="padding:12px 14px;background:rgba(96,165,250,0.06);border-bottom:1px solid var(--border-dim)">
-          <div style="font-size:11px;font-weight:600;margin-bottom:8px">Register <code>${escHtml(c.name)}</code> as an n8n instance</div>
+          <div style="font-size:11px;font-weight:600;margin-bottom:8px">Register <code>${esc(c.name)}</code> as an n8n instance</div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end">
             <div>
               <label style="font-size:10px;color:var(--text-dim);display:block;margin-bottom:3px">Instance name</label>
-              <input id="ri-name-${escHtml(c.id)}" type="text" value="${escHtml(c.name.replace(/^agd-/, ''))}"
+              <input id="ri-name-${attr(c.id)}" type="text" value="${attr(c.name.replace(/^agd-/, ''))}"
                 style="width:100%;padding:5px 8px;font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);box-sizing:border-box">
             </div>
             <div>
               <label style="font-size:10px;color:var(--text-dim);display:block;margin-bottom:3px">URL</label>
-              <input id="ri-url-${escHtml(c.id)}" type="text" value="${escHtml(openUrl)}"
+              <input id="ri-url-${attr(c.id)}" type="text" value="${attr(openUrl)}"
                 style="width:100%;padding:5px 8px;font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);box-sizing:border-box">
             </div>
             <div>
               <label style="font-size:10px;color:var(--text-dim);display:block;margin-bottom:3px">API key</label>
-              <input id="ri-key-${escHtml(c.id)}" type="password" placeholder="n8n API key"
+              <input id="ri-key-${attr(c.id)}" type="password" placeholder="n8n API key"
                 style="width:100%;padding:5px 8px;font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);box-sizing:border-box">
             </div>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-primary ct-reg-submit" data-cid="${escHtml(c.id)}">Add</button>
-              <button class="btn btn-sm btn-ghost ct-reg-cancel" data-cid="${escHtml(c.id)}">✕</button>
+              <button class="btn btn-sm btn-primary ct-reg-submit" data-cid="${attr(c.id)}">Add</button>
+              <button class="btn btn-sm btn-ghost ct-reg-cancel" data-cid="${attr(c.id)}">✕</button>
             </div>
           </div>
-          <div id="ri-err-${escHtml(c.id)}" style="font-size:11px;color:#ff6d5a;margin-top:6px"></div>
+          <div id="ri-err-${attr(c.id)}" style="font-size:11px;color:#ff6d5a;margin-top:6px"></div>
         </div>
       </td>
     </tr>
@@ -862,7 +863,7 @@ async function destroyContainer(id, name, isManaged, triggerEl, bundleId = '') {
   const descEl = document.createElement('p');
   descEl.style.cssText = 'margin:0 0 12px;color:var(--text-secondary);font-size:14px;line-height:1.5';
   if (bundleId) {
-    descEl.innerHTML = `Container <code>${escHtml(name)}</code> is a member of bundle <code>${escHtml(bundleId)}</code>. You can destroy this container alone, or the whole bundle.`;
+    descEl.innerHTML = `Container <code>${esc(name)}</code> is a member of bundle <code>${esc(bundleId)}</code>. You can destroy this container alone, or the whole bundle.`;
   } else {
     descEl.textContent = `Permanently remove container "${name}"? This cannot be undone.`;
   }
@@ -973,21 +974,21 @@ async function startBundleRecreate(bundleId) {
     if (item.event === 'step') {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:4px 0';
-      row.innerHTML = `<span style="color:#34d399;flex-shrink:0">✓</span><span>${escHtml(item.message)}</span>`;
+      row.innerHTML = `<span style="color:#34d399;flex-shrink:0">✓</span><span>${esc(item.message)}</span>`;
       stepsList.appendChild(row);
       return;
     }
     if (item.event === 'bundle_step') {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0 4px;margin-top:6px;border-top:1px solid var(--border-dim);font-size:11px;font-weight:600;color:#60a5fa';
-      row.innerHTML = `<span style="background:rgba(96,165,250,0.15);color:#60a5fa;padding:2px 7px;border-radius:8px;font-size:10px">${item.current}/${item.total}</span><span>Container <code>${escHtml(item.container_name)}</code></span>`;
+      row.innerHTML = `<span style="background:rgba(96,165,250,0.15);color:#60a5fa;padding:2px 7px;border-radius:8px;font-size:10px">${item.current}/${item.total}</span><span>Container <code>${esc(item.container_name)}</code></span>`;
       stepsList.appendChild(row);
       return;
     }
     if (item.event === 'done') {
       const resultBox = document.getElementById('ct-deploy-result');
       document.getElementById('ct-deploy-result-body').innerHTML =
-        `Bundle <code>${escHtml(bundleId)}</code> recreated.`;
+        `Bundle <code>${esc(bundleId)}</code> recreated.`;
       document.getElementById('ct-deploy-open-link').style.display = 'none';
       document.getElementById('ct-deploy-register-btn').style.display = 'none';
       document.getElementById('ct-deploy-another-btn').onclick = closeDeployPanel;
@@ -1039,14 +1040,14 @@ async function startRecreate(id, name) {
     if (item.event === 'step') {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:4px 0';
-      row.innerHTML = `<span style="color:#34d399;flex-shrink:0">✓</span><span>${escHtml(item.message)}</span>`;
+      row.innerHTML = `<span style="color:#34d399;flex-shrink:0">✓</span><span>${esc(item.message)}</span>`;
       stepsList.appendChild(row);
       return;
     }
     if (item.event === 'done') {
       const resultBox = document.getElementById('ct-deploy-result');
       document.getElementById('ct-deploy-result-body').innerHTML =
-        `<strong>${escHtml(name)}</strong> updated and restarted.`;
+        `<strong>${esc(name)}</strong> updated and restarted.`;
       document.getElementById('ct-deploy-open-link').style.display = 'none';
       document.getElementById('ct-deploy-register-btn').style.display = 'none';
       document.getElementById('ct-deploy-another-btn').onclick = closeDeployPanel;
@@ -1245,22 +1246,22 @@ function renderTemplatePicker() {
   let html = '';
   for (const cat of sortedCats) {
     const label = _CATEGORY_LABELS[cat] || cat.charAt(0).toUpperCase() + cat.slice(1);
-    html += `<div class="ct-tmpl-cat">${escHtml(label)}</div><div class="ct-tmpl-grid-row">`;
+    html += `<div class="ct-tmpl-cat">${esc(label)}</div><div class="ct-tmpl-grid-row">`;
     for (const t of groups.get(cat)) {
       const isRunning = _allContainers.some(
         c => (c.labels || {})['ageniusdesk.template'] === t.id && c.state === 'running'
       );
       html += `
-        <button class="ct-tmpl-tile" data-tid="${escHtml(t.id)}">
+        <button class="ct-tmpl-tile" data-tid="${attr(t.id)}">
           ${isRunning ? `<div class="ct-tmpl-tile-running"><span style="width:6px;height:6px;border-radius:50%;background:#34d399;display:inline-block"></span> Running</div>` : ''}
-          <div class="ct-tmpl-tile-icon">${escHtml(t.icon)}</div>
-          <div class="ct-tmpl-tile-name">${escHtml(t.name)}</div>
+          <div class="ct-tmpl-tile-icon">${esc(t.icon)}</div>
+          <div class="ct-tmpl-tile-name">${esc(t.name)}</div>
           <div class="ct-tmpl-tile-footer">
-            <div class="ct-tmpl-tile-desc" title="${escHtml(t.description)}">${escHtml(t.description)}</div>
+            <div class="ct-tmpl-tile-desc" title="${attr(t.description)}">${esc(t.description)}</div>
             <div class="ct-tmpl-tile-tags">
               ${t.bundle ? '<span class="ct-tmpl-badge" style="background:rgba(96,165,250,0.18);color:#60a5fa">bundle</span>' : ''}
               ${t.community ? '<span class="ct-tmpl-badge">community</span>' : ''}
-              ${t.documentation_url ? `<a class="ct-tmpl-docs" href="${escHtml(t.documentation_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📖 Docs</a>` : ''}
+              ${t.documentation_url ? `<a class="ct-tmpl-docs" href="${attr(t.documentation_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📖 Docs</a>` : ''}
             </div>
           </div>
         </button>
@@ -1304,21 +1305,21 @@ function renderConfigForm() {
     let inputHtml = '';
     if (f.type === 'select') {
       inputHtml = `<select id="${inputId}" style="width:100%;padding:6px 8px;font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary)">
-        ${f.options.map(o => `<option value="${escHtml(o)}" ${o === String(f.default) ? 'selected' : ''}>${escHtml(o)}</option>`).join('')}
+        ${f.options.map(o => `<option value="${attr(o)}" ${o === String(f.default) ? 'selected' : ''}>${esc(o)}</option>`).join('')}
       </select>`;
     } else {
-      inputHtml = `<input id="${inputId}" type="${f.type}" value="${escHtml(String(f.default))}"
-        placeholder="${escHtml(f.placeholder)}"
+      inputHtml = `<input id="${attr(inputId)}" type="${attr(f.type)}" value="${attr(String(f.default))}"
+        placeholder="${attr(f.placeholder)}"
         style="width:100%;padding:6px 8px;font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);box-sizing:border-box"
         ${f.required ? 'required' : ''} autocomplete="off">`;
     }
     return `
       <div>
         <label for="${inputId}" style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">
-          ${escHtml(f.label)}${f.required ? '' : ' <span style="opacity:0.5">(optional)</span>'}
+          ${esc(f.label)}${f.required ? '' : ' <span style="opacity:0.5">(optional)</span>'}
         </label>
         ${inputHtml}
-        ${f.hint ? `<div style="font-size:10px;color:var(--text-dim);margin-top:3px">${escHtml(f.hint)}</div>` : ''}
+        ${f.hint ? `<div style="font-size:10px;color:var(--text-dim);margin-top:3px">${esc(f.hint)}</div>` : ''}
       </div>
     `;
   }).join('');
@@ -1449,7 +1450,7 @@ async function submitDeploy() {
       row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:4px 0';
       row.innerHTML = `
         <span style="color:#34d399;flex-shrink:0">✓</span>
-        <span>${escHtml(item.message)}${item.detail ? `<div style="color:var(--text-dim);font-size:10px;margin-top:1px">${escHtml(item.detail)}</div>` : ''}</span>
+        <span>${esc(item.message)}${item.detail ? `<div style="color:var(--text-dim);font-size:10px;margin-top:1px">${esc(item.detail)}</div>` : ''}</span>
       `;
       stepsList.appendChild(row);
       return;
@@ -1461,7 +1462,7 @@ async function submitDeploy() {
       row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0 4px;margin-top:6px;border-top:1px solid var(--border-dim);font-size:11px;font-weight:600;color:#60a5fa';
       row.innerHTML = `
         <span style="background:rgba(96,165,250,0.15);color:#60a5fa;padding:2px 7px;border-radius:8px;font-size:10px">${item.current}/${item.total}</span>
-        <span>Container <code>${escHtml(item.container_name)}</code></span>
+        <span>Container <code>${esc(item.container_name)}</code></span>
       `;
       stepsList.appendChild(row);
       return;
@@ -1473,20 +1474,20 @@ async function submitDeploy() {
       if (isBundle) {
         const memberRows = (item.containers || []).map(m => `
           <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
-            <span style="background:${m.role === 'primary' ? 'rgba(52,211,153,0.15)' : 'rgba(255,255,255,0.05)'};color:${m.role === 'primary' ? '#34d399' : 'var(--text-dim)'};padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase">${escHtml(m.role)}</span>
-            <code>${escHtml(m.name)}</code>
-            ${m.url ? `<a href="${escHtml(m.url)}" target="_blank" style="color:var(--accent);font-size:11px">${escHtml(m.url)} &rarr;</a>` : ''}
+            <span style="background:${m.role === 'primary' ? 'rgba(52,211,153,0.15)' : 'rgba(255,255,255,0.05)'};color:${m.role === 'primary' ? '#34d399' : 'var(--text-dim)'};padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase">${esc(m.role)}</span>
+            <code>${attr(m.name)}</code>
+            ${m.url ? `<a href="${attr(m.url)}" target="_blank" style="color:var(--accent);font-size:11px">${esc(m.url)} &rarr;</a>` : ''}
           </div>
         `).join('');
         document.getElementById('ct-deploy-result-body').innerHTML = `
-          Bundle <code>${escHtml(item.bundle_id)}</code> deployed (${(item.containers || []).length} containers).<br>
-          ${item.primary_url ? `Access at <strong>${escHtml(item.primary_url)}</strong>` : ''}
+          Bundle <code>${esc(item.bundle_id)}</code> deployed (${(item.containers || []).length} containers).<br>
+          ${item.primary_url ? `Access at <strong>${esc(item.primary_url)}</strong>` : ''}
           <div style="margin-top:10px;padding:8px;background:var(--bg-input);border-radius:var(--radius)">${memberRows}</div>
         `;
       } else {
         document.getElementById('ct-deploy-result-body').innerHTML = `
-          Container <code>${escHtml(item.container_name)}</code> is running.<br>
-          ${item.url ? `Access at <strong>${escHtml(item.url)}</strong>` : ''}
+          Container <code>${esc(item.container_name)}</code> is running.<br>
+          ${item.url ? `Access at <strong>${esc(item.url)}</strong>` : ''}
         `;
       }
       const openLink = document.getElementById('ct-deploy-open-link');
@@ -1514,7 +1515,7 @@ async function submitDeploy() {
           <ol style="margin:0 0 14px;padding-left:18px;display:flex;flex-direction:column;gap:8px">
             <li>
               <strong>Open the instance</strong> and complete the owner account setup (email + password).
-              ${instanceUrl ? `<br><a href="${escHtml(instanceUrl)}" target="_blank" style="color:var(--accent)">${escHtml(instanceUrl)} &rarr;</a>` : ''}
+              ${instanceUrl ? `<br><a href="${attr(instanceUrl)}" target="_blank" style="color:var(--accent)">${esc(instanceUrl)} &rarr;</a>` : ''}
             </li>
             <li>
               Inside n8n: <strong>Settings &rsaquo; n8n API</strong>, enable the API and create an API key. Copy it.
@@ -1523,7 +1524,7 @@ async function submitDeploy() {
               Return to <strong>Settings &rsaquo; Instances</strong> here and click Add Instance — paste the URL and key.
             </li>
           </ol>
-          ${instanceUrl ? `<p style="margin:0;font-size:11px;color:var(--text-dim)">URL: <code>${escHtml(instanceUrl)}</code></p>` : ''}
+          ${instanceUrl ? `<p style="margin:0;font-size:11px;color:var(--text-dim)">URL: <code>${esc(instanceUrl)}</code></p>` : ''}
         `;
         openModal({
           title: 'Add to AgeniusDesk — setup required',
@@ -1556,12 +1557,12 @@ async function submitDeploy() {
         // and offer destroy + redeploy as the recovery path.
         errBox.innerHTML = `
           <div style="font-weight:600;margin-bottom:4px">Bundle partially deployed</div>
-          <div style="font-size:11px;margin-bottom:6px">${escHtml(item.message)}</div>
+          <div style="font-size:11px;margin-bottom:6px">${esc(item.message)}</div>
           <div style="font-size:11px;color:var(--text-dim);line-height:1.6">
-            Bundle: <code>${escHtml(item.bundle_id || '')}</code><br>
-            Started: ${(item.started || []).map(s => `<code>${escHtml(s)}</code>`).join(', ') || '(none)'}<br>
-            Failed: <code>${escHtml(item.failed || '')}</code><br>
-            Remaining: ${(item.remaining || []).map(s => `<code>${escHtml(s)}</code>`).join(', ') || '(none)'}
+            Bundle: <code>${esc(item.bundle_id || '')}</code><br>
+            Started: ${(item.started || []).map(s => `<code>${esc(s)}</code>`).join(', ') || '(none)'}<br>
+            Failed: <code>${esc(item.failed || '')}</code><br>
+            Remaining: ${(item.remaining || []).map(s => `<code>${esc(s)}</code>`).join(', ') || '(none)'}
           </div>
           <div style="margin-top:8px;display:flex;gap:6px">
             <button class="btn btn-sm btn-ghost" id="ct-bundle-destroy-partial">Destroy partial bundle</button>
@@ -1597,9 +1598,3 @@ async function submitDeploy() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function escHtml(s) {
-  const d = document.createElement('span');
-  d.textContent = s == null ? '' : String(s);
-  return d.innerHTML;
-}

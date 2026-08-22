@@ -11,6 +11,7 @@ import os
 
 import httpx
 
+from backend import audit
 from backend.config import decrypt_value, load_config, save_config
 from backend.module_registry import APP_VERSION
 from backend.net import UnsafeProbeURL, assert_safe_probe_url
@@ -380,6 +381,45 @@ DEFAULT_CONFIRM = CONFIRM_WRITES
 # server name, which the operator is free to type as anything.
 _N8N_MCP_MARKERS = frozenset({"search_nodes", "tools_documentation", "get_node", "validate_workflow"})
 _N8N_MCP_WRITE_PREFIX = "n8n_"
+# The docs-brain / read-only live-instance tools are a small, known set. The
+# `n8n_` prefix spans both reads (n8n_get_workflow) and writes
+# (n8n_delete_workflow), so the prefix alone cannot be the read discriminator.
+# Naming-convention classification may only auto-approve a tool it can
+# POSITIVELY place in this set; anything else is None, so an unrecognized name —
+# including one a hostile server invents — falls through to the approval card
+# instead of being waved through as a read by default. Mirrors the real tool
+# list in tests/fixtures/n8n_mcp_tools_list.json.
+_N8N_MCP_READ_NAMES = frozenset({
+    "get_node",
+    "get_template",
+    "search_nodes",
+    "search_templates",
+    "tools_documentation",
+    "validate_node",
+    "validate_workflow",
+    "n8n_audit_instance",
+    "n8n_get_workflow",
+    "n8n_health_check",
+    "n8n_list_workflows",
+    "n8n_validate_workflow",
+})
+# Live-instance writes, for a positive False rather than a default-deny None.
+# A name in neither set is still None (unrecognized → fail closed).
+_N8N_MCP_WRITE_NAMES = frozenset({
+    "n8n_autofix_workflow",
+    "n8n_create_workflow",
+    "n8n_delete_workflow",
+    "n8n_deploy_template",
+    "n8n_executions",
+    "n8n_generate_workflow",
+    "n8n_manage_credentials",
+    "n8n_manage_datatable",
+    "n8n_test_workflow",
+    "n8n_trigger_webhook_workflow",
+    "n8n_update_full_workflow",
+    "n8n_update_partial_workflow",
+    "n8n_workflow_versions",
+})
 
 
 def detect_profile(tool_names: set[str]) -> str:
@@ -413,8 +453,12 @@ def classify_read_only(tool: dict, profile: str) -> bool | None:
     if isinstance(read_only, bool):
         return read_only
     if profile == "n8n-mcp":
-        # Only the `n8n_` tools reach a live instance; the rest are the docs brain.
-        return not str(tool.get("_mcp_tool_name", "")).startswith(_N8N_MCP_WRITE_PREFIX)
+        name = str(tool.get("_mcp_tool_name", ""))
+        if name in _N8N_MCP_READ_NAMES:
+            return True  # positively classified read
+        if name in _N8N_MCP_WRITE_NAMES:
+            return False  # positively classified write
+        return None  # unrecognized name: fail closed to the approval card
     return None
 
 
@@ -433,6 +477,15 @@ async def execute_tool(server_id: str, tool_name: str, arguments: dict) -> str:
         base, mcp_url = _normalize_mcp_urls(resolved["url"])
     except UnsafeProbeURL as e:
         return f"Error: blocked MCP server URL ({e})"
+
+    from backend.config import settings as _settings
+    audit.record(
+        "mcp.tool.execute",
+        tool=tool_name,
+        server_id=server_id,
+        autorun=bool(_settings.agd_assistant_autorun),
+        arguments=arguments,
+    )
 
     # Try MCP streamable HTTP — initialize session, then call
     try:

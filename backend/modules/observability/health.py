@@ -276,8 +276,12 @@ def _missing_candidates(
     return out
 
 
-async def enrich_trace_health(trace_id: str) -> int:
-    """Enrich one trace with per-node health. Returns spans written (0 if skipped)."""
+async def enrich_trace_health(trace_id: str, raw: dict | None = None) -> int:
+    """Enrich one trace with per-node health. Returns spans written (0 if skipped).
+
+    ``raw`` is the already-fetched execution payload (backfill passes it to skip
+    a duplicate includeData fetch); None preserves the lazy self-fetch.
+    """
     if await storage.has_health(trace_id):
         return 0
     spans = await storage.get_trace(trace_id)
@@ -298,15 +302,17 @@ async def enrich_trace_health(trace_id: str) -> int:
     # attributes alone). An unresolved unknown-<hash> trace is skipped until the
     # learn step re-attributes it. Best-effort and bounded so a slow fetch never
     # blocks the caller.
-    run_by_node: dict[str, list] = {}
-    if exec_id and not inst.startswith("unknown-"):
-        try:
-            raw = await asyncio.wait_for(
-                n8n_client.get_execution_raw_by_instance(exec_id, inst), timeout=8.0
-            )
-            run_by_node = ((raw or {}).get("data") or {}).get("resultData", {}).get("runData", {}) or {}
-        except Exception as e:  # noqa: BLE001 - best-effort, retries on next open
-            logger.debug("health enrich: run-data fetch failed/slow for exec %s: %s", exec_id, e)
+    # raw pre-bound: the dead-man's switch reads it even when the fetch fails.
+    if raw is None:
+        raw = {}
+        if exec_id and not inst.startswith("unknown-"):
+            try:
+                raw = await asyncio.wait_for(
+                    n8n_client.get_execution_raw_by_instance(exec_id, inst), timeout=8.0
+                ) or {}
+            except Exception as e:  # noqa: BLE001 - best-effort, retries on next open
+                logger.debug("health enrich: run-data fetch failed/slow for exec %s: %s", exec_id, e)
+    run_by_node: dict[str, list] = ((raw or {}).get("data") or {}).get("resultData", {}).get("runData", {}) or {}
 
     # node name -> its node.execute spans in execution order (one span per run).
     by_node: dict[str, list[dict]] = {}
@@ -418,6 +424,14 @@ async def enrich_trace_health(trace_id: str) -> int:
 
         wf_id = (root or {}).get("workflow_id", "") or "unknown"
         wf_name = (root or {}).get("workflow_name", "") or "Unknown Workflow"
+        # Stamp incidents with the EXECUTION's time (root span start), not ingest
+        # time, so one raised from a backfilled trace sorts into history in the
+        # Errors feed instead of surfacing as breaking news.
+        root_start_ns = int((root or {}).get("start_ns") or 0)
+        occurred_at = (
+            datetime.fromtimestamp(root_start_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            if root_start_ns > 0 else ""
+        )
         for hit in all_hits:
             try:
                 await errors_collector.store_error({
@@ -425,6 +439,7 @@ async def enrich_trace_health(trace_id: str) -> int:
                     "workflow_id": wf_id,
                     "workflow_name": wf_name,
                     "execution_id": exec_id,
+                    "occurred_at": occurred_at,
                     "node_name": hit["node"],
                     "error_message": hit.get("error_summary")
                     or "Node produced no/low output on a run n8n reported as success.",
