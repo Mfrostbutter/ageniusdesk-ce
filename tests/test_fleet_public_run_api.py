@@ -151,10 +151,12 @@ async def test_prefetch_and_resolve(monkeypatch):
 
     n = await tools_mcp.prefetch_all(force=True)
     assert n == 1
+    # Both the legacy colon form and the wire form resolve; unknown names skip.
     tools = tools_mcp.resolve_cached(["mcp:itops:get_ticket", "mcp:itops:nope"])
     assert len(tools) == 1
     tool = tools[0]
-    assert tool.name == "mcp:itops:get_ticket"
+    assert tool.name == "mcp__itops__get_ticket"
+    assert tools_mcp.resolve_cached(["mcp__itops__get_ticket"])[0] is tool
 
     # Execution routes through the assistant MCP client; None optionals dropped.
     calls: list[Any] = []
@@ -196,8 +198,8 @@ def test_resolve_tools_merges_local_and_mcp():
     async def _noop():
         return ""
 
-    fake = StructuredTool.from_function(coroutine=_noop, name="mcp:itops:x", description="x")
-    tools_mcp._CACHE["mcp:itops:x"] = fake
+    fake = StructuredTool.from_function(coroutine=_noop, name="mcp__itops__x", description="x")
+    tools_mcp._CACHE["mcp__itops__x"] = fake
     resolved = tools_local.resolve_tools(["list_recent_errors", "mcp:itops:x"])
     names = [t.name for t in resolved]
-    assert names == ["list_recent_errors", "mcp:itops:x"]
+    assert names == ["list_recent_errors", "mcp__itops__x"]

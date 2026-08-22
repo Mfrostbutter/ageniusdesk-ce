@@ -1,7 +1,8 @@
 """MCP servers as fleet tools.
 
 A vault agent's manifest opts into an MCP server's tools by name
-(`mcp:{server_id}:{tool_name}`). The runner pre-warms the cache
+(`mcp__{server_id}__{tool_name}`; legacy `mcp:{server_id}:{tool_name}`
+accepted and normalized). The runner pre-warms the cache
 (async discovery) before build; `resolve_cached` then hands the sync graph
 factory ready @tool wrappers. Execution goes through the assistant module's
 MCP client, so server config, `$SECRET` token refs, TLS posture, and audit
@@ -16,7 +17,11 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-MCP_PREFIX = "mcp:"
+# Double-underscore, not colons: tool names reach the model provider, and
+# Anthropic enforces ^[a-zA-Z0-9_-]{1,128}$. Legacy mcp:server:tool manifest
+# names are normalized on resolve.
+MCP_PREFIX = "mcp__"
+LEGACY_PREFIX = "mcp:"
 
 # name -> StructuredTool, refreshed whole-cache on prefetch
 _CACHE: dict[str, Any] = {}
@@ -34,7 +39,14 @@ _JSON_TYPES = {
 
 
 def is_mcp_name(name: str) -> bool:
-    return name.startswith(MCP_PREFIX)
+    return name.startswith(MCP_PREFIX) or name.startswith(LEGACY_PREFIX)
+
+
+def canonical(name: str) -> str:
+    """Normalize a manifest tool name to the wire form (mcp__server__tool)."""
+    if name.startswith(LEGACY_PREFIX):
+        return MCP_PREFIX + name[len(LEGACY_PREFIX):].replace(":", "__")
+    return name
 
 
 def _args_model(model_name: str, schema: dict):
@@ -60,7 +72,7 @@ def _wrap(defn: dict):
     server_id = defn["_mcp_server_id"]
     tool_name = defn["_mcp_tool_name"]
     fn = defn.get("function", {})
-    name = f"{MCP_PREFIX}{server_id}:{tool_name}"
+    name = f"{MCP_PREFIX}{server_id}__{tool_name}"
 
     async def _run(**kwargs):
         from backend.modules.assistant.mcp_client import execute_tool
@@ -107,10 +119,10 @@ async def prefetch_all(force: bool = False) -> int:
 
 
 def resolve_cached(names: list[str]) -> list:
-    """Resolve `mcp:server:tool` names against the cache (unknown names skipped)."""
+    """Resolve MCP tool names (either form) against the cache (unknown skipped)."""
     out = []
     for n in names:
-        tool = _CACHE.get(n)
+        tool = _CACHE.get(canonical(n))
         if tool is not None:
             out.append(tool)
         elif is_mcp_name(n):
