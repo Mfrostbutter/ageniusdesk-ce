@@ -59,6 +59,7 @@ class ResumeRequest(BaseModel):
     edited: str = Field(default="", description="The edited fix text, when action=edit.")
     mode: str = Field(default="dry_run", description="For write agents: dry_run | live.")
     choice: int | None = Field(default=None, description="1-based pick when the gate offers choices.")
+    by: str = Field(default="", description="Reviewer identity recorded by gates that attribute the decision.")
 
 
 class RegisterAgentRequest(BaseModel):
@@ -211,7 +212,7 @@ async def resume_run(run_id: str, req: ResumeRequest):
     # Atomic claim closes the is_live-then-create_task race (double-resume).
     if not runner.claim(run_id):
         raise HTTPException(status_code=409, detail="Another run is in progress.")
-    decision = {"action": req.action, "edited": req.edited, "mode": req.mode, "choice": req.choice}
+    decision = {"action": req.action, "edited": req.edited, "mode": req.mode, "choice": req.choice, "by": req.by}
     asyncio.create_task(runner.resume(run_id, decision))
     return {"ok": True}
 

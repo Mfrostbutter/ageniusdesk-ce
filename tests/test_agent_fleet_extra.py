@@ -84,3 +84,14 @@ def test_double_start_races_to_409(client, monkeypatch):
         asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
             storage.delete_run(run_id)
         )
+
+
+def test_resume_request_carries_reviewer_identity():
+    """P3 gate 2026-08-22: `by` was silently dropped by the schema, so gates
+    that attribute the decision recorded 'operator' instead of the reviewer."""
+    from backend.modules.agent_fleet.router import ResumeRequest
+
+    req = ResumeRequest(action="approve", by="michael")
+    assert req.by == "michael"
+    # Absent stays empty so downstream `d.get("by") or "operator"` fallbacks hold.
+    assert ResumeRequest().by == ""
