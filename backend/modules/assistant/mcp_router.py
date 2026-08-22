@@ -1,5 +1,6 @@
 """MCP Server management API routes."""
 
+import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,6 +39,10 @@ class AddServer(BaseModel):
     description: str = ""
     instances: list[str] = []  # Instance IDs this server is available to (empty = all)
     confirm: str = mcp_client.DEFAULT_CONFIRM
+    # Optional stable slug id. Fleet tool names embed the server id
+    # (mcp:{id}:{tool}), so an agent manifest can only reference a server whose
+    # id is known in advance. Blank = random hex, the historical behavior.
+    id: str = ""
 
 
 class UpdateServer(BaseModel):
@@ -84,11 +89,20 @@ async def list_servers():
     return {"servers": safe, "confirm_help": _CONFIRM_HELP}
 
 
+_SERVER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
 @router.post("/servers")
 async def add_server(req: AddServer):
     """Add a new MCP server."""
+    server_id = (req.id or "").strip()
+    if server_id:
+        if not _SERVER_ID_RE.match(server_id):
+            raise HTTPException(status_code=400, detail="id must be a lowercase slug, e.g. 'itops'")
+        if any(s["id"] == server_id for s in mcp_client.get_mcp_servers()):
+            raise HTTPException(status_code=409, detail=f"MCP server id '{server_id}' already exists")
     server = {
-        "id": secrets.token_hex(8),
+        "id": server_id or secrets.token_hex(8),
         "name": req.name,
         "url": req.url.rstrip("/"),
         "token": encrypt_value(req.token) if req.token and not req.token.startswith("$") else req.token,
