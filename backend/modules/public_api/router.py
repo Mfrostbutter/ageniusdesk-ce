@@ -280,3 +280,57 @@ async def v1_ha_summary(_key: dict = Depends(require_scope("read"))):
     from .summary import build_ha_summary
 
     return await build_ha_summary()
+
+
+# ── Agent Fleet (run-start for external callers: n8n, the itops platform) ─────
+
+
+def _fleet():
+    """Import the fleet lazily; 503 when the module/extra is absent."""
+    try:
+        from backend.modules.agent_fleet import registry, runner, storage
+        return registry, runner, storage
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Agent Fleet is not available on this install.")
+
+
+class _AgentRunPayload(BaseModel):
+    error_id: Optional[int] = None
+    prompt: str = ""
+
+
+@router.get("/agents")
+async def v1_list_agents(_key: dict = Depends(require_scope("read"))):
+    """Catalog of registered fleet agents (cards)."""
+    registry, _, _ = _fleet()
+    return {
+        "agents": [a.card() for a in registry.all_agents()],
+        "default": registry.DEFAULT_AGENT_ID,
+    }
+
+
+@router.post("/agents/{agent_id}/runs")
+async def v1_start_agent_run(
+    agent_id: str,
+    payload: _AgentRunPayload,
+    _key: dict = Depends(require_scope("trigger")),
+):
+    """Start a fleet agent run by id. Same single-flight and HITL semantics as
+    the dashboard: 409 while another run is live; a HITL agent parks awaiting
+    approval in the AGD UI."""
+    _, runner, _ = _fleet()
+    try:
+        run = await runner.start(agent_id, payload.error_id, payload.prompt)
+    except runner.RunStartError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from None
+    return {"run_id": run["id"], "run": run}
+
+
+@router.get("/agents/runs/{run_id}")
+async def v1_get_agent_run(run_id: str, _key: dict = Depends(require_scope("read"))):
+    """Full run record (status, events log, result markdown)."""
+    _, _, storage = _fleet()
+    run = await storage.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return run
