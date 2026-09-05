@@ -142,6 +142,7 @@ def _register_community(app: FastAPI, child: Path) -> None:
         ))
         return
 
+    _seed_endpoints(manifest)
     if _isolation_mode() in ("subprocess", "container"):
         _register_community_isolated(app, child, manifest, entry_path)
         return
@@ -183,6 +184,16 @@ def _register_community(app: FastAPI, child: Path) -> None:
             path=entry_path,
         ))
         logger.warning("Failed to load community module %s: %s", child.name, e)
+
+
+def _seed_endpoints(manifest) -> None:
+    """Ensure every declared http.request endpoint has a host-side revision.
+    Missing ones are seeded PENDING (upgrade path); existing ones are untouched."""
+    try:
+        from backend.modules._runtime import endpoints
+        endpoints.seed(manifest, activate=False)
+    except Exception as e:
+        logger.warning("endpoint seed for %s failed: %s", manifest.id, e)
 
 
 def _register_community_isolated(app: FastAPI, child: Path, manifest, entry_path: str) -> None:

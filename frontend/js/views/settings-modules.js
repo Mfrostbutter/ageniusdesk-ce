@@ -9,7 +9,7 @@
  * review, NOT a sandbox — the modal says so plainly.
  */
 
-import { get, post, del } from '../api.js';
+import { get, post, put, del } from '../api.js';
 import * as toast from '../components/toast.js';
 import { attr } from '../lib/html.js';
 
@@ -125,6 +125,7 @@ function moduleCard(entry, knownRefs, lock) {
       ${mf.routes_prefix ? `<div style="font-size:11px;opacity:0.6;margin-bottom:8px"><code>${esc(mf.routes_prefix)}</code></div>` : ''}
       ${entry.error ? `<div style="font-size:12px;color:#ff6d5a;margin-bottom:8px">Error: ${esc(entry.error)}</div>` : ''}
       ${secretsHtml ? `<div style="border-top:1px solid var(--border-dim);padding-top:6px;margin-top:6px"><div style="font-size:11px;opacity:0.5;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Declared secrets</div>${secretsHtml}</div>` : ''}
+      ${isBuiltin ? '' : `<div data-endpoints-for="${attr(mf.id)}"></div>`}
       ${provHtml}
     </div>
   `;
@@ -245,6 +246,7 @@ export async function renderModules(el) {
     wireInstall(el);
     wireUninstall(el);
     wireNavToggles(el);
+    wireEndpoints(el);
   } catch (e) {
     el.innerHTML = `<div class="error-banner">Failed to load modules: ${esc(e.message)}</div>`;
   }
@@ -361,6 +363,8 @@ function consentModal(inspect) {
       `);
     }
     const incompatHtml = compatible ? '' : `<div style="font-size:12px;color:${SEV_COLOR.CRITICAL};margin-bottom:10px">Incompatible: requires app version ≥ ${esc(inspect.min_app_version)}. Install is blocked.</div>`;
+    const httpEps = inspect.http_endpoints || [];
+    const endpointsHtml = httpEps.length ? section('Upstream endpoints (host-owned)', endpointConsentList(httpEps)) : '';
 
     root.innerHTML = `
       <div class="modal-content" tabindex="-1" style="max-width:680px;width:92vw;max-height:86vh;overflow:auto">
@@ -375,6 +379,7 @@ function consentModal(inspect) {
         </div>
 
         ${incompatHtml}
+        ${endpointsHtml}
         ${section('Declared capabilities', capabilityList(inspect.capabilities))}
         ${section('Declared vs detected', diffTable(report.declared_vs_detected))}
         ${section(`Scan findings (${(report.findings || []).length})`, findingsList(report) + parseErr)}
@@ -415,6 +420,7 @@ function consentModal(inspect) {
       cleanup({
         acknowledged: hasHigh ? !!ackInput?.checked : false,
         typed_id: hasCritical ? (typedInput?.value.trim() || null) : null,
+        endpoints: readEndpointChoices(root, httpEps),
       });
     });
     cancelBtn.addEventListener('click', () => cleanup(null));
@@ -423,6 +429,149 @@ function consentModal(inspect) {
 
     document.body.appendChild(root);
     setTimeout(() => (typedInput || confirmBtn).focus(), 0);
+  });
+}
+
+// ── http.request endpoints (consent + effective config) ───────────────────────
+
+const MUTATING = ['POST', 'PUT', 'PATCH', 'DELETE'];
+
+function endpointConsentList(eps) {
+  return eps.map(ep => {
+    const mut = (ep.methods || []).filter(m => MUTATING.includes(m));
+    const secret = ep.auth?.secret_ref ? `using your <code>${esc(ep.auth.secret_ref)}</code> secret` : 'unauthenticated';
+    const tls = ep.verify_tls === false
+      ? `<span class="badge" style="background:${SEV_COLOR.MEDIUM}22;color:${SEV_COLOR.MEDIUM};font-size:10px;margin-left:6px">TLS verification off</span>` : '';
+    const mutHtml = mut.length ? `
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;margin-top:8px;cursor:pointer;background:${SEV_COLOR.HIGH}11;border:1px solid ${SEV_COLOR.HIGH}44;border-radius:var(--radius);padding:8px 10px">
+        <input type="checkbox" class="ep-allow-mut" data-ep="${attr(ep.id)}" style="margin-top:2px">
+        <span>Allow this module to <strong style="color:${SEV_COLOR.HIGH}">change data</strong> on this host (${esc(mut.join(', '))}). Off = read-only grant; the host rejects ${esc(mut.join('/'))} even if the module calls it.</span>
+      </label>` : '';
+    return `
+      <div style="border:1px solid var(--border-dim);border-radius:var(--radius);padding:10px;margin-bottom:8px" data-ep-block="${attr(ep.id)}">
+        <div style="font-size:12px;margin-bottom:6px"><strong>${esc(ep.id)}</strong> · reads ${secret}${tls}</div>
+        <label style="font-size:11px;opacity:0.7">Base URL (the module only supplies relative paths under it)</label>
+        <input class="input ep-base" data-ep="${attr(ep.id)}" value="${attr(ep.base_url || '')}" style="width:100%;margin-top:2px">
+        ${mutHtml}
+      </div>`;
+  }).join('');
+}
+
+function readEndpointChoices(root, eps) {
+  const out = {};
+  for (const ep of eps) {
+    const base = root.querySelector(`.ep-base[data-ep="${CSS.escape(ep.id)}"]`)?.value.trim() || ep.base_url;
+    const allowMut = !!root.querySelector(`.ep-allow-mut[data-ep="${CSS.escape(ep.id)}"]`)?.checked;
+    const methods = (ep.methods || []).filter(m => allowMut || !MUTATING.includes(m));
+    out[ep.id] = { base_url: base, methods, verify_tls: ep.verify_tls !== false };
+  }
+  return out;
+}
+
+function endpointRow(moduleId, ep) {
+  const pending = ep.status !== 'active';
+  const status = pending
+    ? `<span class="badge" style="background:${SEV_COLOR.HIGH}22;color:${SEV_COLOR.HIGH};font-size:10px">needs confirmation</span>`
+    : `<span class="badge" style="background:#34d39922;color:#34d399;font-size:10px">active</span>`;
+  const ro = !(ep.methods || []).some(m => MUTATING.includes(m));
+  const pin = ep.pinned_ips?.length ? `pinned ${esc(ep.pinned_ips.join(', '))}` : `<span style="color:${SEV_COLOR.HIGH}">unpinned</span>`;
+  return `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;padding:4px 0">
+      <code>${esc(ep.id)}</code> ${status}
+      <span style="opacity:0.7">${esc(ep.base_url || '(not set)')}</span>
+      <span style="opacity:0.6">· ${ro ? 'read-only' : esc((ep.methods || []).join(' '))}</span>
+      <span style="opacity:0.6">· ${pin}</span>
+      ${ep.verify_tls === false ? `<span style="color:${SEV_COLOR.MEDIUM}">· TLS verify off</span>` : ''}
+      <span style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn btn-sm btn-ghost ep-configure" data-module="${attr(moduleId)}" data-ep="${attr(ep.id)}">Configure</button>
+        ${pending ? '' : `<button class="btn btn-sm btn-ghost ep-repin" data-module="${attr(moduleId)}" data-ep="${attr(ep.id)}">Re-pin</button>`}
+      </span>
+    </div>`;
+}
+
+async function renderEndpointRows(holder, moduleId) {
+  let data;
+  try { data = await get(`/api/modules/${encodeURIComponent(moduleId)}/endpoints`); } catch { return; }
+  const eps = data.endpoints || [];
+  if (!eps.length) { holder.innerHTML = ''; return; }
+  holder.innerHTML = `
+    <div style="border-top:1px solid var(--border-dim);padding-top:6px;margin-top:6px">
+      <div style="font-size:11px;opacity:0.5;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Upstream endpoints</div>
+      ${eps.map(ep => endpointRow(moduleId, ep)).join('')}
+    </div>`;
+  holder.querySelectorAll('.ep-configure').forEach(btn => btn.addEventListener('click', async () => {
+    const ep = eps.find(e => e.id === btn.dataset.ep);
+    const changed = await configureEndpointModal(moduleId, ep);
+    if (changed) renderEndpointRows(holder, moduleId);
+  }));
+  holder.querySelectorAll('.ep-repin').forEach(btn => btn.addEventListener('click', async () => {
+    try {
+      const r = await post(`/api/modules/${encodeURIComponent(moduleId)}/endpoints/${encodeURIComponent(btn.dataset.ep)}/repin`, {});
+      toast.success(`Pinned ${btn.dataset.ep} to ${(r.pinned_ips || []).join(', ') || 'nothing (host did not resolve)'}`);
+      renderEndpointRows(holder, moduleId);
+    } catch (e) { toast.error(`Re-pin failed: ${e.message}`); }
+  }));
+}
+
+function wireEndpoints(el) {
+  el.querySelectorAll('[data-endpoints-for]').forEach(holder => renderEndpointRows(holder, holder.dataset.endpointsFor));
+}
+
+// Edit one endpoint's effective config. Resolves true when saved.
+function configureEndpointModal(moduleId, ep) {
+  return new Promise((resolve) => {
+    const declared = ep.declared_methods || [];
+    const root = document.createElement('div');
+    root.className = 'modal';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    const methodBoxes = declared.map(m => `
+      <label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px;font-size:12px">
+        <input type="checkbox" class="cfg-method" value="${attr(m)}" ${(ep.methods || []).includes(m) ? 'checked' : ''} ${m === 'HEAD' ? 'disabled' : ''}>
+        <code>${esc(m)}</code>${MUTATING.includes(m) ? `<span style="color:${SEV_COLOR.HIGH};font-size:10px">changes data</span>` : ''}
+      </label>`).join('');
+    root.innerHTML = `
+      <div class="modal-content" tabindex="-1" style="max-width:560px;width:92vw">
+        <h2 style="margin-bottom:4px">Configure endpoint <code>${esc(ep.id)}</code></h2>
+        <div style="font-size:12px;opacity:0.6;margin-bottom:12px">${esc(moduleId)} · secret <code>${esc(ep.secret_ref || 'none')}</code> · revision ${esc(String(ep.revision || 0))}</div>
+        <label style="font-size:11px;opacity:0.7">Base URL</label>
+        <input id="cfg-base" class="input" value="${attr(ep.base_url || '')}" style="width:100%;margin:2px 0 10px">
+        <div style="font-size:11px;opacity:0.7;margin-bottom:4px">Granted methods (HEAD follows GET)</div>
+        <div style="margin-bottom:10px">${methodBoxes}</div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:10px">
+          <input id="cfg-tls" type="checkbox" ${ep.verify_tls === false ? '' : 'checked'}> Verify the TLS certificate
+        </label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;background:${SEV_COLOR.HIGH}11;border:1px solid ${SEV_COLOR.HIGH}44;border-radius:var(--radius);padding:8px 10px">
+          <input id="cfg-consent" type="checkbox" style="margin-top:2px">
+          <span>I consent to this host, TLS policy, and method set. Required when confirming a pending endpoint, changing the host, disabling TLS verification, or adding a method that changes data.</span>
+        </label>
+        <div id="cfg-msg" style="font-size:12px;color:#ff6d5a;margin-top:8px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+          <button type="button" class="btn btn-sm" data-action="cancel">Cancel</button>
+          <button type="button" class="btn btn-sm btn-primary" data-action="save">Save</button>
+        </div>
+      </div>`;
+    const cleanup = (v) => { root.remove(); resolve(v); };
+    root.querySelector('[data-action="cancel"]').addEventListener('click', () => cleanup(false));
+    root.addEventListener('click', (e) => { if (e.target === root) cleanup(false); });
+    root.querySelector('[data-action="save"]').addEventListener('click', async () => {
+      const methods = [...root.querySelectorAll('.cfg-method')].filter(b => b.checked && !b.disabled).map(b => b.value);
+      const body = {
+        base_url: root.querySelector('#cfg-base').value.trim(),
+        methods,
+        verify_tls: root.querySelector('#cfg-tls').checked,
+        consent: root.querySelector('#cfg-consent').checked,
+      };
+      try {
+        await put(`/api/modules/${encodeURIComponent(moduleId)}/endpoints/${encodeURIComponent(ep.id)}`, body);
+        toast.success(`Endpoint ${ep.id} updated`);
+        cleanup(true);
+      } catch (e) {
+        root.querySelector('#cfg-msg').textContent = e.message;
+      }
+    });
+    document.body.appendChild(root);
+    setTimeout(() => root.querySelector('#cfg-base').focus(), 0);
   });
 }
 
@@ -450,12 +599,14 @@ async function inspectAndInstall(el, repo, ref, path, msg) {
   msg.style.color = 'var(--text-secondary)';
   msg.textContent = 'Installing…';
   try {
+    const { endpoints, ...consentOnly } = consent;
     const result = await post('/api/modules/install', {
       repo,
       ref,
       path,
       resolved_sha: inspect.resolved_sha,
-      consent,
+      consent: consentOnly,
+      endpoints: endpoints || {},
     });
     msg.style.color = '#34d399';
     msg.innerHTML = `Installed <code>${esc(result.id)}</code> v${esc(result.version)} (scan ${esc(result.scan_max_severity)}). It activates on restart.

@@ -1,6 +1,7 @@
 # Spec: `http.request` host bridge capability
 
-Status: SPEC / proposed. Not committed to a release.
+Status: BUILT in CE 0.6.0 (2026-09-05). Build details, resolved open questions,
+and the acceptance test map are in `2026-09-05-host-http-bridge-build.md`.
 
 Date: 2026-06-28
 

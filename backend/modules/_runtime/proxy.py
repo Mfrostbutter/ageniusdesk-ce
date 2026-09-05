@@ -2,7 +2,9 @@
 
 The host authenticates and CSRF-checks the request (its normal middleware) BEFORE
 this handler runs, then forwards to the worker with host identity stripped
-(no Cookie, no Authorization) and the per-worker proxy secret added. The worker
+(no Cookie, no Authorization) and the per-worker proxy secret added. Trusted
+X-AGD-* identity headers are forwarded only when the identity middleware
+(identity.py) stamped them; any other X-AGD-* header is dropped. The worker
 hosts the module's router at its real /api/{id}/... path, so the full path is
 forwarded unchanged. Responses are streamed (module job detail can be large).
 """
@@ -13,7 +15,6 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.background import BackgroundTask
 
 from backend.modules._runtime import supervisor
 
@@ -39,8 +40,19 @@ _STRIP_RESPONSE = _HOP_BY_HOP | {
 }
 
 
-def _forward_request_headers(headers) -> dict[str, str]:
-    out = {k: v for k, v in headers.items() if k.lower() not in _STRIP_REQUEST}
+def _forward_request_headers(headers, trusted_identity: bool = False) -> dict[str, str]:
+    from backend.modules._runtime.identity import IDENTITY_HEADERS
+
+    out: dict[str, str] = {}
+    for k, v in headers.items():
+        kl = k.lower()
+        if kl in _STRIP_REQUEST:
+            continue
+        # Only host-stamped identity crosses to the worker; every other X-AGD-*
+        # (CSRF token, anything a browser invented) stays on the host side.
+        if kl.startswith("x-agd-") and not (trusted_identity and kl in IDENTITY_HEADERS):
+            continue
+        out[k] = v
     return out
 
 
@@ -56,7 +68,7 @@ async def _proxy(module_id: str, request: Request) -> StreamingResponse | JSONRe
     rel = request.url.path
     if request.url.query:
         rel = f"{rel}?{request.url.query}"
-    headers = _forward_request_headers(request.headers)
+    headers = _forward_request_headers(request.headers, trusted_identity=bool(request.scope.get("agd_identity")))
     headers["x-agd-proxy-secret"] = worker.proxy_secret
 
     # Stream the request body to the worker (no full buffering in host memory).
@@ -67,11 +79,19 @@ async def _proxy(module_id: str, request: Request) -> StreamingResponse | JSONRe
         logger.warning("proxy to module '%s' failed: %s", module_id, e)
         return JSONResponse({"detail": f"module '{module_id}' is unreachable"}, status_code=502)
 
+    async def _body():
+        # Close the upstream stream on success, upstream failure, AND client
+        # disconnect (Starlette cancels the generator; `finally` still runs).
+        try:
+            async for chunk in resp.aiter_raw():
+                yield chunk
+        finally:
+            await resp.aclose()
+
     return StreamingResponse(
-        resp.aiter_raw(),
+        _body(),
         status_code=resp.status_code,
         headers=_forward_response_headers(resp.headers),
-        background=BackgroundTask(resp.aclose),
     )
 
 

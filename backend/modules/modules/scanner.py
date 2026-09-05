@@ -82,6 +82,9 @@ _SECRET_PATH_MARKERS = (
 # declare host.assistant; notes-bridge use is surfaced as transparency (the
 # bridge enforces path scoping regardless).
 _BRIDGE_ASSISTANT = "/api/_host/assistant/complete"
+_BRIDGE_HTTP = "/api/_host/http/"
+# The one host import an in-process module may make: the http.request facade.
+_HOST_FACADE_IMPORTS = ("backend.modules._runtime.http_bridge",)
 _BRIDGE_NOTES = "/api/_host/notes/"
 
 # A "large opaque literal" heuristic: long strings that are pure base64/hex are a
@@ -231,10 +234,18 @@ class _FileScanner(ast.NodeVisitor):
         # Relative imports (node.level) keep just the module tail for matching;
         # we do not resolve the package root, which is fine for capability heuristics.
         mod = node.module or ""
+        facade = False
         for alias in node.names:
             bound = alias.asname or alias.name
-            self.aliases[bound] = f"{mod}.{alias.name}" if mod else alias.name
-        self._note_import(mod, node.lineno)
+            full = f"{mod}.{alias.name}" if mod else alias.name
+            self.aliases[bound] = full
+            if full in _HOST_FACADE_IMPORTS:
+                # `from backend.modules._runtime import http_bridge` is the facade,
+                # not a generic host import.
+                self._note_import(full, node.lineno)
+                facade = True
+        if not facade:
+            self._note_import(mod, node.lineno)
         self.generic_visit(node)
 
     def _note_import(self, module: str, line: int) -> None:
@@ -269,7 +280,17 @@ class _FileScanner(ast.NodeVisitor):
         # the host only through the capability bridge, never by importing it.
         # Reaching into the COMMUNITY modules dir (data/modules/*) is another
         # community module poking at a sibling and stays MEDIUM.
-        if root == "backend":
+        if module in _HOST_FACADE_IMPORTS:
+            if not self.caps.host.http.enabled:
+                self._add(
+                    "HIGH",
+                    "undeclared-host",
+                    line,
+                    "imports the host http.request facade but the manifest does not declare host.http",
+                )
+            else:
+                self._add("INFO", "host-bridge", line, "uses the host http.request facade (in-process mode)")
+        elif root == "backend":
             self._add(
                 "HIGH",
                 "host-import",
@@ -489,6 +510,16 @@ class _FileScanner(ast.NodeVisitor):
                     )
                 else:
                     self._add("INFO", "host-bridge", node.lineno, "uses the host bridge assistant.complete")
+            elif _BRIDGE_HTTP in norm:
+                if not self.caps.host.http.enabled:
+                    self._add(
+                        "HIGH",
+                        "undeclared-host",
+                        node.lineno,
+                        "calls the host bridge http.request but the manifest does not declare host.http",
+                    )
+                else:
+                    self._add("INFO", "host-bridge", node.lineno, "uses the host bridge http.request")
             elif _BRIDGE_NOTES in norm:
                 self._add("INFO", "host-bridge", node.lineno, "uses the host notes bridge")
         self.generic_visit(node)
@@ -544,6 +575,23 @@ def scan_module(module_dir: Path, manifest: ModuleManifest) -> ScanReport:
     for key in caps.env:
         if key not in detected_env:
             _over(f"env var {key!r} declared but never read")
+
+    # http.request endpoints: surface every declared upstream, and flag TLS
+    # verification bypass so it is visible in the report, not hidden.
+    if caps.host.http.enabled:
+        for ep in caps.host.http.endpoints:
+            mut = sorted(set(ep.methods) & {"POST", "PUT", "PATCH", "DELETE"})
+            detail = f"http.request endpoint {ep.id!r} -> {ep.base_url} methods={ep.methods}"
+            if mut:
+                detail += f" (can CHANGE data: {mut})"
+            report.findings.append(
+                Finding(severity="INFO", category="host-bridge", file="manifest.json", line=0, detail=detail)
+            )
+            if not ep.verify_tls:
+                report.findings.append(Finding(
+                    severity="INFO", category="tls", file="manifest.json", line=0,
+                    detail=f"endpoint {ep.id!r} disables TLS certificate verification (verify_tls=false)",
+                ))
 
     report.declared_vs_detected = {
         "network": {
