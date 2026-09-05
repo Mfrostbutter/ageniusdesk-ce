@@ -6,8 +6,10 @@ privileged action goes through this bridge: a loopback-only HTTP surface
 issued a per-spawn bearer token that maps to its module's declared capabilities;
 every call is gated by that grant and path-scoped server-side.
 
-Phase 3 ships the `notes.*` namespace (vault read/write within the module's
-declared paths). `assistant.complete` is phase 4; `broadcast` is later.
+Namespaces: `notes.*` (vault read/write within the module's declared paths),
+`assistant.complete` (host-resolved LLM key), and `http.request` (host-owned
+upstream URL, credential, TLS policy, and pinned address; see http_bridge.py).
+`broadcast` is later.
 
 Security posture:
   - Bound to loopback only; never mounted on the public app.
@@ -24,6 +26,7 @@ import secrets
 import socket
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
@@ -43,6 +46,8 @@ class BridgeGrant:
     read_paths: list[str] = field(default_factory=list)  # effective: includes write_paths
     host_assistant: bool = False
     host_broadcast: bool = False
+    host_http: bool = False
+    http_endpoints: list[str] = field(default_factory=list)  # declared endpoint ids
 
 
 _grants: dict[str, BridgeGrant] = {}
@@ -55,6 +60,9 @@ def mint(module_id: str, capabilities) -> str:
     write_paths = [p.strip("/").strip() for p in (getattr(fs, "write_paths", []) or []) if p.strip("/").strip()]
     read_only = [p.strip("/").strip() for p in (getattr(fs, "read_paths", []) or []) if p.strip("/").strip()]
     read_paths = list(dict.fromkeys(read_only + write_paths))  # write paths are readable
+    http = getattr(host, "http", None)
+    http_enabled = bool(getattr(http, "enabled", False))
+    http_ids = [ep.id for ep in (getattr(http, "endpoints", []) or [])] if http_enabled else []
     token = secrets.token_urlsafe(32)
     _grants[token] = BridgeGrant(
         module_id=module_id,
@@ -62,6 +70,8 @@ def mint(module_id: str, capabilities) -> str:
         read_paths=read_paths,
         host_assistant=bool(getattr(host, "assistant", False)),
         host_broadcast=bool(getattr(host, "broadcast", False)),
+        host_http=http_enabled,
+        http_endpoints=http_ids,
     )
     return token
 
@@ -331,6 +341,40 @@ async def assistant_complete(payload: _CompletePayload, grant: BridgeGrant = Dep
     except CompletionError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"text": text}
+
+
+# ── http.request namespace (host-owned URL, credential, TLS, pinned dial) ─────
+
+
+class _HttpRequestPayload(BaseModel):
+    endpoint: str
+    method: str = "GET"
+    path: str = ""
+    query: dict[str, Any] | None = None
+    headers: dict[str, Any] | None = None
+    body: Any = None
+    body_encoding: str | None = None  # "base64" for binary uploads
+
+
+@bridge_app.post("/api/_host/http/request")
+async def http_request(payload: _HttpRequestPayload, grant: BridgeGrant = Depends(_require_grant)):
+    if not grant.host_http:
+        raise HTTPException(status_code=403, detail="module did not declare host.http")
+    from backend.modules._runtime import http_bridge
+    try:
+        return await http_bridge.request(grant.module_id, payload.model_dump(), grant.http_endpoints)
+    except http_bridge.HttpBridgeError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+@bridge_app.get("/api/_host/http/endpoints")
+async def http_endpoints(grant: BridgeGrant = Depends(_require_grant)):
+    """Grant summary for the worker: which endpoints it may call and with which
+    methods, so a module UI can hide controls the operator did not grant."""
+    if not grant.host_http:
+        return {"endpoints": []}
+    from backend.modules._runtime import http_bridge
+    return {"endpoints": http_bridge.grant_summary(grant.module_id, grant.http_endpoints)}
 
 
 # ── Loopback listener ─────────────────────────────────────────────────────────

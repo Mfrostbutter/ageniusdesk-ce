@@ -346,6 +346,19 @@ def _otel_token_ok(request) -> bool:
 
 
 @app.middleware("http")
+async def community_module_identity(request, call_next):
+    """Community routes: strip spoofable X-AGD-* headers, authorize by route
+    class, inject the trusted actor headers (same contract in every isolation
+    mode). See modules/_runtime/identity.py."""
+    if request.url.path.startswith("/api/"):
+        from backend.modules._runtime import identity as _identity
+        short = await _identity.apply(request)
+        if short is not None:
+            return short
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def require_internal_api_auth(request, call_next):
     """Require identity for internal API routes.
 

@@ -324,9 +324,12 @@ async def inspect(repo: str, ref: str = "main", path: str = "") -> dict[str, Any
             where = f"at '{path}'" if path else "at its root"
             raise RuntimeError(f"No valid manifest.json {where}")
         report = scan_module(module_root, manifest)
+        caps = manifest.capabilities
+        http_eps = [e.model_dump() for e in caps.host.http.endpoints] if caps and caps.host.http.enabled else []
         return {
             "manifest": manifest.model_dump(),
             "capabilities": manifest.capabilities.model_dump() if manifest.capabilities else None,
+            "http_endpoints": http_eps,
             "scan_report": report.model_dump(),
             "resolved_sha": resolved_sha,
             "repo": f"{owner}/{repo_name}",
@@ -348,6 +351,7 @@ async def install(
     approved_by: str = "",
     expected_id: str | None = None,
     path: str = "",
+    endpoints: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Install a community module from GitHub after inspection + consent.
 
@@ -360,6 +364,8 @@ async def install(
       approved_by: resolved identity of the operator (for the audit record)
       expected_id: if set, validates the downloaded manifest.id matches
       path: module subdir for a monorepo (blank = repo root)
+      endpoints: operator overrides per declared http.request endpoint,
+        {eid: {base_url, methods, verify_tls}}; seeds the effective config
 
     Returns a dict describing the installed module. Raises on failure.
     """
@@ -389,6 +395,14 @@ async def install(
         ok, reason = _consent_satisfied(report, manifest, consent)
         if not ok:
             raise RuntimeError(reason)
+
+        # Effective endpoint config is validated BEFORE any file moves so a bad
+        # override fails the install cleanly (nothing promoted, nothing seeded).
+        from backend.modules._runtime import endpoints as _endpoints
+        try:
+            _endpoints.seed(manifest, endpoints or {}, consented_by=approved_by, activate=True)
+        except (ValueError, _endpoints.EndpointConfigError) as e:
+            raise RuntimeError(f"endpoint configuration rejected: {e}")
 
         final_dir = _safe_community_dir(manifest.id)
         if final_dir.exists():
@@ -471,6 +485,11 @@ def uninstall(module_id: str) -> dict[str, Any]:
     lock = _load_lock()
     removed = lock.pop(module_id, None)
     _save_lock(lock)
+    try:
+        from backend.modules._runtime import endpoints as _endpoints
+        _endpoints.remove_module(module_id)
+    except Exception as e:  # pragma: no cover - best-effort cleanup
+        logger.warning("endpoint config cleanup for %s failed: %s", module_id, e)
 
     return {
         "id": module_id,

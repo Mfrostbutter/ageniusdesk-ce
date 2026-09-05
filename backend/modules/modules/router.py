@@ -140,6 +140,9 @@ class InstallPayload(BaseModel):
     resolved_sha: str | None = None  # the sha returned by /inspect (swapped-tag guard)
     consent: Consent = Consent()
     expected_id: str | None = None
+    # Per-endpoint effective config chosen in the consent modal:
+    # {eid: {base_url, methods, verify_tls}}. Missing = manifest defaults, read-only.
+    endpoints: dict[str, dict] = {}
 
 
 @router.post("/discover", dependencies=[Depends(require_role("operator"))])
@@ -189,9 +192,68 @@ async def install_module(payload: InstallPayload, request: Request):
             approved_by=approved_by,
             expected_id=payload.expected_id,
             path=payload.path,
+            endpoints=payload.endpoints,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── http.request endpoint config (effective, host-owned) ─────────────────────
+
+
+def _community_manifest(module_id: str):
+    entry = module_registry.get_registry().get(module_id)
+    if entry:
+        return entry.manifest
+    # Installed but not yet registered (restart pending): fall back to disk.
+    from backend.module_registry import COMMUNITY_MODULES_DIR, is_valid_module_id, load_manifest
+    mf = load_manifest(COMMUNITY_MODULES_DIR / module_id) if is_valid_module_id(module_id) else None
+    if mf is None:
+        raise HTTPException(status_code=404, detail="module_not_found")
+    return mf
+
+
+@router.get("/{module_id}/endpoints")
+async def list_endpoints(module_id: str):
+    """Effective http.request endpoint config for a module (operator view: base
+    URL, granted methods, pinned IPs, secret NAME). Never a secret value."""
+    from backend.modules._runtime import endpoints
+    manifest = _community_manifest(module_id)
+    return {"module_id": manifest.id, "endpoints": endpoints.operator_view(manifest.id)}
+
+
+class EndpointUpdate(BaseModel):
+    base_url: str | None = None
+    methods: list[str] | None = None
+    verify_tls: bool | None = None
+    consent: bool = False  # required when host/TLS/methods widen
+
+
+@router.put("/{module_id}/endpoints/{endpoint_id}", dependencies=[Depends(require_role("operator"))])
+async def update_endpoint(module_id: str, endpoint_id: str, payload: EndpointUpdate, request: Request):
+    from backend.modules._runtime import endpoints
+    manifest = _community_manifest(module_id)
+    user = await current_user(request)
+    try:
+        rev = endpoints.update(
+            manifest, endpoint_id,
+            base_url=payload.base_url, methods=payload.methods, verify_tls=payload.verify_tls,
+            consent=payload.consent, consented_by=(user or {}).get("username", "") or "anonymous",
+        )
+    except (ValueError, endpoints.EndpointConfigError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "endpoints": endpoints.operator_view(manifest.id), "revision": rev.get("revision")}
+
+
+@router.post("/{module_id}/endpoints/{endpoint_id}/repin", dependencies=[Depends(require_role("operator"))])
+async def repin_endpoint(module_id: str, endpoint_id: str):
+    from backend.modules._runtime import endpoints
+    manifest = _community_manifest(module_id)
+    try:
+        rev = endpoints.repin(manifest.id, endpoint_id)
+    except endpoints.EndpointConfigError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "pinned_ips": rev.get("pinned_ips", []), "revision": rev.get("revision")}
 
 
 @router.delete("/{module_id}", dependencies=[Depends(require_role("operator"))])

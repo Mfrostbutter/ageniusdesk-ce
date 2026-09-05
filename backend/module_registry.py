@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -126,10 +126,134 @@ class FilesystemCapability(BaseModel):
     read_paths: list[str] = Field(default_factory=list)
 
 
+ENDPOINT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+HTTP_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+ROLE_NAMES = ("viewer", "operator", "admin")
+
+
+class HttpAuthDecl(BaseModel):
+    """How the host injects a credential. Names a secret, never holds a value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["bearer", "header", "basic", "query"]
+    secret_ref: str = ""
+    header: str = "Authorization"   # header type
+    format: str = "{value}"         # header type
+    user: str = ""                  # basic type: literal user
+    user_ref: str = ""              # basic type: secret name for the user
+    param: str = "token"            # query type
+
+    @field_validator("secret_ref", "user_ref")
+    @classmethod
+    def _ref_is_name(cls, v: str) -> str:
+        v = (v or "").strip().lstrip("$")
+        if v and not re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*$", v):
+            raise ValueError(f"secret reference {v!r} must be a secret NAME")
+        return v
+
+
+def normalize_base_url(raw: str) -> str:
+    """Validate an endpoint base URL: http(s), host present, no userinfo, query,
+    or fragment. Returns it without a trailing slash."""
+    from urllib.parse import urlsplit
+
+    s = (raw or "").strip()
+    parts = urlsplit(s)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("base_url must start with http:// or https://")
+    if not parts.hostname:
+        raise ValueError("base_url must include a host")
+    if parts.username or parts.password or "@" in parts.netloc:
+        raise ValueError("base_url must not carry credentials")
+    if parts.query or parts.fragment:
+        raise ValueError("base_url must not carry a query or fragment")
+    if "\\" in s or "\x00" in s:
+        raise ValueError("base_url contains invalid characters")
+    return s.rstrip("/")
+
+
+def normalize_methods(methods: list[str] | None) -> list[str]:
+    out: list[str] = []
+    for m in methods or []:
+        mu = (m or "").strip().upper()
+        if mu not in HTTP_METHODS:
+            raise ValueError(f"unsupported HTTP method {m!r}")
+        if mu not in out:
+            out.append(mu)
+    return out or ["GET", "HEAD"]
+
+
+class HttpEndpointDecl(BaseModel):
+    """One operator-consented upstream the module may call via http.request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    base_url: str
+    auth: HttpAuthDecl | None = None
+    methods: list[str] = Field(default_factory=lambda: ["GET", "HEAD"])
+    verify_tls: bool = True
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        if not ENDPOINT_ID_RE.match(v or ""):
+            raise ValueError(f"invalid endpoint id {v!r}")
+        return v
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base(cls, v: str) -> str:
+        return normalize_base_url(v)
+
+    @field_validator("methods")
+    @classmethod
+    def _validate_methods(cls, v: list[str]) -> list[str]:
+        return normalize_methods(v)
+
+
+class HttpBridgeCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    endpoints: list[HttpEndpointDecl] = Field(default_factory=list)
+
+    @field_validator("endpoints")
+    @classmethod
+    def _unique_ids(cls, v: list[HttpEndpointDecl]) -> list[HttpEndpointDecl]:
+        seen: set[str] = set()
+        for ep in v:
+            if ep.id in seen:
+                raise ValueError(f"duplicate endpoint id {ep.id!r}")
+            seen.add(ep.id)
+        return v
+
+
 class HostBridgeCapability(BaseModel):
     # Host-bridge namespaces beyond notes the module may call under isolation.
+    # extra=forbid: an unknown host field must fail validation, never be ignored.
+    model_config = ConfigDict(extra="forbid")
+
     assistant: bool = False   # assistant.complete (tool-free LLM call; phase 4)
     broadcast: bool = False   # community:{id}: live events (future)
+    http: HttpBridgeCapability = Field(default_factory=HttpBridgeCapability)
+
+
+class RoutePolicyDecl(BaseModel):
+    """Minimum role for a family of module routes. Only raises the host floor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: str                      # path glob, e.g. /api/proxmox/guests/*
+    methods: list[str] = Field(default_factory=list)  # empty = all methods
+    min_role: Literal["viewer", "operator", "admin"] = "operator"
+
+    @field_validator("methods")
+    @classmethod
+    def _upper(cls, v: list[str]) -> list[str]:
+        return [m.strip().upper() for m in v if m and m.strip()]
 
 
 class Capabilities(BaseModel):
@@ -168,6 +292,9 @@ class ModuleManifest(BaseModel):
     # distinct from an explicit all-false Capabilities() which still declares the
     # author looked at it. The scanner treats both as the empty declaration.
     capabilities: Capabilities | None = None
+    # Host-side route authorization classes (see identity.py). Only raises the
+    # host default floor; never lowers it.
+    routes: list[RoutePolicyDecl] = Field(default_factory=list)
     # Optional detached signature over the manifest (base64). Key distribution is
     # out of scope for now; verification is best-effort/additive, and the field
     # shape is fixed here so authors can start signing. Absent = "unsigned".

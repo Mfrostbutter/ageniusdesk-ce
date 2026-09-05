@@ -48,6 +48,9 @@ An open-source command center for managing multiple n8n automation instances. MI
 - `notes` - markdown documents with metadata
 - Other tables - per-module state (insights aggregations, etc)
 
+**Community module host bridge:**
+Isolated workers reach the host only through `/api/_host/*` (`backend/modules/_runtime/bridge.py`). `http.request` (`http_bridge.py`) makes outbound calls on a module's behalf: the operator-consented endpoint config lives in `data/module-endpoints.json` (`endpoints.py`), never the manifest; the secret is resolved per call; the connection dials only pinned IPs. `identity.py` is the middleware that strips spoofable `X-AGD-*` headers, authorizes community routes by role, and stamps the trusted actor headers in every isolation mode. Build spec: `docs/specs/2026-09-05-host-http-bridge-build.md`.
+
 **Secret Resolution:**
 Environment variable first, then encrypted `data/secrets.json`. Secret refs like `$MY_KEY` resolve left-to-right; env var wins.
 
