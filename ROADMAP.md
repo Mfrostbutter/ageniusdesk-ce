@@ -4,7 +4,20 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
-## Current Release: v0.5.0 (2026-08-13)
+## Current Release: v0.6.0 (2026-09-06)
+
+v0.6 unlocks the credential-holding community-module quadrant: a module can now talk to an external service without ever holding the credential or opening its own connection, in any isolation tier. Highlights:
+
+- **`http.request` host bridge**: a module declares operator-consented endpoints; the host owns the base URL, injects the credential per call, decides the TLS policy, and dials only a pinned address. The whole REST quadrant of the Homelab Pack becomes safe under isolation instead of `in_process`-only.
+- **Trusted worker identity**: every community route is authorized by role (viewer reads, operator writes) and stamped with a spoof-proof actor; a browser cannot forge the `X-AGD-*` identity headers, and the module reads them for audit.
+- **Read-only endpoint grants**: the operator can hold a module to `GET`/`HEAD` at the host bridge, so a read-only install is enforced below what a compromised worker could reach, not just hidden in the UI.
+- **Proxmox ships as the first credential-holding community module**: nodes, VMs, and LXCs with live status and cluster health, plus gated power and provisioning, all through the bridge.
+- **Trace backfill, the PSA ticket sink, and a public agent-run API**: rebuild lost traces from n8n's own execution history, turn error groups into PSA tickets, and start any fleet agent over the versioned public API with MCP servers exposed as agent tools — the agentic-MSP seam.
+- **Instance rename and API-key rotation** on the Instances page, with a test-before-save probe.
+
+Full detail under "What shipped in v0.6.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
+
+## Previous Release: v0.5.0 (2026-08-13)
 
 v0.5 is about failures you cannot see and environments you could not previously move between. Highlights:
 
@@ -16,7 +29,7 @@ v0.5 is about failures you cannot see and environments you could not previously 
 
 Full detail under "What shipped in v0.5.0" below; see the [CHANGELOG](CHANGELOG.md) for the complete entry.
 
-## Previous Release: v0.4.4 (2026-07-06)
+## Earlier Release: v0.4.4 (2026-07-06)
 
 The v0.4.2 to v0.4.4 line hardens and extends the platform on top of the v0.4.0 agent layer. See the [CHANGELOG](CHANGELOG.md) for full detail.
 
@@ -81,6 +94,35 @@ Full detail and checkboxes are under "What shipped in v0.2.0" below; see the [CH
 - Comprehensive documentation and contributing guidelines
 
 ---
+
+## What shipped in v0.6.0
+
+The headline: a community module can reach an external service without ever holding the credential, and the agentic-MSP integration seam.
+
+### 1. `http.request` host bridge, trusted identity, read-only grants ([spec](docs/specs/2026-09-05-host-http-bridge-build.md))
+
+- [x] A module declares `capabilities.host.http.endpoints` (id, suggested base URL, an auth shape that names a secret, methods, TLS policy). The operator confirms or overrides the base URL at install and chooses whether the module may change data; **mutating methods are off by default**. The host persists the effective config as an endpoint revision in `data/module-endpoints.json` and pins the resolved IPs — the manifest is never the runtime source of truth.
+- [x] One request implementation for every isolation mode: isolated workers call `POST /api/_host/http/request`; in-process modules call the same code directly. Per call the host enforces the granted endpoint and method, validates the relative path, keeps the URL on the consented origin, drops any worker-supplied `Authorization`/`Host`/`Cookie`, resolves the secret at call time, dials only a pinned address (a host that resolves elsewhere fails closed pending re-pin), disables redirects, caps the body at 5 MB, and allowlists the echoed response headers. Unknown `host` manifest fields now fail validation instead of being ignored.
+- [x] **Trusted worker identity**: one middleware over every `/api/{community-module}/...` request strips inbound `X-AGD-*`, authorizes by route class (viewer reads, operator writes, raised by the manifest's `routes` block but never lowered), and stamps trusted `X-AGD-User` / `X-AGD-User-Id` / `X-AGD-Role` / `X-AGD-Auth-Source` for the module to audit against.
+- [x] **Read-only grants** enforced at the host: reducing an endpoint to `GET`/`HEAD` makes the bridge reject a mutating call even if the worker issues it directly. Settings > Modules gains an Upstream endpoints panel (status, base URL, granted methods, pinned IPs, configure, re-pin); the install consent modal shows each endpoint with a separate change-data acknowledgement.
+- [x] Scanner reports declared bridge use and `verify_tls: false` endpoints as INFO, undeclared use as HIGH. The reverse proxy now closes the upstream stream on success, upstream failure, and client disconnect, with regression tests for XLSX and ZIP downloads.
+
+### 2. Proxmox community module (first credential-holding module)
+
+- [x] Proxmox 0.2.0 in [`ageniusdesk-community-modules`](https://github.com/Mfrostbutter/ageniusdesk-community-modules) consumes the bridge: nodes, VMs, and LXCs with live status and cluster health, plus gated start/stop/reboot and provisioning. It holds no credential and opens no direct connection in any tier; the token is injected host-side. Sets `min_app_version` to 0.6.0 and drops its unrestricted network declaration. Verified end to end against a live four-node cluster.
+
+### 3. Agentic-MSP integration seam
+
+- [x] **Trace backfill** ([spec](docs/specs/2026-08-14-trace-backfill-from-execution-history.md)): rebuild missing traces from n8n's own execution records (per-node timing, status, item counts) so a receiver outage or a token drift is recoverable instead of a permanent hole. Rebuilt traces render, price, and run silent-failure detection like real ones; ids are deterministic and real telemetry always outranks a reconstruction. On-demand over a range in v1 (`GET/POST /api/otel/backfill/*`, a **Rebuild traces** action on Observe).
+- [x] **Ticket sink** (built-in, off by default): files one PSA ticket per error group through an itops-mcp tool plane, a throttled Internal reply on recurrence, and re-arms with a referencing ticket after closure. Group-to-ticket state is a new table; the hook into error ingest is fire-and-forget.
+- [x] **Public run-start API + MCP servers as fleet tools**: start any registered fleet agent by id over the versioned public API (`X-API-Key`, trigger scope, shared single-flight with the dashboard), and let vault agents declare `mcp__{server}__{tool}` names that resolve to discovered MCP-server tools (bearer via Secrets refs). MCP servers can be registered with an explicit slug id so those names are stable across installs.
+- [x] **HITL resume carries the reviewer's identity**: `POST /api/agent-fleet/runs/{id}/resume` threads a `by` field into the decision, so an attributed gate records who approved instead of a fallback.
+
+### 4. Fleet and reliability
+
+- [x] **Instance rename and API-key rotation** on the Instances page: rename touches nothing else; rotation tests the new key against the instance (honoring per-instance TLS) before saving, and the old key stays valid in n8n until revoked there.
+- [x] The built-in **MCP server no longer disappears from fresh builds**: the `mcp` pin gained an upper bound and the image now builds from the committed lockfile, so the shipped artifact is the tested dependency set.
+- [x] A **built-in module that fails to load says so** (ERROR with traceback, re-stated after the module roster), and **Observe distinguishes "no traces anywhere" from "none from this instance"** with a per-instance span badge and targeted setup instructions.
 
 ## What shipped in v0.5.0
 
@@ -217,9 +259,9 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
   - [ ] **Dead-man's-switch, layer 2 (the workflow never fired at all)**: an external heartbeat, since nothing inside n8n can observe its own absence (schedule missed, instance down). Specced, not yet built: [spec](docs/specs/2026-07-11-heartbeat-dead-mans-switch-layer-2.md).
   - [ ] **Configurable expected-output thresholds**: a per-node declared output floor/range so "returned 10, always returns 100" fires explicitly rather than only via the learned drop heuristic. Config on the node, policy defaults roll down from the workspace, and values are suggested from history (one-click accept, only prompting the steady producers that matter) so per-node config scales. Doubles as the per-node override for cases history infers wrong.
   - [ ] **Upstream n8n OTel error semantics** (feature request): get the continued error onto the OpenTelemetry span (standard exception attributes plus span status) so any backend can read it, since n8n currently holds the typed error and then exports the Continue-On-Fail span as OK. Would make detection easier for the whole ecosystem, not just AgeniusDesk. AGD's consumer side is ready: detection prefers the typed `taskData.continuation` rollup a patched n8n records and gates the unsound content-scan behind `AGD_HEALTH_SCAN_LOOSE_JSON_ERROR`, so a patched instance drops the loose-`json.error` false positives. The upstream PR (engine-level continued-error signal) is in review.
-- [x] **Trace backfill from execution history** (Phase 1 shipped, unreleased; Phase 2 gap-fill open) ([spec](docs/specs/2026-08-14-trace-backfill-from-execution-history.md)): rebuild missing traces from n8n's own execution records, so a receiver outage, a token drift, or an instance wired late is recoverable instead of a permanent hole. n8n stores per-node `startTime` / `executionTime` / status / item counts for every run, which is a 1:1 match for the span shape the waterfall needs, and the API already returns it un-flattened through the same fetch path cost and health enrichment use. Phase 1 is an on-demand rebuild over a range (the recovery case); phase 2 is an opt-in scheduled gap-fill that reconciles anything live export dropped, which makes OTLP ingest best-effort. Bounded by the span retention window in v1.
-- [x] **Public run-start API + MCP tools for fleet agents**: start any registered fleet agent by id over the versioned public API (API-key auth, trigger scope, shared single-flight semantics with the dashboard), and let vault agents declare `mcp__{server}__{tool}` names (legacy colon form normalized) that resolve to discovered MCP-server tools (bearer via Secrets-store refs); MCP servers can be registered with an explicit slug id so those names are stable across installs. Together with the ticket sink below, this is the agentic-MSP integration seam. Shipped, unreleased — see CHANGELOG.
-- [x] **Ticket sink (error groups become PSA tickets)**: a built-in module (off by default) that files one PSA ticket per error group via an itops-mcp tool plane — create on a new group, throttled Internal reply on recurrence, re-arm with a referencing ticket after closure. First-class piece of the agentic MSP loop: the PSA holds the human-facing record, AgeniusDesk holds the grouping and dedup state. Shipped, unreleased — see CHANGELOG.
+- [x] **Trace backfill from execution history** (Phase 1 shipped in v0.6.0; Phase 2 gap-fill open) ([spec](docs/specs/2026-08-14-trace-backfill-from-execution-history.md)): rebuild missing traces from n8n's own execution records, so a receiver outage, a token drift, or an instance wired late is recoverable instead of a permanent hole. n8n stores per-node `startTime` / `executionTime` / status / item counts for every run, which is a 1:1 match for the span shape the waterfall needs, and the API already returns it un-flattened through the same fetch path cost and health enrichment use. Phase 1 is an on-demand rebuild over a range (the recovery case); phase 2 is an opt-in scheduled gap-fill that reconciles anything live export dropped, which makes OTLP ingest best-effort. Bounded by the span retention window in v1.
+- [x] **Public run-start API + MCP tools for fleet agents** (shipped in v0.6.0): start any registered fleet agent by id over the versioned public API (API-key auth, trigger scope, shared single-flight semantics with the dashboard), and let vault agents declare `mcp__{server}__{tool}` names (legacy colon form normalized) that resolve to discovered MCP-server tools (bearer via Secrets-store refs); MCP servers can be registered with an explicit slug id so those names are stable across installs. Together with the ticket sink below, this is the agentic-MSP integration seam. Shipped in v0.6.0 — see CHANGELOG.
+- [x] **Ticket sink (error groups become PSA tickets)**: a built-in module (off by default) that files one PSA ticket per error group via an itops-mcp tool plane — create on a new group, throttled Internal reply on recurrence, re-arm with a referencing ticket after closure. First-class piece of the agentic MSP loop: the PSA holds the human-facing record, AgeniusDesk holds the grouping and dedup state. Shipped in v0.6.0 — see CHANGELOG.
 - [ ] **Workflow security audit scan**: detect missing error handlers, unused credentials, exposed webhooks (this audits n8n workflows; distinct from the community-module code scanner in v0.2)
 - [ ] **Project landing page**: a public web page introducing AgeniusDesk CE (overview, screenshots, install, docs and repo links)
 
@@ -261,10 +303,10 @@ plane." Full landscape, per-candidate buildability verdicts, and the pack conten
 
 Two **host investments** gate the whole quadrant (do these before the modules):
 
-- [ ] **`http.request` bridge** (highest leverage): host-mediated outbound HTTP with the credential injected host-side, so a credential-holding module is safe under isolation instead of `in_process`-only. Unlocks the entire REST quadrant — Cloudflare, NocoDB/Baserow/Airtable, Qdrant, object storage, Uptime Kuma, **Proxmox**, **Home Assistant**, reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, TrueNAS — at once. [Spec](docs/specs/2026-06-28-http-request-bridge.md).
-- [ ] **Fleet Health contribution API**: let a loaded module publish `{label, status, metrics}` rows that `fleet_health()` merges, so module health (cluster nodes, queue workers, NAS disks, tunnel status) renders in the Fleet Health pane.
+- [x] **`http.request` bridge** (highest leverage): host-mediated outbound HTTP with the credential injected host-side, so a credential-holding module is safe under isolation instead of `in_process`-only. **Shipped in v0.6.0**, with trusted worker identity and read-only endpoint grants ([build spec](docs/specs/2026-09-05-host-http-bridge-build.md)); Proxmox is the first module on it. Unlocks the rest of the REST quadrant — Cloudflare, NocoDB/Baserow/Airtable, Qdrant, object storage, Uptime Kuma, **Home Assistant**, reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, TrueNAS.
+- [ ] **Fleet Health contribution API**: let a loaded module publish `{label, status, metrics}` rows that `fleet_health()` merges, so module health (cluster nodes, queue workers, NAS disks, tunnel status) renders in the Fleet Health pane. The Proxmox module already serves a `/fleet-health` rows endpoint; the remaining work is host-side aggregation of module rows into the pane.
 
-**Homelab Pack v1 core**: Proxmox, Remote Docker/Portainer, NAS health (TrueNAS), Uptime Kuma, Cloudflare, Home Assistant. **Extended**: reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, Authentik. Distributed via the existing bundle mechanism.
+**Homelab Pack v1 core**: Proxmox (**shipped** — first credential-holding community module on the http.request bridge), Remote Docker/Portainer, NAS health (TrueNAS), Uptime Kuma, Cloudflare, Home Assistant. **Extended**: reverse proxy, Pi-hole/AdGuard, Tailscale/NetBird, Authentik. Distributed via the existing bundle mechanism.
 
 The **Redis/queue monitor** and a **database viewer** are wanted but hit the native-wire-protocol wall (no driver delivered by the installer); the DB viewer is better as a built-in. Tracked in the candidates doc.
 
