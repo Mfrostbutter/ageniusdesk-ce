@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import secrets
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -84,14 +85,50 @@ def inject_identity(scope: dict, user: dict) -> None:
     ]
 
 
-async def resolve_identity(request: Request) -> dict | None:
-    """Host identity, or the open-install synthetic admin, or None."""
+# A per-process secret an in-process host collector puts on its own self-call
+# (see modules/_runtime/contrib.py) to authorize the read as a non-interactive
+# system actor. It never leaves the process and is never sent to a browser; the
+# middleware reads it before stripping X-AGD-* and drops it, so a worker never
+# sees it. A browser cannot forge it — it does not know the value.
+INTERNAL_HEADER = "x-agd-internal-token"
+_INTERNAL_TOKEN = secrets.token_urlsafe(32)
+_SYSTEM_ACTOR = {"username": "agd-system", "user_id": "agd-system", "source": "internal"}
+
+
+def internal_headers(role: str = "viewer") -> dict[str, str]:
+    """Headers a host self-call sets to read a community route as the system
+    actor at `role`. In-process use only."""
+    return {INTERNAL_HEADER: _INTERNAL_TOKEN, HDR_ROLE: role}
+
+
+def has_internal_token(request: Request) -> bool:
+    """True if this request carries the process internal token. Lets the generic
+    internal-api gate pass a host self-call through regardless of middleware
+    order; the community identity middleware still strips it and injects the
+    system actor."""
+    return secrets.compare_digest(request.headers.get(INTERNAL_HEADER, ""), _INTERNAL_TOKEN)
+
+
+def _internal_role(request: Request) -> str | None:
+    """The system-actor role if this request carries the process internal token,
+    else None. Read before the X-AGD-* strip."""
+    if not secrets.compare_digest(request.headers.get(INTERNAL_HEADER, ""), _INTERNAL_TOKEN):
+        return None
+    role = request.headers.get(HDR_ROLE, "viewer").strip().lower()
+    return role if role in _ROLE_ORDER else "viewer"
+
+
+async def resolve_identity(request: Request, internal_role: str | None = None) -> dict | None:
+    """Host identity, an internal system actor, the open-install synthetic admin,
+    or None."""
     from backend.auth_gate import current_user, login_enforced
     from backend.config import settings
 
     user = await current_user(request)
     if user is not None:
         return user
+    if internal_role is not None:
+        return {**_SYSTEM_ACTOR, "role": internal_role}
     if not login_enforced() and not settings.agd_require_auth:
         return {"username": "anonymous", "source": "open", "role": "admin", "email": None}
     return None
@@ -103,11 +140,14 @@ async def apply(request: Request) -> JSONResponse | None:
     module_id = community_module_id(request.url.path)
     if module_id is None:
         return None
+    # Read the process internal token (if any) BEFORE the strip removes it, so a
+    # host self-call is recognized and the worker never sees the token.
+    internal_role = _internal_role(request)
     strip_trusted_headers(request.scope)
     entry = module_registry.get_registry().get(module_id)
     manifest = entry.manifest if entry else None
     required = min_role_for(manifest, request.method, request.url.path)
-    user = await resolve_identity(request)
+    user = await resolve_identity(request, internal_role=internal_role)
     if user is None:
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
     if _ROLE_ORDER.get(user.get("role", "viewer"), 0) < _ROLE_ORDER.get(required, 3):

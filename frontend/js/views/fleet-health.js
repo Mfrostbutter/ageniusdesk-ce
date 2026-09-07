@@ -61,6 +61,53 @@ function instanceCard(inst) {
     </div>`;
 }
 
+// A row contributed by a community module (Proxmox cluster, etc). Same visual
+// language as an instance card so the pane reads as one fleet, not two lists.
+function moduleRowCard(row) {
+  const name = row.label || row.id || row.module_name || row.module || 'unknown';
+  const badge = row.module_name || row.module || '';
+  if (row.reachable === false) {
+    return `
+      <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-left:3px solid #ff6d5a;border-radius:var(--radius);padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <strong style="font-size:14px">${esc(name)}</strong>
+          <span class="badge" style="background:#ff6d5a22;color:#ff6d5a;border:1px solid #ff6d5a55;font-size:11px">${esc(row.error || 'unreachable')}</span>
+        </div>
+        ${badge ? `<div style="font-size:11px;opacity:0.5;margin-top:6px">${esc(badge)}</div>` : ''}
+      </div>`;
+  }
+  const statusColor = { ok: '#34d399', healthy: '#34d399', warn: '#fbbf24', degraded: '#fbbf24', error: '#ff6d5a', down: '#ff6d5a' }[String(row.status || '').toLowerCase()] || '#60a5fa';
+  const metrics = (row.metrics || []).map(m =>
+    `<div><div style="font-size:20px;font-weight:700">${esc(m.value)}</div><div style="font-size:11px;opacity:0.6">${esc(m.label)}</div></div>`).join('');
+  return `
+    <div style="background:var(--bg-panel);border:1px solid var(--border-dim);border-left:3px solid ${statusColor};border-radius:var(--radius);padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
+        <strong style="font-size:14px">${esc(name)}${badge ? ` <span style="font-size:10px;opacity:0.55;font-weight:400">${esc(badge)}</span>` : ''}</strong>
+        ${row.status ? `<span class="badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}55;font-size:11px">${esc(row.status)}</span>` : ''}
+        ${row.detail_url ? `<a href="${attr(row.detail_url)}" target="_blank" style="font-size:11px;color:var(--accent,#60a5fa)">open ↗</a>` : ''}
+      </div>
+      ${metrics ? `<div style="display:grid;grid-template-columns:repeat(${Math.min((row.metrics || []).length, 3)},1fr);gap:8px;text-align:center">${metrics}</div>` : ''}
+    </div>`;
+}
+
+async function loadModuleContributions(content) {
+  // Additive and non-fatal: the n8n fleet is the pane, module rows enrich it.
+  let data;
+  try {
+    data = await get('/api/modules/fleet-health');
+  } catch {
+    return;
+  }
+  const rows = (data && data.rows) || [];
+  if (!rows.length) return;
+  const section = document.createElement('div');
+  section.style.marginTop = '20px';
+  section.innerHTML = `
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.5;margin-bottom:8px">Modules</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">${rows.map(moduleRowCard).join('')}</div>`;
+  content.appendChild(section);
+}
+
 async function loadHealth(content) {
   content.innerHTML = '<div class="spinner"></div>';
   try {
@@ -70,6 +117,7 @@ async function loadHealth(content) {
     _instMap = Object.fromEntries(insts.map(i => [i.id, { name: i.name || i.id, color: i.color || '#60a5fa' }]));
     if (!insts.length) {
       content.innerHTML = `<div style="opacity:0.6;font-size:13px">No instances configured. Add one under Instances.</div>`;
+      await loadModuleContributions(content);
       return;
     }
     const trc = rateColor(t.error_rate || 0);
@@ -88,6 +136,7 @@ async function loadHealth(content) {
           </div>`).join('')}
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">${insts.map(instanceCard).join('')}</div>`;
+    await loadModuleContributions(content);
   } catch (e) {
     content.innerHTML = `<div class="error-banner">Failed to load fleet health: ${esc(e.message)}</div>`;
   }

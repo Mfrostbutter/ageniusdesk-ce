@@ -272,6 +272,20 @@ class Capabilities(BaseModel):
     host: HostBridgeCapability = Field(default_factory=HostBridgeCapability)
 
 
+class ContributesDecl(BaseModel):
+    """Host panes a module feeds. Each value is a subpath under the module's API
+    prefix (/api/{id}/...) returning the pane's expected shape. The host calls it
+    read-only through one authenticated in-process request (same in every
+    isolation mode) and degrades per-module, so a broken contributor never sinks
+    the pane it feeds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # GET {subpath} -> {"rows": [{label, status, metrics:[{label,value}], ...}]}
+    # merged into Fleet Health. Empty = no contribution.
+    fleet_health: str = ""
+
+
 class ModuleManifest(BaseModel):
     id: str
     name: str
@@ -295,6 +309,8 @@ class ModuleManifest(BaseModel):
     # Host-side route authorization classes (see identity.py). Only raises the
     # host default floor; never lowers it.
     routes: list[RoutePolicyDecl] = Field(default_factory=list)
+    # Host panes this module feeds (see ContributesDecl). None = feeds nothing.
+    contributes: ContributesDecl | None = None
     # Optional detached signature over the manifest (base64). Key distribution is
     # out of scope for now; verification is best-effort/additive, and the field
     # shape is fixed here so authors can start signing. Absent = "unsigned".

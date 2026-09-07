@@ -369,6 +369,14 @@ async def require_internal_api_auth(request, call_next):
     path = request.url.path
     if not path.startswith("/api/"):
         return await call_next(request)
+    # A host self-call into a community route (fleet-health collector) carries the
+    # process internal token, or was already authorized by the community identity
+    # middleware (which stamps agd_identity). Trust either rather than demanding a
+    # browser session; the identity middleware still strips the token and injects
+    # the system actor. Order-independent by checking both.
+    from backend.modules._runtime import identity as _identity
+    if request.scope.get("agd_identity") is not None or _identity.has_internal_token(request):
+        return await call_next(request)
     if path in _PUBLIC_API_EXACT or any(path.startswith(p) for p in _PUBLIC_API_PREFIXES):
         return await call_next(request)
     if path in _LEGACY_WEBHOOK_EXACT:

@@ -106,6 +106,16 @@ async def set_isolation(payload: IsolationPayload):
     return {"ok": True, "configured": mode, "restart_required": True}
 
 
+@router.get("/fleet-health")
+async def fleet_health_contributions():
+    """Aggregate fleet-health rows from every loaded community module that
+    declares a `contributes.fleet_health` endpoint. Read-only, degrade-not-fatal;
+    the Fleet Health pane renders these next to the n8n instances. Declared
+    before /{module_id} so the literal path is not swallowed by the wildcard."""
+    from backend.modules._runtime import contrib
+    return await contrib.collect_fleet_health()
+
+
 @router.get("/{module_id}")
 async def get_module(module_id: str):
     entry = module_registry.get_registry().get(module_id)
