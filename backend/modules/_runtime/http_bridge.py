@@ -83,7 +83,15 @@ def validate_rel_path(path: str) -> str:
 def build_url(base_url: str, rel: str, query: dict | None) -> str:
     url = base_url + (rel if rel else "")
     if query:
-        qs = urllib.parse.urlencode({str(k): str(v) for k, v in query.items()})
+        # A list/tuple value repeats the key (e.g. group_by[]=model&group_by[]=user),
+        # which several provider APIs require; a scalar is coerced to str.
+        pairs: list[tuple[str, str]] = []
+        for k, v in query.items():
+            if isinstance(v, (list, tuple)):
+                pairs.extend((str(k), str(item)) for item in v)
+            else:
+                pairs.append((str(k), str(v)))
+        qs = urllib.parse.urlencode(pairs)
         if qs:
             url += "?" + qs
     b, u = urllib.parse.urlsplit(base_url), urllib.parse.urlsplit(url)

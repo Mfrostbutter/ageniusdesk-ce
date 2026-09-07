@@ -173,6 +173,14 @@ def test_build_url_pins_origin():
     assert http_bridge.build_url(BASE, "", None) == BASE
 
 
+def test_build_url_repeats_list_query_params():
+    # A list value repeats the key (group_by[]=model&group_by[]=user), which the
+    # provider admin usage APIs require; a scalar alongside still encodes.
+    url = http_bridge.build_url(BASE, "/usage", {"group_by[]": ["model", "user"], "limit": 31})
+    assert "group_by%5B%5D=model" in url and "group_by%5B%5D=user" in url
+    assert "limit=31" in url
+
+
 def test_header_sanitation_drops_auth_host_cookie_and_hop_by_hop():
     out = http_bridge.sanitize_headers({
         "Authorization": "Bearer mine", "Host": "evil", "Cookie": "a=b", "Content-Length": "3",

@@ -272,18 +272,34 @@ class Capabilities(BaseModel):
     host: HostBridgeCapability = Field(default_factory=HostBridgeCapability)
 
 
+class DashboardCardDecl(BaseModel):
+    """A pinnable Main Dashboard card a module contributes. The host adds it to
+    the widget picker (id `module:{module_id}:{id}`) and renders it host-side from
+    the JSON its `data` subpath returns; a browser session authorizes the read."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str                              # slug, unique within the module
+    title: str
+    size: Literal["half", "full"] = "half"
+    # GET {data} -> {title?, metrics:[{label,value,sub?}], rows?, link?, footer?}
+    data: str
+
+
 class ContributesDecl(BaseModel):
     """Host panes a module feeds. Each value is a subpath under the module's API
     prefix (/api/{id}/...) returning the pane's expected shape. The host calls it
-    read-only through one authenticated in-process request (same in every
-    isolation mode) and degrades per-module, so a broken contributor never sinks
-    the pane it feeds."""
+    read-only through one authenticated request (same in every isolation mode)
+    and degrades per-module, so a broken contributor never sinks the pane it
+    feeds."""
 
     model_config = ConfigDict(extra="forbid")
 
     # GET {subpath} -> {"rows": [{label, status, metrics:[{label,value}], ...}]}
     # merged into Fleet Health. Empty = no contribution.
     fleet_health: str = ""
+    # Pinnable Main Dashboard cards (see DashboardCardDecl).
+    dashboard_cards: list[DashboardCardDecl] = Field(default_factory=list)
 
 
 class ModuleManifest(BaseModel):

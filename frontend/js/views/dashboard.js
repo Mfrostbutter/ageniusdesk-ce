@@ -27,6 +27,35 @@ const WIDGETS = {
 const DEFAULT_LAYOUT = ['stats', 'timeline', 'errors', 'health', 'instances'];
 const STORAGE_KEY = 'agd-dashboards';
 
+// Module-contributed cards. A community module declares
+// contributes.dashboard_cards in its manifest; each becomes a pinnable widget
+// (id `module:{moduleId}:{cardId}`) rendered host-side from the JSON its data
+// endpoint returns. Registered into WIDGETS before the grid renders so a saved
+// layout keeps them; a card for an uninstalled module drops out cleanly.
+async function loadModuleWidgets() {
+  let mods;
+  try {
+    mods = (await get('/api/modules')).modules || [];
+  } catch {
+    return; // module cards are additive; the core dashboard never depends on them
+  }
+  for (const m of mods) {
+    if (m.status !== 'loaded' && m.status !== 'missing_secrets') continue;
+    const mid = m.manifest?.id;
+    const cards = m.manifest?.contributes?.dashboard_cards || [];
+    for (const c of cards) {
+      if (!mid || !c?.id || !c?.data) continue;
+      const dataPath = `/api/${mid}/${String(c.data).replace(/^\/+/, '')}`;
+      WIDGETS[`module:${mid}:${c.id}`] = {
+        id: `module:${mid}:${c.id}`,
+        title: c.title || c.id,
+        size: c.size === 'full' ? 'full' : 'half',
+        render: (el) => mountModuleCard(el, dataPath, `community:${mid}`),
+      };
+    }
+  }
+}
+
 // ── Dashboard storage ────────────────────────────────────────────────────────
 
 export function getDashboards() {
@@ -135,6 +164,7 @@ export async function render(container) {
   // Setup Journey card (self-hides once core setup is done or dismissed).
   getstarted.mount(container.querySelector('#getstarted-slot'));
 
+  await loadModuleWidgets();
   const grid = container.querySelector('#widget-grid');
   renderWidgetGrid(grid, dashId);
   initWidgetDnD(grid, dashId);
@@ -441,6 +471,44 @@ function openAddWidgetModal(dashId) {
 }
 
 // ── Widget mount functions ───────────────────────────────────────────────────
+
+// Generic renderer for a module-contributed card. The module owns the shape:
+// {title?, metrics:[{label,value,sub?}], rows?:[{label,value,sub?}], footer?, link?}.
+function moduleCardHtml(data, navKey) {
+  const metrics = (data.metrics || []).map(m => `
+    <div style="text-align:center">
+      <div style="font-size:20px;font-weight:700">${esc(m.value)}</div>
+      <div style="font-size:11px;color:var(--text-secondary)">${esc(m.label)}</div>
+      ${m.sub ? `<div style="font-size:10px;opacity:0.55">${esc(m.sub)}</div>` : ''}
+    </div>`).join('');
+  const rows = (data.rows || []).map(r => `
+    <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:4px 0;border-top:1px solid var(--border-dim)">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label)}</span>
+      <span style="flex-shrink:0;font-weight:600">${esc(r.value)}${r.sub ? ` <span style="opacity:0.5;font-weight:400">${esc(r.sub)}</span>` : ''}</span>
+    </div>`).join('');
+  const link = data.link || navKey;
+  return `
+    ${metrics ? `<div style="display:grid;grid-template-columns:repeat(${Math.min((data.metrics || []).length, 3)},1fr);gap:10px;margin-bottom:${rows ? '10px' : '0'}">${metrics}</div>` : ''}
+    ${rows || ''}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:11px;color:var(--text-dim)">
+      <span>${esc(data.footer || '')}</span>
+      ${link ? `<a href="#" class="module-card-open" data-nav="${attr(link)}" style="color:var(--accent,#60a5fa)">open ↗</a>` : ''}
+    </div>`;
+}
+
+function mountModuleCard(el, dataPath, navKey) {
+  el.innerHTML = `<div class="spinner"></div>`;
+  get(dataPath).then(data => {
+    el.innerHTML = moduleCardHtml(data || {}, navKey);
+    el.querySelector('.module-card-open')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const key = e.currentTarget.dataset.nav;
+      if (key && window.__nav) window.__nav(key);
+    });
+  }).catch(e => {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-dim);padding:8px 4px">Card unavailable: ${esc(e.message)}</div>`;
+  });
+}
 
 function mountStats(el) {
   el.innerHTML = `<div class="grid-5" id="stats-grid"></div>`;
