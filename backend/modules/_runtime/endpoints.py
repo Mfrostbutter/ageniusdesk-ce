@@ -132,9 +132,16 @@ def _build_revision(
     status: str,
     consented_by: str,
     revision: int,
+    secret_ref: str | None = None,
 ) -> dict[str, Any]:
     host, port, _ = host_of(base_url)
     pinned = resolve_ips(host, port) if status == STATUS_ACTIVE else []
+    # The module declares the auth SHAPE (type, header, format); the operator may
+    # override only WHICH stored secret it resolves. The secret VALUE is never
+    # stored here, only its name.
+    auth = decl.auth.model_dump() if decl.auth else None
+    if auth is not None and secret_ref:
+        auth["secret_ref"] = secret_ref
     return {
         "revision": revision,
         "status": status,
@@ -142,12 +149,16 @@ def _build_revision(
         "declared_methods": list(decl.methods),
         "methods": methods,
         "verify_tls": bool(verify_tls),
-        "auth": decl.auth.model_dump() if decl.auth else None,
+        "auth": auth,
         "pinned_host": host,
         "pinned_ips": pinned,
         "consented_by": consented_by,
         "consented_at": _now() if status == STATUS_ACTIVE else "",
     }
+
+
+def _secret_ref_of(rev: dict[str, Any]) -> str:
+    return (rev.get("auth") or {}).get("secret_ref", "")
 
 
 def _declared(manifest: ModuleManifest) -> list[HttpEndpointDecl]:
@@ -201,8 +212,10 @@ def seed(
                 status=STATUS_ACTIVE if activate else STATUS_PENDING,
                 consented_by=consented_by,
                 revision=int(prev.get("revision", 0)) + 1,
+                secret_ref=ov.get("secret_ref"),
             )
-            # Preserve declared auth on re-seed; secrets are never stored here.
+            # The module declares the auth shape; only which secret it resolves is
+            # operator-configurable. The secret VALUE is never stored here.
         # Drop revisions for endpoints the manifest no longer declares.
         declared_ids = {d.id for d in _declared(manifest)}
         for eid in list(mod):
@@ -236,12 +249,13 @@ def update(
     base_url: str | None = None,
     methods: list[str] | None = None,
     verify_tls: bool | None = None,
+    secret_ref: str | None = None,
     consent: bool = False,
     consented_by: str = "",
 ) -> dict[str, Any]:
-    """Operator update. Any host/TLS/method widening starts a new consented
-    revision (requires consent=True); a reduction is applied in place as a new
-    revision without the consent flag."""
+    """Operator update. Any host/TLS/method widening or a credential (secret)
+    change starts a new consented revision (requires consent=True); a reduction
+    is applied in place as a new revision without the consent flag."""
     decl = next((d for d in _declared(manifest) if d.id == endpoint_id), None)
     if decl is None:
         raise EndpointConfigError(f"endpoint {endpoint_id!r} is not declared by module {manifest.id!r}")
@@ -255,7 +269,13 @@ def update(
         new_base = normalize_base_url(base_url) if base_url is not None else current["base_url"]
         new_methods = effective_methods(decl.methods, methods) if methods is not None else list(current["methods"])
         new_verify = bool(verify_tls) if verify_tls is not None else bool(current["verify_tls"])
+        cur_secret = _secret_ref_of(current)
+        new_secret = secret_ref.strip() if secret_ref is not None else cur_secret
+        if secret_ref is not None and not decl.auth:
+            raise EndpointConfigError("this endpoint declares no auth; a secret cannot be set")
         reasons = needs_consent(current, base_url=new_base, methods=new_methods, verify_tls=new_verify)
+        if new_secret != cur_secret:
+            reasons.append("credential (secret) changed")
         if reasons and not consent:
             raise EndpointConfigError("consent required: " + "; ".join(reasons))
         mod[endpoint_id] = _build_revision(
@@ -266,6 +286,7 @@ def update(
             status=STATUS_ACTIVE,
             consented_by=consented_by or current.get("consented_by", ""),
             revision=int(current.get("revision", 0)) + 1,
+            secret_ref=new_secret or None,
         )
         _save(data)
         return dict(mod[endpoint_id])

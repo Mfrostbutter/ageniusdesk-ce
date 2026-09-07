@@ -146,6 +146,27 @@ def test_widening_requires_consent_reduction_does_not(store, active):
     assert rev["revision"] > 1
 
 
+def test_operator_can_choose_the_secret(store, active):
+    m = _manifest()
+    # Default comes from the manifest.
+    assert store.operator_view("proxmox")[0]["secret_ref"] == "PROXMOX_TOKEN"
+    # Changing which secret the endpoint uses needs consent.
+    with pytest.raises(store.EndpointConfigError, match="credential"):
+        store.update(m, "proxmox", secret_ref="PROXMOX_READONLY_TOKEN")
+    rev = store.update(m, "proxmox", secret_ref="PROXMOX_READONLY_TOKEN", consent=True)
+    assert store.operator_view("proxmox")[0]["secret_ref"] == "PROXMOX_READONLY_TOKEN"
+    # The auth SHAPE (header/format) is preserved; only the secret name changed.
+    assert rev["auth"]["header"] == "Authorization" and rev["auth"]["secret_ref"] == "PROXMOX_READONLY_TOKEN"
+    # A later unrelated change keeps the chosen secret without re-consenting the secret.
+    rev2 = store.update(m, "proxmox", methods=["GET"])
+    assert rev2["auth"]["secret_ref"] == "PROXMOX_READONLY_TOKEN"
+
+
+def test_seed_accepts_secret_ref_override(store):
+    revs = store.seed(_manifest(), {"proxmox": {"secret_ref": "ALT_TOKEN"}}, activate=True)
+    assert revs["proxmox"]["auth"]["secret_ref"] == "ALT_TOKEN"
+
+
 def test_summary_never_exposes_secret_ref_or_ips(store, active):
     s = store.summary("proxmox")[0]
     assert set(s) == {"id", "status", "methods", "declared_methods", "verify_tls", "host", "revision", "pinned"}

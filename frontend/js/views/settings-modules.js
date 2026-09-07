@@ -452,6 +452,9 @@ function endpointConsentList(eps) {
         <div style="font-size:12px;margin-bottom:6px"><strong>${esc(ep.id)}</strong> · reads ${secret}${tls}</div>
         <label style="font-size:11px;opacity:0.7">Base URL (the module only supplies relative paths under it)</label>
         <input class="input ep-base" data-ep="${attr(ep.id)}" value="${attr(ep.base_url || '')}" style="width:100%;margin-top:2px">
+        ${ep.auth?.secret_ref ? `
+        <label style="font-size:11px;opacity:0.7;display:block;margin-top:8px">Secret name (choose which stored secret this key comes from)</label>
+        <input class="input ep-secret" data-ep="${attr(ep.id)}" value="${attr(ep.auth.secret_ref)}" autocomplete="off" spellcheck="false" style="width:100%;margin-top:2px">` : ''}
         ${mutHtml}
       </div>`;
   }).join('');
@@ -463,7 +466,10 @@ function readEndpointChoices(root, eps) {
     const base = root.querySelector(`.ep-base[data-ep="${CSS.escape(ep.id)}"]`)?.value.trim() || ep.base_url;
     const allowMut = !!root.querySelector(`.ep-allow-mut[data-ep="${CSS.escape(ep.id)}"]`)?.checked;
     const methods = (ep.methods || []).filter(m => allowMut || !MUTATING.includes(m));
-    out[ep.id] = { base_url: base, methods, verify_tls: ep.verify_tls !== false };
+    const choice = { base_url: base, methods, verify_tls: ep.verify_tls !== false };
+    const secret = root.querySelector(`.ep-secret[data-ep="${CSS.escape(ep.id)}"]`)?.value.trim();
+    if (secret) choice.secret_ref = secret;
+    out[ep.id] = choice;
   }
   return out;
 }
@@ -538,12 +544,17 @@ function configureEndpointModal(moduleId, ep) {
         <input id="cfg-base" class="input" value="${attr(ep.base_url || '')}" style="width:100%;margin:2px 0 10px">
         <div style="font-size:11px;opacity:0.7;margin-bottom:4px">Granted methods (HEAD follows GET)</div>
         <div style="margin-bottom:10px">${methodBoxes}</div>
+        ${ep.auth_type ? `
+        <label style="font-size:11px;opacity:0.7">Secret name (which stored secret this endpoint's key comes from)</label>
+        <input id="cfg-secret" class="input" value="${attr(ep.secret_ref || '')}" placeholder="e.g. OPENROUTER_MANAGEMENT_KEY" autocomplete="off" spellcheck="false" style="width:100%;margin:2px 0 4px">
+        <div style="font-size:11px;opacity:0.55;margin-bottom:10px">The module sets the auth <em>shape</em> (${esc(ep.auth_type)}); you choose which secret it resolves. Add the value under this name in Admin ▸ Secrets.</div>
+        ` : ''}
         <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:10px">
           <input id="cfg-tls" type="checkbox" ${ep.verify_tls === false ? '' : 'checked'}> Verify the TLS certificate
         </label>
         <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;background:${SEV_COLOR.HIGH}11;border:1px solid ${SEV_COLOR.HIGH}44;border-radius:var(--radius);padding:8px 10px">
           <input id="cfg-consent" type="checkbox" style="margin-top:2px">
-          <span>I consent to this host, TLS policy, and method set. Required when confirming a pending endpoint, changing the host, disabling TLS verification, or adding a method that changes data.</span>
+          <span>I consent to this host, TLS policy, method set, and secret choice. Required when confirming a pending endpoint, changing the host, disabling TLS verification, adding a method that changes data, or changing which secret is used.</span>
         </label>
         <div id="cfg-msg" style="font-size:12px;color:#ff6d5a;margin-top:8px"></div>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
@@ -562,6 +573,8 @@ function configureEndpointModal(moduleId, ep) {
         verify_tls: root.querySelector('#cfg-tls').checked,
         consent: root.querySelector('#cfg-consent').checked,
       };
+      const secretInput = root.querySelector('#cfg-secret');
+      if (secretInput) body.secret_ref = secretInput.value.trim();
       try {
         await put(`/api/modules/${encodeURIComponent(moduleId)}/endpoints/${encodeURIComponent(ep.id)}`, body);
         toast.success(`Endpoint ${ep.id} updated`);

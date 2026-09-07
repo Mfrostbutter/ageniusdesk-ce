@@ -236,7 +236,8 @@ class EndpointUpdate(BaseModel):
     base_url: str | None = None
     methods: list[str] | None = None
     verify_tls: bool | None = None
-    consent: bool = False  # required when host/TLS/methods widen
+    secret_ref: str | None = None  # which stored secret this endpoint's auth resolves
+    consent: bool = False  # required when host/TLS/methods widen or the secret changes
 
 
 @router.put("/{module_id}/endpoints/{endpoint_id}", dependencies=[Depends(require_role("operator"))])
@@ -248,6 +249,7 @@ async def update_endpoint(module_id: str, endpoint_id: str, payload: EndpointUpd
         rev = endpoints.update(
             manifest, endpoint_id,
             base_url=payload.base_url, methods=payload.methods, verify_tls=payload.verify_tls,
+            secret_ref=payload.secret_ref,
             consent=payload.consent, consented_by=(user or {}).get("username", "") or "anonymous",
         )
     except (ValueError, endpoints.EndpointConfigError) as e:
