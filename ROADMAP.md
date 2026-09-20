@@ -4,6 +4,20 @@ AgeniusDesk Community Edition is a lightweight, open-source control plane for n8
 
 Specs for in-progress and planned work live in [`docs/specs/`](docs/specs/).
 
+## Licensed n8n: the control-plane rule (2026-09-19)
+
+AgeniusDesk is the control plane over n8n **whichever edition the instance runs**. Earlier roadmap entries described Insights, Promotion, Version History, External Secrets, Git Integration, Log Streaming and SAML/LDAP as replacements for n8n Enterprise features. That assumed every managed instance is Community. It is not the case for shops that hold a Business or Enterprise key, and those are the operators who need a control plane most.
+
+Per instance, AgeniusDesk detects what is licensed and takes one of two paths:
+
+- **Community path** (today's code): AgeniusDesk supplies the missing capability itself (own insights aggregator, own promotion, credential mirror).
+- **Licensed path**: AgeniusDesk drives the native feature through the n8n public API and reports on it rather than re-implementing it.
+
+Community Edition ships the detection (a per-instance capability record built from `GET /api/v1/discover`, the licensed signals in `/rest/settings`, and the instance's own license info where the runtime is managed) and the read-only licensed path: projects and folders, variables, native workflow history, the insights summary, log-streaming event ingest into the Errors feed. Configuring identity, roles, secrets providers, log-streaming destinations, source control and multi-main topology from the dashboard is Enterprise scope. Entries below that still read "replaces n8n Enterprise X" should be read through this rule.
+
+- [x] **Capability record per instance**: `backend/n8n_capabilities.py` probes edition, version, SSO state, key scopes and licensed endpoint presence, persists `capabilities` on the instance, exposes it on `GET /api/n8n/instances` and `GET /api/n8n/instances/{id}/capabilities`, refreshes on add and key rotation, and shows an Enterprise / Community / Unprobed chip on the Instances panel. Read-only against n8n. [Doc](docs/architecture/n8n-capabilities.md).
+- [ ] **Modules read the record**: Insights, Version History, Promotion and event ingest pick the Community or licensed path per instance.
+
 ## Current Release: v0.6.0 (2026-09-06)
 
 v0.6 unlocks the credential-holding community-module quadrant: a module can now talk to an external service without ever holding the credential or opening its own connection, in any isolation tier. Highlights:
@@ -23,7 +37,7 @@ v0.5 is about failures you cannot see and environments you could not previously 
 
 - **Silent-failure detection**: catch the runs n8n reports as success while a node errored under Continue-On-Fail or quietly stopped producing data. The failure class with no failed execution to alert on.
 - **Dead-man's switch (layer 1)**: catch the node that never ran at all inside a run that did fire, by diffing the workflow's declared nodes against the spans that landed.
-- **Workflow promotion**: move a workflow dev to staging to prod with a credential preflight, auto-provision from the Secrets store, and activation guarding. The open-source answer to n8n Enterprise environments.
+- **Workflow promotion**: move a workflow dev to staging to prod with a credential preflight, auto-provision from the Secrets store, and activation guarding. Fills the environments gap on Community instances; on a licensed instance it will drive n8n's native source control instead (see "Licensed n8n" below).
 - **The assistant asks before it acts**: a state-changing tool call now returns as an approval card rather than running inside the chat turn, so a prompt injection in an error payload, a RAG hit, or MCP output cannot drive it unattended.
 - **Correct multi-instance observability**: traces are attributed to the instance that produced them, and cost and health enrichment fetch run-data from that instance, so a non-active instance's spend is no longer silently `$0`.
 
@@ -139,7 +153,7 @@ The headline: the failures n8n's own status cannot report, and moving work betwe
 
 ### 2. Workflow promotion ([guide](docs/guide/promote.md))
 
-- [x] A **Promote** view and `n8n_promote` module moving workflows dev to staging to prod, the open-source answer to n8n Enterprise environments.
+- [x] A **Promote** view and `n8n_promote` module moving workflows dev to staging to prod. Fills the environments gap on Community instances; a pull-based mode over n8n's native source control is planned for licensed instances.
 - [x] **Preflight** reports every credential a workflow binds, whether the target ships that type, and duplicate-name collisions, before anything is written. Changing the target or selection invalidates it.
 - [x] **Credential auto-provision** reuses an already-mirrored target credential or creates one from the Secrets store, through the same SSRF, instance-scope, and URL-repoint guardrails as the manual mirror route. Ambiguity is surfaced, never guessed; provisioning is idempotent by reuse, not delete-and-recreate.
 - [x] **Activation guarding**: a workflow whose mapped credential has no name on the target is refused rather than imported to fail at run time, and n8n's node-by-node rejection detail is surfaced.
@@ -247,7 +261,7 @@ Built against the pipeline above as its first consumer. Captions-only v1, Inbox 
 - [ ] **Additional knowledge connectors**: HTTP fetch, GitHub, API connectors beyond Qdrant
 - [x] **Harness skills section**: a library of skills in the Harness (`skills/`) that agent instructions point at, so an agent loads focused, domain-specific guidance on demand. Seeded into the vault on first run; router note at `skills/README.md` (shipped — see CHANGELOG v0.4.0)
 - [x] **Curate high-quality n8n skills**: the full czlonkowski/n8n-skills set (MIT) — workflow patterns, node config, expressions, Code nodes, error handling, validation, agents, and more — vendored as the starting content for the Harness skills section
-- [ ] **Workflow version history**: snapshot on import, diff viewer, restore from snapshot
+- [ ] **Workflow version history**: snapshot on import, diff viewer, restore from snapshot. On a licensed instance, read n8n's native history (`GET /api/v1/workflows/{id}/history`) instead of snapshotting.
 - [x] **Scheduled backups**: automated per-instance backup with configurable retention. A dependency-free internal interval scheduler snapshots every connected instance's workflows to `data/backups/<instance>/` on a schedule (enable / interval / retention / active-only on the Export / Backup view; `/api/backups` endpoints), fanning out across the fleet and isolating a failing instance. Off by default. Shipped — see CHANGELOG v0.4.4. The scheduler is the shared prerequisite the scheduled-health-report item below now builds on.
   - [x] **Offsite backup destination (S3-compatible)**: push each snapshot to S3 / R2 / B2 / Wasabi / self-hosted MinIO behind an opt-in `s3` extra, with a test-connection probe, optional offsite retention mirroring, and optional Fernet encryption before upload. Credentials via secret-store refs only. Push-only in v1. [Spec](docs/specs/2026-07-06-offsite-backup-s3-sink.md). Deferred: Google Drive / OAuth destinations and an rclone shell-out (broader backend coverage), plus restore-from-remote UI.
 - [ ] **Scheduled health reports**: an automated, recurring (e.g. monthly) per-instance workflow health report, generated and delivered without anyone opening the dashboard. Rolls the period's success/error rates, error trends, busiest and slowest workflows, and notable incidents (from Insights + Fleet Health) into a client-ready summary, delivered over the notification sinks or email. Builds on the on-demand health-reporter agent (its parallel fan-out becomes a scheduled job) and feeds the agency client-reporting loop.
@@ -319,7 +333,7 @@ Not every valuable module folds into the existing chrome; some **add their own s
 ## Medium-Term (v0.3+ Concept)
 
 - [ ] **Multi-tenancy foundation**: group instances and workflows by client or team
-- [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2)
+- [ ] **Audit logging**: track all user actions for compliance (extends the per-install module audit from v0.2). On a licensed instance, ingest n8n's own `n8n.audit.*` log-streaming events rather than inferring actions from polling.
 - [ ] **Cost tracking** — folded into Observability ([cost-observability spec](docs/specs/2026-06-27-cost-observability.md)); LLM spend is the cost dimension of the trace store, not a standalone feature
 - [x] **Workflow promotion**: promote workflows across dev, staging, production instances. Shipped in v0.5.0 (`n8n_promote` module: preflight, credential mapping with auto-provision from Secrets, activation guarding; dogfooded end to end on a live instance). [Guide](docs/guide/promote.md)
 - [ ] **Public API hardening**: expand and stabilize the existing versioned `/api/v1` (X-API-Key) surface
@@ -333,8 +347,8 @@ Not every valuable module folds into the existing chrome; some **add their own s
 - Workflow diff viewer (visual side-by-side comparison)
 - Secret backends as core built-ins — Infisical (boot-time env hydration + dashboard CRUD) and Agent Vault (mirror-in, audited egress broker), ported from the beta with a phased Docker-sandbox path to real key isolation; spec: `docs/specs/2026-07-03-secret-backend-ce-port.md`. Earlier community-module framing is superseded.
 - Other external secret sources (1Password, AWS Secrets Manager, HashiCorp Vault)
-- Git integration (export workflows to repos, branch-based environments)
-- SAML/LDAP for team authentication
+- Git integration (export workflows to repos, branch-based environments) for Community instances; orchestration of n8n's native source control for licensed ones
+- SAML/LDAP/OIDC: configured on the n8n instance from the dashboard (licensed instances; Enterprise scope), plus dashboard login federation
 - Agentic workflow management — **shipped** as the Agent Fleet core built-in (LangGraph + PydanticAI adapters, live graph view, LangSmith tracing); `backend/modules/agent_fleet/`
 - Client-facing portal (scoped workflow access for non-operators)
 - Home Assistant integration — now part of the Homelab Pack (see "Community Modules & Homelab Pack" above)

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from backend import n8n_capabilities
 from backend.auth_gate import require_role
 from backend.config import (
     add_instance,
@@ -28,6 +29,8 @@ from backend.net import UnsafeProbeURL, assert_safe_probe_url
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/n8n", tags=["n8n"], dependencies=[Depends(require_role("operator"))])
+# Viewer-readable routes; composed with `router` in the package __init__.
+viewer_router = APIRouter(prefix="/api/n8n", tags=["n8n"], dependencies=[Depends(require_role("viewer"))])
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
@@ -106,6 +109,7 @@ async def list_instances():
             "active": inst["id"] == active_id,
             "key_hint": key_hint,
             "has_login": bool(inst.get("owner_email") and inst.get("owner_password")),
+            "capabilities": inst.get("capabilities") or None,
         })
     return {"instances": safe, "active_id": active_id}
 
@@ -157,10 +161,13 @@ async def create_instance(req: InstanceRequest, request: Request):
     except Exception as e:  # pragma: no cover - defensive; install itself is best-effort
         logger.warning("error-handler auto-install for %s failed: %s", inst["name"], e)
 
+    capabilities = await _refresh_capabilities_quietly(inst["id"])
+
     return {
         "success": True,
         "instance": {"id": inst["id"], "name": inst["name"], "url": inst["url"]},
         "error_handler": error_handler,
+        "capabilities": capabilities,
     }
 
 
@@ -269,7 +276,36 @@ async def rotate_instance_key(instance_id: str, req: RotateKeyRequest):
         )
     update_instance(instance_id, {"api_key": api_key})
     key_hint = "..." + api_key[-4:] if len(api_key) > 8 else "configured"
+    # A new key may carry new scopes, so the capability record is re-probed.
+    await _refresh_capabilities_quietly(instance_id)
     return {"success": True, "key_hint": key_hint}
+
+
+async def _refresh_capabilities_quietly(instance_id: str) -> Optional[dict]:
+    """Best-effort capability refresh; never fails the calling route."""
+    try:
+        return await n8n_capabilities.refresh_capabilities(instance_id)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("capability refresh for %s failed: %s", instance_id, e)
+        return None
+
+
+@router.post("/instances/{instance_id}/capabilities/refresh")
+async def refresh_instance_capabilities(instance_id: str):
+    """Re-probe the instance's edition, key scopes and licensed endpoints."""
+    caps = await n8n_capabilities.refresh_capabilities(instance_id)
+    if caps is None:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return {"success": True, "capabilities": caps}
+
+
+@viewer_router.get("/instances/{instance_id}/capabilities")
+async def get_instance_capabilities(instance_id: str):
+    """Stored capability record for one instance; null until first probed."""
+    inst = next((i for i in get_instances() if i["id"] == instance_id), None)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return {"instance_id": instance_id, "capabilities": inst.get("capabilities") or None}
 
 
 @router.get("/instances/{instance_id}/login")

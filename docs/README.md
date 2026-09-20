@@ -47,6 +47,7 @@ Start with [Getting Started](guide/getting-started.md) if you just deployed, or
 | [API Reference](architecture/api.md) | The public `/api/v1` surface and the Dashboard-as-MCP server |
 | [Security Posture](architecture/security.md) | Threat model, hardening knobs, deployment guidance |
 | [Silent-failure detection](architecture/silent-failure-detection.md) | Catching "green but broken" n8n runs: why status can't see them, the output-shape classifier, and how they surface across the views |
+| [n8n capability record](architecture/n8n-capabilities.md) | Per-instance edition, key scopes and licensed-endpoint detection; how modules choose the Community or licensed path |
 
 ## Operations
 

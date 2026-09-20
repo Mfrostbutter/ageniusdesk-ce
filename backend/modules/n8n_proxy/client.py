@@ -361,6 +361,46 @@ async def test_connection_with(url: str, api_key: str, verify: bool | None = Non
         return {"connected": False, "error_class": "generic", "message": str(e)}
 
 
+# ── Per-instance probe primitive ─────────────────────────────────────────────
+
+PROBE_TIMEOUT = 8.0
+
+
+async def probe_get(
+    inst: dict,
+    path: str,
+    params: Optional[dict] = None,
+    *,
+    authed: bool = True,
+    want_body: bool = True,
+    timeout: float = PROBE_TIMEOUT,
+) -> tuple[Optional[int], Any]:
+    """One GET against a specific instance. Returns (status, json body or None); never raises.
+
+    Status None = transport failure. `authed=False` sends no API key.
+    `want_body=False` drops the response unparsed (for endpoints that echo secrets).
+    """
+    from backend.config import decrypt_value
+
+    url = dockerize_url(decrypt_value(inst.get("url", ""))).rstrip("/") + path
+    headers = {"Accept": "application/json"}
+    if authed:
+        headers["X-N8N-API-KEY"] = decrypt_value(inst.get("api_key", ""))
+    try:
+        # Targets `inst`, not the active instance, so TLS resolves against it.
+        async with httpx.AsyncClient(timeout=timeout, verify=tls_verify_for_instance(inst)) as client:
+            resp = await client.get(url, headers=headers, params=params)
+    except httpx.HTTPError as e:
+        logger.debug("n8n probe GET %s on %s failed: %s", path, inst.get("name", ""), type(e).__name__)
+        return None, None
+    if not want_body:
+        return resp.status_code, None
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, None
+
+
 # ── Fleet health: workflow health aggregated across ALL instances ─────────────
 
 

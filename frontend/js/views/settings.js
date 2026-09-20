@@ -186,6 +186,7 @@ async function loadInstances() {
               onclick="window.__instRename('${jsStr(inst.id)}','${jsStr(inst.name)}')">&#9998;</button>
             ${inst.active ? '<span class="pill pill-success" style="font-size:9px;margin-left:4px">ACTIVE</span>' : ''}
             ${coveragePill}
+            ${_capabilityChip(inst)}
           </td>
           <td style="font-family:var(--font-mono);font-size:12px">${esc(inst.url)}</td>
           <td style="font-size:12px;color:var(--text-dim)">
@@ -453,6 +454,17 @@ window.__instRotateKey = async (id, name) => {
     loadInstances();
   } catch (e) {
     toast.error(e.message || 'Rotation failed; the stored key was not changed.');
+  }
+};
+
+window.__instRefreshCaps = async (id, name) => {
+  try {
+    const r = await post(`/api/n8n/instances/${id}/capabilities/refresh`, {});
+    const caps = r.capabilities || {};
+    toast.success(`${caps.licensed ? 'Enterprise' : 'Community'} capabilities recorded for "${name}"`);
+    loadInstances();
+  } catch (e) {
+    toast.error(e.message || 'Capability probe failed.');
   }
 };
 
@@ -1653,6 +1665,26 @@ function _coveragePill(health) {
     ? `Discards successful run data: ${affected.map(w => w.name).join(', ')}`
     : (health.data_save_reason || 'Instance default discards successful run data');
   return `<span class="pill pill-warning" style="font-size:9px;margin-left:4px" title="${attr(tip)}">Coverage gap</span>`;
+}
+
+// Edition chip from the stored capability record, plus a Refresh action.
+function _capabilityChip(inst) {
+  const caps = inst.capabilities;
+  const refresh = `<button class="btn btn-sm btn-ghost" style="padding:0 4px;font-size:11px" title="Re-probe edition, key scopes and licensed endpoints"
+      onclick="window.__instRefreshCaps('${jsStr(inst.id)}','${jsStr(inst.name)}')">Refresh</button>`;
+  if (!caps) {
+    return `<span class="pill pill-neutral" style="font-size:9px;margin-left:4px" title="Capabilities not probed yet">Unprobed</span>${refresh}`;
+  }
+  const features = Object.entries(caps.features || {}).filter(([, on]) => on).map(([k]) => k.replace(/_/g, ' '));
+  const lines = [
+    caps.version ? `n8n ${caps.version}` : 'n8n version unknown',
+    features.length ? `Native: ${features.join(', ')}` : 'No licensed endpoints reachable',
+    ...(caps.notes || []),
+    caps.probed_at ? `Probed ${caps.probed_at}` : '',
+  ].filter(Boolean);
+  const cls = caps.licensed ? 'pill-info' : 'pill-neutral';
+  const label = caps.licensed ? 'Enterprise' : 'Community';
+  return `<span class="pill ${cls}" style="font-size:9px;margin-left:4px" title="${attr(lines.join('\n'))}">${label}</span>${refresh}`;
 }
 
 function esc(s) { const el = document.createElement('span'); el.textContent = s || ''; return el.innerHTML; }
