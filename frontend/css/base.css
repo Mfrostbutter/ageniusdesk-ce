@@ -392,6 +392,13 @@ body {
   flex-shrink: 0;
 }
 
+/* The instance list itself grows with every connected environment; cap it so
+   a long fleet can't squeeze .sidebar-nav down to an unusable sliver. */
+#instance-selector {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .instance-label {
   font-size: 10px;
   font-weight: 600;
