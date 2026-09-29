@@ -106,8 +106,6 @@ export function secretField(opts) {
           <span class="secret-field-pill-name"></span>
           <button type="button" class="secret-field-pill-clear btn btn-sm btn-ghost" style="font-size:11px;padding:1px 6px;line-height:1" title="Clear reference">&times;</button>
         </div>
-        <div class="secret-field-dropdown" hidden
-             style="position:absolute;top:calc(100% + 4px);right:0;min-width:260px;max-width:100%;background:var(--bg-panel-solid);border:1px solid var(--border-mid);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.35);z-index:1000;max-height:260px;overflow:auto"></div>
       </div>
       <div class="secret-field-status" style="font-size:11px;color:var(--text-dim);min-height:14px;display:flex;align-items:center;gap:8px"></div>
       ${hint ? `<small style="font-size:11px;color:var(--text-dim);margin-top:2px">${escHtml(hint)}</small>` : ''}
@@ -120,8 +118,35 @@ export function secretField(opts) {
   const pillName = root.querySelector('.secret-field-pill-name');
   const pillClear = root.querySelector('.secret-field-pill-clear');
   const dropdownBtn = root.querySelector('.secret-field-dropdown-btn');
-  const dropdown = root.querySelector('.secret-field-dropdown');
+  const inputRow = root.querySelector('.secret-field-input-row');
   const status = root.querySelector('.secret-field-status');
+
+  // The dropdown lives on document.body with fixed positioning so a clipping
+  // ancestor (.card has overflow:hidden) cannot cut the list off.
+  const dropdown = document.createElement('div');
+  dropdown.className = 'secret-field-dropdown';
+  dropdown.hidden = true;
+  dropdown.style.cssText = 'position:fixed;min-width:260px;background:var(--bg-panel-solid);border:1px solid var(--border-mid);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.35);z-index:1000;max-height:260px;overflow:auto';
+  document.body.appendChild(dropdown);
+
+  function positionDropdown() {
+    const r = inputRow.getBoundingClientRect();
+    const width = Math.max(260, r.width);
+    const maxH = 260;
+    const below = window.innerHeight - r.bottom - 8;
+    const openUp = below < Math.min(maxH, 120) && r.top > below;
+    dropdown.style.left = `${Math.max(8, r.right - width)}px`;
+    dropdown.style.width = `${width}px`;
+    if (openUp) {
+      dropdown.style.top = '';
+      dropdown.style.bottom = `${window.innerHeight - r.top + 4}px`;
+      dropdown.style.maxHeight = `${Math.min(maxH, r.top - 8)}px`;
+    } else {
+      dropdown.style.bottom = '';
+      dropdown.style.top = `${r.bottom + 4}px`;
+      dropdown.style.maxHeight = `${Math.min(maxH, below)}px`;
+    }
+  }
 
   function updateStatus() {
     if (state.ref) {
@@ -165,19 +190,30 @@ export function secretField(opts) {
     // "my new secret isn't here" is not.
     const refs = await loadRefs(true);
     renderDropdown(refs);
+    positionDropdown();
     dropdown.hidden = false;
     state.dropdownOpen = true;
     setTimeout(() => document.addEventListener('click', handleOutsideClick), 0);
+    window.addEventListener('scroll', handleViewportChange, true);
+    window.addEventListener('resize', handleViewportChange);
   }
 
   function closeDropdown() {
     dropdown.hidden = true;
     state.dropdownOpen = false;
     document.removeEventListener('click', handleOutsideClick);
+    window.removeEventListener('scroll', handleViewportChange, true);
+    window.removeEventListener('resize', handleViewportChange);
   }
 
   function handleOutsideClick(e) {
-    if (!root.contains(e.target)) closeDropdown();
+    if (!root.contains(e.target) && !dropdown.contains(e.target)) closeDropdown();
+  }
+
+  function handleViewportChange(e) {
+    // Scrolling inside the list itself is fine; anything else moves the anchor.
+    if (e && e.type === 'scroll' && dropdown.contains(e.target)) return;
+    if (state.dropdownOpen) positionDropdown();
   }
 
   function renderMode() {
@@ -240,6 +276,7 @@ export function secretField(opts) {
     focus() { if (!state.ref) input.focus(); },
     destroy() {
       closeDropdown();
+      dropdown.remove();
       container.innerHTML = '';
     },
   };

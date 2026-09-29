@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Optional
@@ -120,7 +121,7 @@ async def start(agent_id: str, error_id: Optional[int], prompt: str) -> dict:
     if agent is None:
         raise RunStartError(404, f"Unknown agent '{resolved_id}'.")
 
-    model = os.environ.get(agent.model_env, agent.default_model) if agent.model_env else agent.default_model
+    model = effective_model(resolve_fleet_provider(), model_for(agent))
     prompt = (prompt or "").strip()
     target = str(error_id) if error_id is not None else (prompt or "latest")
     run_row = await storage.create_run(resolved_id, target, prompt, model)
@@ -134,67 +135,179 @@ async def start(agent_id: str, error_id: Optional[int], prompt: str) -> dict:
     return run_row
 
 
-def resolve_anthropic_key() -> str:
-    """Find the Anthropic key the same way the assistant provider does.
+# ── Provider seam ────────────────────────────────────────────────────────────
+# The fleet runs on one provider: Models › Agent Fleet when set, else
+# LANGGRAPH_PROVIDER, else the AI assistant's provider, else Anthropic. Agents keep
+# their vendor model ids (claude-haiku-4-5, gpt-4.1); OpenRouter gets them
+# translated to its own ids (anthropic/claude-haiku-4.5, openai/gpt-4.1).
 
-    Order: process env, then AgeniusDesk's encrypted secret store ($ANTHROPIC_KEY),
-    then the assistant config (if the operator configured anthropic there). The
-    secret resolver echoes the bare name on a miss, so an echo counts as not-found.
-    """
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_KEY"):
-        val = os.environ.get(name, "")
-        if val:
-            return val
+FLEET_PROVIDERS = ("anthropic", "openai", "openrouter")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_HEADERS = {
+    "HTTP-Referer": "https://github.com/Mfrostbutter/ageniusdesk-ce",
+    "X-Title": "AgeniusDesk Agent Fleet",
+}
+
+# provider -> (env var names, secrets-store names), in lookup order.
+_PROVIDER_KEY_NAMES = {
+    "anthropic": (("ANTHROPIC_API_KEY", "ANTHROPIC_KEY"), ("ANTHROPIC_KEY", "ANTHROPIC_API_KEY")),
+    "openai": (("OPENAI_API_KEY", "OPENAI_KEY", "OPEN_AI_KEY"), ("OPEN_AI_KEY", "OPENAI_API_KEY", "OPENAI_KEY")),
+    "openrouter": (("OPENROUTER_API_KEY", "OPEN_ROUTER_KEY"), ("OPEN_ROUTER_KEY", "OPENROUTER_API_KEY")),
+}
+
+# The env var each provider's SDK reads (PydanticAI agents resolve keys from env).
+PROVIDER_SDK_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
+
+def _fleet_settings() -> dict:
     try:
-        from backend.config import decrypt_value
+        from . import settings as fleet_settings
 
-        val = decrypt_value("$ANTHROPIC_KEY")
-        if val and val != "ANTHROPIC_KEY":
-            return val
-    except Exception:  # noqa: BLE001 - resolution must never crash a run
-        pass
+        return fleet_settings.load()
+    except Exception:  # noqa: BLE001 - settings are optional input here
+        return {"provider": "", "api_key_ref": "", "models": {}}
+
+
+def _assistant_settings() -> dict:
+    """Provider + resolved key from the AI assistant's config, or {} when unreadable."""
     try:
         from backend.modules.assistant.providers import get_assistant_config
 
-        cfg = get_assistant_config()
-        if cfg.get("provider") == "anthropic" and cfg.get("api_key"):
-            return cfg["api_key"]
+        return get_assistant_config() or {}
     except Exception:  # noqa: BLE001
-        pass
-    return ""
+        return {}
 
 
-def resolve_openai_key() -> str:
-    """Find the OpenAI key the same way resolve_anthropic_key finds Anthropic's.
-
-    Used only by a future cross-provider reviewer agent (none in the v1 fleet).
-    Order: process env, then the encrypted secret store ($OPEN_AI_KEY is CE's name).
-    """
-    for name in ("OPENAI_API_KEY", "OPENAI_KEY", "OPEN_AI_KEY"):
-        val = os.environ.get(name, "")
-        if val:
-            return val
+def _secret_value(ref: str) -> str:
+    """Decrypt a $NAME ref from the secrets store; "" when unresolved."""
     try:
         from backend.config import decrypt_value
 
-        for name in ("OPEN_AI_KEY", "OPENAI_API_KEY", "OPENAI_KEY"):
-            val = decrypt_value(f"${name}")
-            if val and val != name:
-                return val
-    except Exception:  # noqa: BLE001
-        pass
+        val = decrypt_value(ref if ref.startswith("$") else f"${ref}")
+    except Exception:  # noqa: BLE001 - resolution must never crash a run
+        return ""
+    bare = ref[1:] if ref.startswith("$") else ref
+    if not val or val == bare or val.startswith("$"):
+        return ""
+    return val
+
+
+def fleet_provider() -> tuple[str, str]:
+    """(provider, source) where source is settings | env | assistant | default."""
+    saved = _fleet_settings().get("provider") or ""
+    if saved in FLEET_PROVIDERS:
+        return saved, "settings"
+    env = (os.environ.get("LANGGRAPH_PROVIDER") or "").strip().lower()
+    if env in FLEET_PROVIDERS:
+        return env, "env"
+    cfg = (_assistant_settings().get("provider") or "").strip().lower()
+    if cfg in FLEET_PROVIDERS:
+        return cfg, "assistant"
+    return "anthropic", "default"
+
+
+def resolve_fleet_provider() -> str:
+    return fleet_provider()[0]
+
+
+def resolve_provider_key(provider: str) -> str:
+    """Find a provider's key.
+
+    Order: the secret chosen in Models › Agent Fleet, process env, the encrypted
+    secrets store under the conventional names, then the key saved for the AI
+    assistant when that provider is the assistant's.
+    """
+    ref = _fleet_settings().get("api_key_ref") or ""
+    if ref:
+        val = _secret_value(ref)
+        if val:
+            return val
+    env_names, store_names = _PROVIDER_KEY_NAMES.get(provider, ((), ()))
+    for name in env_names:
+        val = os.environ.get(name, "")
+        if val:
+            return val
+    for name in store_names:
+        val = _secret_value(name)
+        if val:
+            return val
+    cfg = _assistant_settings()
+    if (cfg.get("provider") or "").lower() == provider and cfg.get("api_key"):
+        return cfg["api_key"]
     return ""
+
+
+def resolve_anthropic_key() -> str:
+    return resolve_provider_key("anthropic")
+
+
+def resolve_openai_key() -> str:
+    return resolve_provider_key("openai")
+
+
+def missing_key_message(provider: str) -> str:
+    env_names, store_names = _PROVIDER_KEY_NAMES.get(provider, (("",), ("",)))
+    return (
+        f"No {provider} API key found. Set {env_names[0]} in the environment, add "
+        f"{store_names[0]} to the secrets store, or pick a key under Models › Agent Fleet."
+    )
+
+
+_CLAUDE_DASHED = re.compile(r"^claude-([a-z]+)-(\d+)-(\d+)$")
+
+
+def openrouter_model_id(model: str) -> str:
+    """Translate a vendor model id to OpenRouter's. Ids that already carry a
+    vendor prefix pass through."""
+    m = (model or "").strip()
+    if not m or "/" in m:
+        return m
+    low = m.lower()
+    if low.startswith("claude-"):
+        hit = _CLAUDE_DASHED.match(low)
+        if hit:
+            return f"anthropic/claude-{hit.group(1)}-{hit.group(2)}.{hit.group(3)}"
+        return f"anthropic/{m}"
+    if low.startswith(("gpt-", "o1", "o3", "o4", "chatgpt-")):
+        return f"openai/{m}"
+    return m
+
+
+def effective_model(provider: str, model: str) -> str:
+    """The model id actually sent to the provider (and shown on the run)."""
+    return openrouter_model_id(model) if provider == "openrouter" else model
+
+
+def model_for(agent) -> str:
+    """The agent's model before provider translation: saved choice, env, default."""
+    try:
+        from . import settings as fleet_settings
+
+        return fleet_settings.model_for(agent)
+    except Exception:  # noqa: BLE001
+        return os.environ.get(agent.model_env, agent.default_model) if agent.model_env else agent.default_model
 
 
 def make_chat_model(provider: str, model: str, max_tokens: int, api_key: str):
     """Provider-agnostic chat-model factory: the seam that keeps the fleet model-
-
-    agnostic. `provider` is 'anthropic' (default) or 'openai'. Imports are lazy so the
-    module stays boot-safe when an optional provider package isn't installed. Both
-    providers honor temperature=0 + max_tokens; structured output works on either via
-    LangChain's .with_structured_output().
+    agnostic. `provider` is 'anthropic' (default), 'openai' or 'openrouter'. Imports
+    are lazy so the module stays boot-safe when an optional provider package isn't
+    installed. All providers honor temperature=0 + max_tokens; structured output
+    works on each via LangChain's .with_structured_output().
     """
-    if (provider or "anthropic").lower() == "openai":
+    prov = (provider or "anthropic").lower()
+    if prov == "openrouter":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=openrouter_model_id(model), temperature=0, max_tokens=max_tokens,
+            api_key=api_key, base_url=OPENROUTER_BASE_URL, default_headers=OPENROUTER_HEADERS,
+        )
+    if prov == "openai":
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(model=model, temperature=0, max_tokens=max_tokens, api_key=api_key)
@@ -488,7 +601,7 @@ async def _drive(graph, inp, config, emit, AIMessage, ToolMessage) -> dict:
     return {"status": "done", "final_md": final_md}
 
 
-async def _run_pydantic(agent, task: str, api_key: str, emit) -> tuple:
+async def _run_pydantic(agent, task: str, api_key: str, emit, provider: str = "anthropic") -> tuple:
     """Run a PydanticAI agent and emit the normalized run events so the same
     waterfall + timeline render. Uses agent.run() then replays the message history
     as tool_call/tool_result events (best-effort; the run is not live-streamed yet).
@@ -497,17 +610,20 @@ async def _run_pydantic(agent, task: str, api_key: str, emit) -> tuple:
     # pydantic-ai resolves the key from env. Scope the mutation to this run and
     # restore the prior value afterward so concurrent agents using different keys
     # (and the parent process env) are not affected.
-    _prev_key = os.environ.get("ANTHROPIC_API_KEY")
-    os.environ["ANTHROPIC_API_KEY"] = api_key
+    # The agent's own factory picks its model string ("openrouter:anthropic/..."
+    # reads OPENROUTER_API_KEY).
+    env_name = PROVIDER_SDK_ENV.get(provider, "ANTHROPIC_API_KEY")
+    _prev_key = os.environ.get(env_name)
+    os.environ[env_name] = api_key
     try:
         pa = agent.build(None, None)
         await emit({"phase": "thinking", "node": "agent", "text": "Running the PydanticAI agent."})
         result = await pa.run(task)
     finally:
         if _prev_key is None:
-            os.environ.pop("ANTHROPIC_API_KEY", None)
+            os.environ.pop(env_name, None)
         else:
-            os.environ["ANTHROPIC_API_KEY"] = _prev_key
+            os.environ[env_name] = _prev_key
 
     # Replay the message history as tool steps (shape varies across versions).
     try:
@@ -594,16 +710,14 @@ async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) 
             await fail(f"Unknown agent '{agent_id}'.")
             return
 
-        api_key = resolve_anthropic_key()
+        provider = resolve_fleet_provider()
+        api_key = resolve_provider_key(provider)
         if not api_key:
-            await fail(
-                "No Anthropic API key found. Set ANTHROPIC_API_KEY in the environment "
-                "or add ANTHROPIC_KEY to the secrets store."
-            )
+            await fail(missing_key_message(provider))
             return
 
         tracing = _langsmith_tracing_active()
-        model = os.environ.get(agent.model_env, agent.default_model) if agent.model_env else agent.default_model
+        model = effective_model(provider, model_for(agent))
         max_tokens = (
             int(os.environ.get(agent.max_tokens_env, agent.max_tokens))
             if agent.max_tokens_env else agent.max_tokens
@@ -613,11 +727,11 @@ async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) 
         if getattr(agent, "framework", "langgraph") == "pydantic-ai":
             task = agent.kickoff(error_id, prompt)
             await emit({
-                "phase": "started", "task": task, "model": model,
+                "phase": "started", "task": task, "model": model, "provider": provider,
                 "agent_id": agent.id, "agent_name": agent.name,
             })
             try:
-                final_md, meta = await _run_pydantic(agent, task, api_key, emit)
+                final_md, meta = await _run_pydantic(agent, task, api_key, emit, provider)
             except Exception as e:  # noqa: BLE001 - terminal state must be written
                 await fail(f"PydanticAI run failed: {type(e).__name__}: {e}")
                 return
@@ -633,29 +747,34 @@ async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) 
             )
             return
 
-        # Primary model through the provider seam (anthropic today, not hard-wired).
-        llm = make_chat_model("anthropic", model, max_tokens, api_key)
+        # Primary model through the provider seam.
+        try:
+            llm = make_chat_model(provider, model, max_tokens, api_key)
+        except ImportError as e:
+            await fail(f"Provider package for {provider} not installed (pip install '.[langgraph]'): {e}")
+            return
 
-        # Cross-provider reviewer hook: an agent that declares a reviewer_provider gets
-        # a SECOND model built from a different vendor's key. None of the v1 agents use
-        # it; the branch is kept so the runner stays agent-agnostic.
+        # Cross-vendor reviewer hook: an agent that declares a reviewer_provider gets a
+        # SECOND model from a different vendor. On OpenRouter both vendors ride the same
+        # key and the reviewer keeps its vendor model; elsewhere the reviewer resolves
+        # its own vendor key.
         reviewer_llm = None
         if agent.reviewer_provider:
             reviewer_model = (
                 os.environ.get(agent.reviewer_model_env, agent.reviewer_model)
                 if agent.reviewer_model_env else agent.reviewer_model
             )
-            if agent.reviewer_provider == "openai":
-                reviewer_key = resolve_openai_key()
-                if not reviewer_key:
-                    await fail(
-                        "No OpenAI API key found for the cross-provider reviewer. Set "
-                        "OPENAI_API_KEY in the environment or the secrets store."
-                    )
-                    return
+            if provider == "openrouter":
+                reviewer_llm = make_chat_model("openrouter", reviewer_model, max_tokens, api_key)
             else:
-                reviewer_key = api_key
-            reviewer_llm = make_chat_model(agent.reviewer_provider, reviewer_model, max_tokens, reviewer_key)
+                if agent.reviewer_provider == provider:
+                    reviewer_key = api_key
+                else:
+                    reviewer_key = resolve_provider_key(agent.reviewer_provider)
+                    if not reviewer_key:
+                        await fail(f"Cross-vendor reviewer: {missing_key_message(agent.reviewer_provider)}")
+                        return
+                reviewer_llm = make_chat_model(agent.reviewer_provider, reviewer_model, max_tokens, reviewer_key)
 
         # HITL agents need a checkpointer to support interrupt/resume; the live graph
         # is parked in _PAUSED across the pause so resume reuses it.
@@ -672,7 +791,7 @@ async def run(run_id: str, agent_id: str, error_id: Optional[int], prompt: str) 
         task = agent.kickoff(error_id, prompt)
         target = _target_str(error_id, prompt)
         await emit({
-            "phase": "started", "task": task, "model": model,
+            "phase": "started", "task": task, "model": model, "provider": provider,
             "agent_id": agent.id, "agent_name": agent.name,
         })
 

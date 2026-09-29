@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LLM Cost forwarder as a macOS LaunchAgent. llm-cost-install-launchd.sh fills the
+     placeholders and installs it to ~/Library/LaunchAgents/com.agd.llm-cost-forwarder.plist. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agd.llm-cost-forwarder</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON__</string>
+    <string>__INSTALL_DIR__/llm-cost-forward.py</string>
+    <string>--url</string>
+    <string>__AGD_URL__</string>
+    <string>--token-file</string>
+    <string>__INSTALL_DIR__/token</string>
+    <string>--interval</string>
+    <string>60</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__INSTALL_DIR__/forwarder.log</string>
+  <key>StandardErrorPath</key>
+  <string>__INSTALL_DIR__/forwarder.log</string>
+</dict>
+</plist>

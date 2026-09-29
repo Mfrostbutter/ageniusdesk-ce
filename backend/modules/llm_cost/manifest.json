@@ -1,0 +1,18 @@
+{
+  "id": "llm_cost",
+  "name": "LLM Cost",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "LLM spend and quota across Anthropic, OpenAI, OpenRouter, generic JSON endpoints, and workstation forwarders, with history, alerts, and n8n-attributed spend.",
+  "author": "AgeniusDesk",
+  "routes_prefix": "/api/llm-cost",
+  "builtin": true,
+  "frontend": {
+    "nav": {
+      "label": "LLM Cost",
+      "icon": "gauge",
+      "view": "llm-cost"
+    }
+  },
+  "license": "MIT"
+}\n

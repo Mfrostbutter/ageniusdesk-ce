@@ -176,6 +176,11 @@ class Settings(BaseSettings):
     # public models API. The fetched table is cached to data/price_book.json with a
     # last-good fallback; operator overrides and a bundled default layer over it.
     agd_pricebook_refresh_hours: int = 24
+    # LLM Cost: provider spend and quota polling (Settings > LLM Cost). Retention is
+    # days of quota/spend history kept; bucket is the history sample width.
+    agd_llm_cost_enabled: bool = True
+    agd_llm_cost_retention_days: int = 400
+    agd_llm_cost_bucket_sec: int = 900
 
     # Agent Fleet / Agent Builder UI surface. None = auto (shown when the optional
     # agent dependency extra is installed), so a default install presents as a pure

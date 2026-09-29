@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from backend.auth_gate import require_role
 
 from . import registry, runner, storage
+from . import settings as fleet_settings
 
 _AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -242,3 +243,50 @@ async def delete_run(run_id: str):
         raise HTTPException(status_code=404, detail="Run not found.")
     runner.discard_parked(run_id)  # a deleted run must not linger as paused
     return {"ok": True}
+
+
+# ── Models › Agent Fleet: provider, key and per-agent models ─────────────────
+
+
+class FleetSettingsRequest(BaseModel):
+    provider: Optional[str] = Field(default=None, description="anthropic | openai | openrouter; blank follows the assistant.")
+    api_key_ref: Optional[str] = Field(default=None, description="$NAME secret for that provider; blank uses the convention key.")
+    models: Optional[dict[str, str]] = Field(default=None, description="agent id -> model id; blank clears the choice.")
+
+
+def _fleet_settings_payload() -> dict:
+    saved = fleet_settings.load()
+    provider, source = runner.fleet_provider()
+    assistant = runner._assistant_settings().get("provider") or ""
+    agents = []
+    for a in registry.all_agents():
+        model = runner.model_for(a)
+        agents.append({
+            "id": a.id, "name": a.name, "default_model": a.default_model, "model_env": a.model_env,
+            "model": saved["models"].get(a.id, ""), "model_effective": runner.effective_model(provider, model),
+            "framework": getattr(a, "framework", "langgraph"),
+        })
+    return {
+        **saved,
+        "provider_effective": provider,
+        "provider_source": source,
+        "assistant_provider": assistant,
+        "key_present": bool(runner.resolve_provider_key(provider)),
+        "providers": [{"id": p, "label": fleet_settings.PROVIDER_LABELS[p]} for p in fleet_settings.PROVIDERS],
+        "agents": agents,
+    }
+
+
+@router.get("/settings")
+async def get_fleet_settings():
+    """Provider, key and per-agent models the fleet runs on, with the resolved values."""
+    return _fleet_settings_payload()
+
+
+@router.put("/settings")
+async def put_fleet_settings(req: FleetSettingsRequest):
+    try:
+        fleet_settings.save(req.provider, req.api_key_ref, req.models)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _fleet_settings_payload()

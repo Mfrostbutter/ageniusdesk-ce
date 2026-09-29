@@ -1,0 +1,11 @@
+{
+  "id": "features",
+  "name": "Features",
+  "version": "1.0.0",
+  "min_app_version": "0.1.0",
+  "description": "Feature switches and profiles: which surfaces this installation shows and serves.",
+  "author": "AgeniusDesk",
+  "license": "MIT",
+  "routes_prefix": "/api/features",
+  "builtin": true
+}

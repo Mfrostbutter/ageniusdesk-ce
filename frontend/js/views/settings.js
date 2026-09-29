@@ -6,6 +6,8 @@ import { get, post, patch, del } from '../api.js';
 import * as toast from '../components/toast.js';
 import { setActiveTheme, getCurrentTheme } from '../themes.js';
 import { secretField, invalidateRefsCache } from '../components/secretfield.js';
+import { renderFeatures } from './settings-features.js';
+import { renderFleetModels } from '../components/fleet-models.js';
 import { renderModules } from './settings-modules.js';
 import { openModal } from '../components/modal.js';
 import { renderQR } from '../vendor/qrcode.js';
@@ -30,6 +32,7 @@ export async function render(container) {
       <button class="tab-btn" data-tab="themes" onclick="window.__settingsTab('themes')">Themes</button>
       <button class="tab-btn" data-tab="error-handler" onclick="window.__settingsTab('error-handler')">Error Handler</button>
       <button class="tab-btn" data-tab="modules" onclick="window.__settingsTab('modules')">Modules</button>
+      <button class="tab-btn" data-tab="features" onclick="window.__settingsTab('features')">Features</button>
       <button class="tab-btn" data-tab="help" onclick="window.__settingsTab('help')">Help &amp; Tips</button>
     </div>
 
@@ -37,8 +40,20 @@ export async function render(container) {
   `;
 
   window.__settingsTab = switchTab;
+  applySettingsTabFeatures();
   switchTab('instances');
 }
+
+// Settings tabs owned by a switched-off feature leave the strip.
+function applySettingsTabFeatures() {
+  const map = window.__features?.settings_tabs || {};
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(b => {
+    const feature = map[b.dataset.tab];
+    const on = feature ? (window.__featureOn ? window.__featureOn(feature) : true) : true;
+    b.style.display = on ? '' : 'none';
+  });
+}
+window.__applySettingsTabFeatures = applySettingsTabFeatures;
 
 function switchTab(tab) {
   // Music Player settings moved to dedicated "Your Vibe" page
@@ -56,6 +71,7 @@ function switchTab(tab) {
   else if (tab === 'themes') renderThemes(el);
   else if (tab === 'error-handler') renderErrorHandler(el);
   else if (tab === 'modules') renderModules(el);
+  else if (tab === 'features') renderFeatures(el);
   else if (tab === 'help') renderHelp(el);
 }
 
@@ -1344,6 +1360,8 @@ export async function renderModelsTab(el) {
       </div>
     `).join('')}
 
+    <div id="fleet-models-card"></div>
+
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><span class="card-title">Shared: Local Ollama</span></div>
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
@@ -1546,6 +1564,16 @@ export async function renderModelsTab(el) {
       if (res) { res.textContent = e.message; res.style.color = 'var(--error)'; }
     }
   });
+
+  // Agent Fleet: which provider and models the managed agents run on.
+  const fleetCard = document.getElementById('fleet-models-card');
+  if (fleetCard) {
+    if (window.__agentsEnabled === false || (window.__featureOn && !window.__featureOn('agents'))) fleetCard.remove();
+    else renderFleetModels(fleetCard, {
+      apiBase: '/api/agent-fleet',
+      fetchModels: (provider, keyRef) => fetchAssistantModels(provider, '', keyRef),
+    }).catch(() => {});
+  }
 }
 
 async function renderThemes(el) {

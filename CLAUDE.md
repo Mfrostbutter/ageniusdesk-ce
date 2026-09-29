@@ -16,6 +16,7 @@ An open-source command center for managing multiple n8n automation instances. MI
 
 **Backend Structure:**
 - `backend/main.py` - FastAPI entry point, CORS, WebSocket at `/ws`, static file serving
+- `backend/features.py` - feature catalog, profiles, the API gate; `agent_fleet/settings.py` holds the fleet's provider/model choices
 - `backend/modules/` - auto-discovered packages, each exposes a `router` and `manifest.json`
   - `n8n_proxy/` - multi-instance proxy for workflows, executions, credentials
   - `n8n_promote/` - workflow promotion across instances (preflight, credential mapping + auto-provision from Secrets, activation guarding)
@@ -27,6 +28,8 @@ An open-source command center for managing multiple n8n automation instances. MI
   - `notes/` - markdown notes vault with search, tagging, backlinks
   - `insights/` - execution analytics, success rates, error trends
   - `observability/` - OpenTelemetry OTLP receiver, trace waterfall, metrics strip, LLM cost enrichment
+  - `llm_cost/` - provider spend and quotas (Anthropic, OpenAI, OpenRouter, JSON endpoints, workstation forwarders), history, alerts, attributed spend; price book in `backend/pricing.py`
+  - `features/` - feature switches and profiles (`backend/features.py`); switched-off features hide and 404
   - `messages/` - inbound message-bus webhook persisted and broadcast as toasts (optional Slack, Discord env sinks)
   - `player/` - music player integration
   - `auth/` - local accounts, sessions, optional TOTP 2FA, CSRF, role-based access

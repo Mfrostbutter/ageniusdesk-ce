@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend import module_registry
+from backend import features, module_registry
 from backend.config import (
     agents_enabled,
     get_active_instance,
@@ -122,6 +122,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("scheduler start failed: %s", e)
 
+    # LLM Cost: provider polling, push-device aggregation, alerts, MQTT bridge.
+    try:
+        from backend.modules.llm_cost import hub as _llm_cost_hub
+        await _llm_cost_hub.start()
+    except Exception as e:
+        logger.exception("llm_cost scheduler start failed: %s", e)
+
     # Out-of-process module isolation: start the loopback capability bridge before
     # serving, THEN spawn the isolated-module workers (deferred from import-time
     # registration) so a worker that calls the bridge during startup finds it
@@ -187,6 +194,11 @@ async def lifespan(app: FastAPI):
         await _scheduler.stop()
     except Exception as e:
         logger.warning("scheduler stop failed: %s", e)
+    try:
+        from backend.modules.llm_cost import hub as _llm_cost_hub
+        await _llm_cost_hub.stop()
+    except Exception as e:
+        logger.warning("llm_cost scheduler stop failed: %s", e)
     try:
         from backend.modules._runtime import supervisor as _supervisor
         _supervisor.stop_all()  # subprocess workers (skips container workers)
@@ -261,6 +273,11 @@ _OTEL_INGEST_EXACT = frozenset({
 _SELF_AUTHENTICATING_EXACT = frozenset({
     "/api/music/triggers/fire",
 })
+# LLM Cost machine ingest: workstation forwarders push snapshots with a per-device
+# token the router checks itself (hashed at rest, revocable). The forwarder
+# scripts are served to those machines as plain files.
+_LLM_COST_INGEST_EXACT = frozenset({"/api/llm-cost/ingest"})
+_LLM_COST_FORWARDER_PREFIX = "/api/llm-cost/forwarder/"
 _DASHBOARD_MCP_PREFIX = "/api/mcp-dashboard"
 
 
@@ -346,6 +363,18 @@ def _otel_token_ok(request) -> bool:
 
 
 @app.middleware("http")
+async def feature_gate(request, call_next):
+    """A switched-off feature answers 404 on its API prefix. Ingest paths stay open."""
+    path = request.url.path
+    if path.startswith("/api/"):
+        from backend import features as _features
+        off = _features.gate(path)
+        if off is not None:
+            return JSONResponse({"detail": "feature_disabled", "feature": off}, status_code=404)
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def community_module_identity(request, call_next):
     """Community routes: strip spoofable X-AGD-* headers, authorize by route
     class, inject the trusted actor headers (same contract in every isolation
@@ -394,6 +423,12 @@ async def require_internal_api_auth(request, call_next):
             return _rate_limited_response()
         return await call_next(request)
     if path in _SELF_AUTHENTICATING_EXACT:
+        return await call_next(request)
+    if path in _LLM_COST_INGEST_EXACT:
+        if not _ingest_rate_ok(request):
+            return _rate_limited_response()
+        return await call_next(request)
+    if path.startswith(_LLM_COST_FORWARDER_PREFIX):
         return await call_next(request)
 
     from backend.auth_gate import current_user, login_enforced, role_at_least
@@ -509,7 +544,7 @@ async def csrf_protect(request, call_next):
         "/api/auth/login/totp",
         "/api/auth/forgot",
         "/api/auth/reset",
-    ) or path in _OTEL_INGEST_EXACT  # machine-ingest, token-authed, not a browser surface
+    ) or path in _OTEL_INGEST_EXACT or path in _LLM_COST_INGEST_EXACT  # machine-ingest, token-authed
     if (
         request.method not in SAFE_METHODS
         and path.startswith("/api/")
@@ -568,6 +603,7 @@ async def status():
         "websocket_clients": manager.count,
         "health_endpoints": config.get("health_endpoints", []),
         "agents_enabled": agents_enabled(),
+        "features": features.client_map(),
     }
 
 

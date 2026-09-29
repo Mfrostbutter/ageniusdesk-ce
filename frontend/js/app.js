@@ -36,6 +36,7 @@ import * as instancesView from './views/instances.js';
 import * as modelsView from './views/models.js';
 import * as mcpView from './views/mcp.js';
 import * as agentFleetView from './views/agent-fleet.js';
+import * as llmCostView from './views/llm-cost.js';
 
 import { loadCommunityModules } from './community-modules.js';
 import * as onboarding from './onboarding/index.js';
@@ -67,6 +68,7 @@ const views = {
   observe: observabilityView,
   fleet: fleetHealthView,
   'agent-fleet': agentFleetView,
+  'llm-cost': llmCostView,
   knowledge: knowledgeView,
   'knowledge-connectors': knowledgeConnectorsView,
   'knowledge-instructions': knowledgeInstructionsView,
@@ -125,6 +127,45 @@ window.__tipsEnabled = onboarding.tipsEnabled;
 
 window.__nav = navigate;
 window.__currentView = currentView;
+
+// ── Feature switches (Settings › Features) ───────────────────────────────────
+
+// Hidden views are removed from `views` so navigate() and deep links no-op;
+// the originals are kept so a later switch-on restores them without a reload.
+const _hiddenViews = {};
+window.__features = { enabled: {}, views: {}, settings_tabs: {}, widgets: {}, profile: null };
+
+export function featureOn(id) {
+  if (!id) return true;
+  const on = window.__features?.enabled?.[id];
+  return on === undefined ? true : !!on;
+}
+window.__featureOn = featureOn;
+
+export function applyFeatures(map) {
+  if (map) window.__features = map;
+  const f = window.__features;
+  document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+    const feature = f.views[btn.dataset.view];
+    if (!feature) return;
+    const on = featureOn(feature);
+    const group = btn.closest('.nav-item-group');
+    (group || btn).style.display = on ? '' : 'none';
+  });
+  Object.entries(f.views).forEach(([view, feature]) => {
+    if (!featureOn(feature)) {
+      if (views[view]) { _hiddenViews[view] = views[view]; delete views[view]; }
+    } else if (_hiddenViews[view]) {
+      views[view] = _hiddenViews[view]; delete _hiddenViews[view];
+    }
+  });
+  if (currentView && !views[currentView]) navigate('dashboard');
+}
+window.__applyFeatures = applyFeatures;
+
+window.__reloadFeatures = async () => {
+  try { const status = await get('/api/status'); applyFeatures(status.features); } catch {}
+};
 
 // Navigate to settings and open a specific tab. Returns a promise so
 // shortcut-button click handlers can restore their own .active highlight
@@ -632,6 +673,7 @@ async function init() {
       document.querySelector('.nav-btn[data-view="agent-fleet"]')?.remove();
       delete views['agent-fleet'];
     }
+    if (status.features) applyFeatures(status.features);
 
     if (status.theme) await loadTheme(status.theme);
     await Promise.all([loadInstances(), loadThemeDropdown(), loadAccount()]);
